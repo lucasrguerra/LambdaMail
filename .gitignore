@@ -17,6 +17,7 @@ build/
 .env
 .env.local
 acme.json
+local/
 
 # Go
 *.test

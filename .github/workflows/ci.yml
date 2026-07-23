@@ -14,15 +14,39 @@ jobs:
 
   go-protocols:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: lambdamail_test
+          POSTGRES_USER: lambdamail_test
+          POSTGRES_PASSWORD: lambdamail_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: services/protocols
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.22" }
+        with: { go-version-file: services/protocols/go.mod }
+      - name: Run migrations
+        run: |
+          docker run --rm --network host \
+            -v "$(pwd)/../../migrations:/migrations" \
+            migrate/migrate:v4.17.1 \
+            -path=/migrations \
+            -database "postgres://lambdamail_test:lambdamail_test@localhost:5432/lambdamail_test?sslmode=disable" \
+            up
       - run: go vet ./...
       - run: go test ./... -v
+        env:
+          TEST_DATABASE_URL: postgres://lambdamail_test:lambdamail_test@localhost:5432/lambdamail_test?sslmode=disable
 
   ts-auth:
     runs-on: ubuntu-latest
