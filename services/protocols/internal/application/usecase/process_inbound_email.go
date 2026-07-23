@@ -14,6 +14,13 @@ import (
 // mailbox matches - the presentation layer maps this to SMTP 550 5.1.1.
 var ErrRecipientNotFound = errors.New("process inbound email: recipient not found or inactive")
 
+// ErrMailboxQuotaExceeded is returned by ResolveRecipient when a resolved
+// target mailbox has already reached its storage quota - the presentation
+// layer maps this to SMTP 452 4.2.2. If a single RCPT resolves to multiple
+// mailboxes (alias fan-out) and any one of them is full, the whole RCPT is
+// rejected rather than partially delivering.
+var ErrMailboxQuotaExceeded = errors.New("process inbound email: mailbox has reached its storage quota")
+
 // ProcessInboundEmailInput carries one SMTP DATA transaction's worth of
 // state: the accumulated recipients from one or more successful Rcpt calls,
 // and the message body stream.
@@ -38,16 +45,23 @@ func NewProcessInboundEmailUseCase(mailboxes port.MailboxRepository, blobs port.
 	return &ProcessInboundEmailUseCase{mailboxes: mailboxes, blobs: blobs, messages: messages}
 }
 
-// ResolveRecipient is called from the SMTP session's RCPT TO handler.
-func (uc *ProcessInboundEmailUseCase) ResolveRecipient(ctx context.Context, address string) (*port.MailboxRecord, error) {
-	rec, err := uc.mailboxes.FindActiveByAddress(ctx, address)
+// ResolveRecipient is called from the SMTP session's RCPT TO handler. It
+// returns every mailbox address should be delivered to (more than one for
+// an alias that fans out), or ErrRecipientNotFound / ErrMailboxQuotaExceeded.
+func (uc *ProcessInboundEmailUseCase) ResolveRecipient(ctx context.Context, address string) ([]port.MailboxRecord, error) {
+	targets, err := uc.mailboxes.ResolveDeliveryTargets(ctx, address)
 	if err != nil {
 		return nil, err
 	}
-	if rec == nil {
+	if len(targets) == 0 {
 		return nil, ErrRecipientNotFound
 	}
-	return rec, nil
+	for _, t := range targets {
+		if t.UsedBytes >= t.QuotaBytes {
+			return nil, ErrMailboxQuotaExceeded
+		}
+	}
+	return targets, nil
 }
 
 // Handle is called once from the SMTP session's DATA handler, after one or

@@ -61,23 +61,35 @@ func (s *session) Rcpt(to string, _ *gosmtp.RcptOptions) error {
 		}
 	}
 
-	rec, err := s.useCase.ResolveRecipient(context.Background(), to)
+	targets, err := s.useCase.ResolveRecipient(context.Background(), to)
 	if err != nil {
-		if errors.Is(err, usecase.ErrRecipientNotFound) {
+		switch {
+		case errors.Is(err, usecase.ErrRecipientNotFound):
 			return &gosmtp.SMTPError{
 				Code:         550,
 				EnhancedCode: gosmtp.EnhancedCode{5, 1, 1},
 				Message:      "User unknown",
 			}
-		}
-		return &gosmtp.SMTPError{
-			Code:         451,
-			EnhancedCode: gosmtp.EnhancedCode{4, 3, 0},
-			Message:      "Temporary error resolving recipient",
+		case errors.Is(err, usecase.ErrMailboxQuotaExceeded):
+			return &gosmtp.SMTPError{
+				Code:         452,
+				EnhancedCode: gosmtp.EnhancedCode{4, 2, 2},
+				Message:      "Mailbox full",
+			}
+		default:
+			return &gosmtp.SMTPError{
+				Code:         451,
+				EnhancedCode: gosmtp.EnhancedCode{4, 3, 0},
+				Message:      "Temporary error resolving recipient",
+			}
 		}
 	}
-	s.recipients = append(s.recipients, *rec)
-	s.recipientAddresses = append(s.recipientAddresses, to)
+	// One RCPT TO can resolve to multiple mailboxes (alias fan-out) - each
+	// gets its own delivery, all recorded under the same envelope address.
+	for _, rec := range targets {
+		s.recipients = append(s.recipients, rec)
+		s.recipientAddresses = append(s.recipientAddresses, to)
+	}
 	return nil
 }
 

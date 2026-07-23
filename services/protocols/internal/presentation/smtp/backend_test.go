@@ -26,6 +26,14 @@ func (f *fakeMailboxRepository) FindActiveByAddress(_ context.Context, address s
 	return &rec, nil
 }
 
+func (f *fakeMailboxRepository) ResolveDeliveryTargets(_ context.Context, address string) ([]port.MailboxRecord, error) {
+	rec, ok := f.byAddress[address]
+	if !ok {
+		return []port.MailboxRecord{}, nil
+	}
+	return []port.MailboxRecord{rec}, nil
+}
+
 type recordingBlobStorage struct {
 	stored []byte
 	ref    port.BlobRef
@@ -61,7 +69,7 @@ func newTestSession(mailboxes *fakeMailboxRepository, blobs *recordingBlobStorag
 
 func TestSession_Rcpt_AcceptsKnownActiveRecipient(t *testing.T) {
 	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
-		"user@example.test": {ID: uuid.New(), MaxMessageBytes: 1000},
+		"user@example.test": {ID: uuid.New(), MaxMessageBytes: 1000, QuotaBytes: 1000},
 	}}
 	session := newTestSession(mailboxes, &recordingBlobStorage{}, &recordingMessageRepository{})
 
@@ -94,7 +102,7 @@ func TestSession_Rcpt_Rejects550ForUnknownRecipient(t *testing.T) {
 func TestSession_Data_PersistsOnceForSingleRecipient(t *testing.T) {
 	mailboxID := uuid.New()
 	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
-		"user@example.test": {ID: mailboxID, MaxMessageBytes: 1000},
+		"user@example.test": {ID: mailboxID, MaxMessageBytes: 1000, QuotaBytes: 1000},
 	}}
 	blobs := &recordingBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "abc", SizeBytes: 5}}
 	messages := &recordingMessageRepository{}
@@ -119,10 +127,30 @@ func TestSession_Data_PersistsOnceForSingleRecipient(t *testing.T) {
 	}
 }
 
+func TestSession_Rcpt_Rejects452ForFullMailbox(t *testing.T) {
+	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
+		"full@example.test": {ID: uuid.New(), QuotaBytes: 1000, UsedBytes: 1000},
+	}}
+	session := newTestSession(mailboxes, &recordingBlobStorage{}, &recordingMessageRepository{})
+
+	_ = session.Mail("sender@example.test", &gosmtp.MailOptions{})
+	err := session.Rcpt("full@example.test", &gosmtp.RcptOptions{})
+	if err == nil {
+		t.Fatal("expected an error for a full mailbox, got nil")
+	}
+	var smtpErr *gosmtp.SMTPError
+	if !errors.As(err, &smtpErr) {
+		t.Fatalf("error is not a *gosmtp.SMTPError: %v", err)
+	}
+	if smtpErr.Code != 452 {
+		t.Errorf("Code = %d, want 452", smtpErr.Code)
+	}
+}
+
 func TestSession_Rcpt_DeduplicatesRepeatedAddress(t *testing.T) {
 	mailboxID := uuid.New()
 	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
-		"user@example.test": {ID: mailboxID, MaxMessageBytes: 1000},
+		"user@example.test": {ID: mailboxID, MaxMessageBytes: 1000, QuotaBytes: 1000},
 	}}
 	blobs := &recordingBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "abc", SizeBytes: 5}}
 	messages := &recordingMessageRepository{}
@@ -147,7 +175,7 @@ func TestSession_Rcpt_DeduplicatesRepeatedAddress(t *testing.T) {
 
 func TestSession_Reset_ClearsAccumulatedRecipients(t *testing.T) {
 	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
-		"user@example.test": {ID: uuid.New(), MaxMessageBytes: 1000},
+		"user@example.test": {ID: uuid.New(), MaxMessageBytes: 1000, QuotaBytes: 1000},
 	}}
 	messages := &recordingMessageRepository{}
 	session := newTestSession(mailboxes, &recordingBlobStorage{}, messages)
