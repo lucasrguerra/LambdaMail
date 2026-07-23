@@ -1,0 +1,19 @@
+version: 3
+workdir: .
+vendors: { golang: { in: golang } }
+excludeFiles:
+  - "**/*_test.go"
+components:
+  domain:
+    in: internal/domain/**
+  health:
+    in: internal/health/**
+  cmd:
+    in: cmd/**
+deps:
+  domain:
+    canUse: []          # zero-dependency layer 1 (PLAN.md section 3)
+  health:
+    canUse: []
+  cmd:
+    canUse: [domain, health]
