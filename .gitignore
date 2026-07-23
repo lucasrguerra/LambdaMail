@@ -1,0 +1,29 @@
+# Internal planning docs — never published with the code
+PLAN.md
+docs/
+.superpowers/
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build output
+.next/
+dist/
+build/
+*.exe
+
+# Env / secrets
+.env
+.env.local
+acme.json
+
+# Go
+*.test
+*.out
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

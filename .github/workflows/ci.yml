@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lang-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/lang-lint.mjs
+
+  go-protocols:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/protocols
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - run: go vet ./...
+      - run: go test ./... -v
+
+  ts-auth:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/auth
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm install
+      - run: npm run lint
+      - run: npm test
+
+  ts-storage:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/storage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm install
+      - run: npm run lint
+      - run: npm test
+
+  webmail-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/webmail
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm install
+      - run: npm run build
+
+  compose-up:
+    runs-on: ubuntu-latest
+    needs: [go-protocols, ts-auth, ts-storage, webmail-build]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose --env-file .env up --build --wait
+      - run: docker compose ps
+      - run: docker compose down -v

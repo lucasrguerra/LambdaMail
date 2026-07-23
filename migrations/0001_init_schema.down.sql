@@ -1,0 +1,22 @@
+-- 0001_init_schema.down.sql
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS dmarc_reports;
+DROP TABLE IF EXISTS tls_policy_cache;
+DROP TABLE IF EXISTS sieve_scripts;
+DROP TABLE IF EXISTS domain_events_outbox;
+DROP TABLE IF EXISTS outbound_jobs;
+DROP TABLE IF EXISTS message_flags;
+DROP TABLE IF EXISTS email_messages_2026_07;
+DROP TABLE IF EXISTS email_messages;
+DROP TABLE IF EXISTS message_blobs;
+DROP TABLE IF EXISTS folders;
+DROP TABLE IF EXISTS aliases;
+DROP TABLE IF EXISTS app_passwords;
+DROP TABLE IF EXISTS web_sessions;
+DROP TABLE IF EXISTS trusted_devices;
+DROP TABLE IF EXISTS mfa_webauthn_credentials;
+DROP TABLE IF EXISTS mfa_recovery_codes;
+DROP TABLE IF EXISTS mfa_totp;
+DROP TABLE IF EXISTS mailboxes;
+DROP TABLE IF EXISTS dkim_keys;
+DROP TABLE IF EXISTS domains;
