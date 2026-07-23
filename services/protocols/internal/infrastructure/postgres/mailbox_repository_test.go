@@ -118,3 +118,194 @@ func TestMailboxRepository_FindActiveByAddress_ExcludesInactiveMailbox(t *testin
 		t.Errorf("rec = %+v, want nil - mailbox is_active=false must be excluded", rec)
 	}
 }
+
+func TestMailboxRepository_FindActiveByAddress_ReturnsQuotaAndUsedBytes(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "repo-test-quota-" + domainID.String() + ".invalid"
+	_, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName)
+	if err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	address := "user@" + domainName
+	_, err = pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash, quota_bytes, used_bytes) VALUES ($1, $2, 'user', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG', 5000, 4000)`,
+		uuid.New(), domainID, address)
+	if err != nil {
+		t.Fatalf("seed mailbox: %v", err)
+	}
+
+	repo := NewMailboxRepository(pool)
+	rec, err := repo.FindActiveByAddress(ctx, address)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("rec = nil, want a record for the seeded mailbox")
+	}
+	if rec.QuotaBytes != 5000 {
+		t.Errorf("QuotaBytes = %d, want 5000", rec.QuotaBytes)
+	}
+	if rec.UsedBytes != 4000 {
+		t.Errorf("UsedBytes = %d, want 4000", rec.UsedBytes)
+	}
+}
+
+func TestMailboxRepository_ResolveDeliveryTargets_PrefersDirectMailboxMatch(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "repo-test-direct-" + domainID.String() + ".invalid"
+	_, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName)
+	if err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	mailboxID := uuid.New()
+	address := "user@" + domainName
+	_, err = pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash) VALUES ($1, $2, 'user', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG')`,
+		mailboxID, domainID, address)
+	if err != nil {
+		t.Fatalf("seed mailbox: %v", err)
+	}
+
+	repo := NewMailboxRepository(pool)
+	targets, err := repo.ResolveDeliveryTargets(ctx, address)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(targets) != 1 || targets[0].ID != mailboxID {
+		t.Errorf("targets = %+v, want single record with ID %v (direct mailbox match)", targets, mailboxID)
+	}
+}
+
+func TestMailboxRepository_ResolveDeliveryTargets_ResolvesSpecificAlias(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "repo-test-alias-" + domainID.String() + ".invalid"
+	_, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName)
+	if err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	destMailboxID := uuid.New()
+	destAddress := "realuser@" + domainName
+	_, err = pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash) VALUES ($1, $2, 'realuser', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG')`,
+		destMailboxID, domainID, destAddress)
+	if err != nil {
+		t.Fatalf("seed destination mailbox: %v", err)
+	}
+
+	aliasAddress := "postmaster@" + domainName
+	_, err = pool.Exec(ctx, `INSERT INTO aliases (id, domain_id, source_address, destination_addresses) VALUES ($1, $2, $3, $4)`,
+		uuid.New(), domainID, aliasAddress, []string{destAddress})
+	if err != nil {
+		t.Fatalf("seed alias: %v", err)
+	}
+
+	repo := NewMailboxRepository(pool)
+	targets, err := repo.ResolveDeliveryTargets(ctx, aliasAddress)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(targets) != 1 || targets[0].ID != destMailboxID {
+		t.Errorf("targets = %+v, want single record with ID %v (alias destination)", targets, destMailboxID)
+	}
+}
+
+func TestMailboxRepository_ResolveDeliveryTargets_ResolvesCatchAllAlias(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "repo-test-catchall-" + domainID.String() + ".invalid"
+	_, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName)
+	if err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	destMailboxID := uuid.New()
+	destAddress := "catchall-target@" + domainName
+	_, err = pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash) VALUES ($1, $2, 'catchall-target', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG')`,
+		destMailboxID, domainID, destAddress)
+	if err != nil {
+		t.Fatalf("seed destination mailbox: %v", err)
+	}
+
+	_, err = pool.Exec(ctx, `INSERT INTO aliases (id, domain_id, source_address, destination_addresses, is_catch_all) VALUES ($1, $2, $3, $4, true)`,
+		uuid.New(), domainID, "*@"+domainName, []string{destAddress})
+	if err != nil {
+		t.Fatalf("seed catch-all alias: %v", err)
+	}
+
+	repo := NewMailboxRepository(pool)
+	targets, err := repo.ResolveDeliveryTargets(ctx, "whatever-unmapped@"+domainName)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(targets) != 1 || targets[0].ID != destMailboxID {
+		t.Errorf("targets = %+v, want single record with ID %v (catch-all destination)", targets, destMailboxID)
+	}
+}
+
+func TestMailboxRepository_ResolveDeliveryTargets_ReturnsEmptySliceWhenNothingMatches(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+
+	repo := NewMailboxRepository(pool)
+	targets, err := repo.ResolveDeliveryTargets(context.Background(), "definitely-not-seeded@example.invalid")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Errorf("targets = %+v, want empty slice for an address with no mailbox and no alias", targets)
+	}
+}
+
+func TestMailboxRepository_ResolveDeliveryTargets_SkipsAliasDestinationThatIsNotAnInternalMailbox(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "repo-test-external-" + domainID.String() + ".invalid"
+	_, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName)
+	if err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	aliasAddress := "forward@" + domainName
+	_, err = pool.Exec(ctx, `INSERT INTO aliases (id, domain_id, source_address, destination_addresses) VALUES ($1, $2, $3, $4)`,
+		uuid.New(), domainID, aliasAddress, []string{"someone@external-provider.invalid"})
+	if err != nil {
+		t.Fatalf("seed alias: %v", err)
+	}
+
+	repo := NewMailboxRepository(pool)
+	targets, err := repo.ResolveDeliveryTargets(ctx, aliasAddress)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(targets) != 0 {
+		t.Errorf("targets = %+v, want empty slice - external forwarding destinations are not internal mailboxes and outbound delivery does not exist yet", targets)
+	}
+}

@@ -175,9 +175,7 @@ func TestInboundSMTPEndToEnd(t *testing.T) {
 		t.Errorf("max uid = %d, want 2 (sequential per folder)", maxUID)
 	}
 
-	// --- 8. PLAN gaps this test documents deliberately --------------------
-	// The following FAIL today and are expected to: they mark the F1 scope
-	// that is not implemented yet. Remove t.Skip as each lands.
+	// --- 8. Folder/mailbox counters kept in sync with persisted messages --
 	t.Run("counters_updated", func(t *testing.T) {
 		var unread, total int
 		var used int64
@@ -190,7 +188,75 @@ func TestInboundSMTPEndToEnd(t *testing.T) {
 			t.Fatalf("counters query: %v", err)
 		}
 		if unread != 2 || total != 2 || used != sizeBytes*2 {
-			t.Skipf("KNOWN GAP (PLAN 6.1 '++counters'): unread=%d total=%d used=%d — repository does not update folder counters or mailboxes.used_bytes yet", unread, total, used)
+			t.Errorf("unread=%d total=%d used=%d, want unread=2 total=2 used=%d (PLAN section 6.1 '++counters')", unread, total, used, sizeBytes*2)
+		}
+	})
+
+	// --- 9. A full mailbox rejects RCPT with 452 4.2.2, in-session --------
+	t.Run("quota_rejected_when_mailbox_full", func(t *testing.T) {
+		domainID := "00000000-0000-0000-0000-000000000001"
+		fullMailboxID := "10000000-0000-0000-0000-000000000099"
+		fullAddress := "full@example.test"
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash, quota_bytes, used_bytes)
+			VALUES ($1, $2, 'full', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG', 1000, 1000)
+		`, fullMailboxID, domainID, fullAddress); err != nil {
+			t.Fatalf("seed full mailbox: %v", err)
+		}
+
+		c, err := smtp.Dial(addr)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer c.Close()
+		if err := c.Mail("sender@remote.example"); err != nil {
+			t.Fatalf("MAIL FROM: %v", err)
+		}
+		err = c.Rcpt(fullAddress)
+		if err == nil {
+			t.Fatal("RCPT to a full mailbox succeeded; want 452 4.2.2")
+		}
+		if !strings.Contains(err.Error(), "452") {
+			t.Errorf("full-mailbox RCPT error = %q, want SMTP 452", err)
+		}
+	})
+
+	// --- 10. An alias fans out to its destination mailbox -----------------
+	t.Run("alias_resolves_to_destination_mailbox", func(t *testing.T) {
+		domainID := "00000000-0000-0000-0000-000000000001"
+		aliasDestMailboxID := "10000000-0000-0000-0000-000000000098"
+		aliasDestAddress := "alias-dest@example.test"
+		aliasAddress := "hello@example.test"
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash)
+			VALUES ($1, $2, 'alias-dest', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG')
+		`, aliasDestMailboxID, domainID, aliasDestAddress); err != nil {
+			t.Fatalf("seed alias destination mailbox: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO folders (id, mailbox_id, name, special_use) VALUES ($1, $2, 'INBOX', 'inbox')
+		`, "10000000-0000-0000-0000-000000000097", aliasDestMailboxID); err != nil {
+			t.Fatalf("seed alias destination inbox folder: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO aliases (id, domain_id, source_address, destination_addresses)
+			VALUES ($1, $2, $3, $4)
+		`, "10000000-0000-0000-0000-000000000096", domainID, aliasAddress, []string{aliasDestAddress}); err != nil {
+			t.Fatalf("seed alias: %v", err)
+		}
+
+		if err := smtp.SendMail(addr, nil, "sender@remote.example",
+			[]string{aliasAddress}, []byte(testMessage)); err != nil {
+			t.Fatalf("SendMail to alias: %v", err)
+		}
+
+		var count int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM email_messages WHERE mailbox_id = $1`, aliasDestMailboxID).Scan(&count); err != nil {
+			t.Fatalf("query alias destination messages: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("messages persisted for alias destination mailbox = %d, want 1", count)
 		}
 	})
 

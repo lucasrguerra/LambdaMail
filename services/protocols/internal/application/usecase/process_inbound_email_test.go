@@ -23,19 +23,27 @@ func (f *fakeMailboxRepository) FindActiveByAddress(_ context.Context, address s
 	return &rec, nil
 }
 
+func (f *fakeMailboxRepository) ResolveDeliveryTargets(_ context.Context, address string) ([]port.MailboxRecord, error) {
+	rec, ok := f.byAddress[address]
+	if !ok {
+		return []port.MailboxRecord{}, nil
+	}
+	return []port.MailboxRecord{rec}, nil
+}
+
 func TestUseCase_ResolveRecipient_ReturnsRecordForActiveMailbox(t *testing.T) {
 	mailboxID := uuid.New()
 	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
-		"user@example.test": {ID: mailboxID, MaxMessageBytes: 1000},
+		"user@example.test": {ID: mailboxID, MaxMessageBytes: 1000, QuotaBytes: 1000},
 	}}
 	uc := NewProcessInboundEmailUseCase(mailboxes, nil, nil)
 
-	rec, err := uc.ResolveRecipient(context.Background(), "user@example.test")
+	targets, err := uc.ResolveRecipient(context.Background(), "user@example.test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rec.ID != mailboxID {
-		t.Errorf("ID = %v, want %v", rec.ID, mailboxID)
+	if len(targets) != 1 || targets[0].ID != mailboxID {
+		t.Errorf("targets = %+v, want single record with ID %v", targets, mailboxID)
 	}
 }
 
@@ -47,6 +55,44 @@ func TestUseCase_ResolveRecipient_ReturnsErrRecipientNotFoundForUnknownAddress(t
 	if !errors.Is(err, ErrRecipientNotFound) {
 		t.Fatalf("error = %v, want ErrRecipientNotFound", err)
 	}
+}
+
+func TestUseCase_ResolveRecipient_ReturnsErrMailboxQuotaExceededWhenFull(t *testing.T) {
+	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
+		"full@example.test": {ID: uuid.New(), QuotaBytes: 1000, UsedBytes: 1000},
+	}}
+	uc := NewProcessInboundEmailUseCase(mailboxes, nil, nil)
+
+	_, err := uc.ResolveRecipient(context.Background(), "full@example.test")
+	if !errors.Is(err, ErrMailboxQuotaExceeded) {
+		t.Fatalf("error = %v, want ErrMailboxQuotaExceeded", err)
+	}
+}
+
+func TestUseCase_ResolveRecipient_ReturnsErrMailboxQuotaExceededWhenAnyFanOutTargetIsFull(t *testing.T) {
+	mailboxes := &fakeAliasFanOutRepository{targets: []port.MailboxRecord{
+		{ID: uuid.New(), QuotaBytes: 1000, UsedBytes: 0},
+		{ID: uuid.New(), QuotaBytes: 1000, UsedBytes: 1000},
+	}}
+	uc := NewProcessInboundEmailUseCase(mailboxes, nil, nil)
+
+	_, err := uc.ResolveRecipient(context.Background(), "alias@example.test")
+	if !errors.Is(err, ErrMailboxQuotaExceeded) {
+		t.Fatalf("error = %v, want ErrMailboxQuotaExceeded when any fan-out target is full", err)
+	}
+}
+
+// fakeAliasFanOutRepository simulates an alias resolving to multiple mailboxes.
+type fakeAliasFanOutRepository struct {
+	targets []port.MailboxRecord
+}
+
+func (f *fakeAliasFanOutRepository) FindActiveByAddress(_ context.Context, _ string) (*port.MailboxRecord, error) {
+	return nil, nil
+}
+
+func (f *fakeAliasFanOutRepository) ResolveDeliveryTargets(_ context.Context, _ string) ([]port.MailboxRecord, error) {
+	return f.targets, nil
 }
 
 type stubBlobStorage struct {

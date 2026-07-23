@@ -73,6 +73,25 @@ func TestInboundMessageRepository_Persist_AllocatesSequentialUIDs(t *testing.T) 
 	if refCount != 2 {
 		t.Errorf("ref_count = %d, want 2 after two Persist calls referencing the same blob", refCount)
 	}
+
+	var unreadCount, totalCount int
+	if err := pool.QueryRow(ctx, `SELECT unread_count, total_count FROM folders WHERE id = $1`, folderID).Scan(&unreadCount, &totalCount); err != nil {
+		t.Fatalf("query folder counters: %v", err)
+	}
+	if unreadCount != 2 {
+		t.Errorf("folder unread_count = %d, want 2 after two Persist calls", unreadCount)
+	}
+	if totalCount != 2 {
+		t.Errorf("folder total_count = %d, want 2 after two Persist calls", totalCount)
+	}
+
+	var usedBytes int64
+	if err := pool.QueryRow(ctx, `SELECT used_bytes FROM mailboxes WHERE id = $1`, mailboxID).Scan(&usedBytes); err != nil {
+		t.Fatalf("query mailbox used_bytes: %v", err)
+	}
+	if usedBytes != blob.SizeBytes*2 {
+		t.Errorf("mailbox used_bytes = %d, want %d (two Persist calls of %d bytes each)", usedBytes, blob.SizeBytes*2, blob.SizeBytes)
+	}
 }
 
 func TestInboundMessageRepository_Persist_ReturnsErrorWhenNoInboxFolderExists(t *testing.T) {

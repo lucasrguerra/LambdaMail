@@ -39,8 +39,11 @@ func (r *InboundMessageRepository) Persist(ctx context.Context, input port.Persi
 		return 0, fmt.Errorf("find inbox folder for mailbox %s: %w", input.MailboxID, err)
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE folders SET uid_next = uid_next + 1 WHERE id = $1`, folderID); err != nil {
-		return 0, fmt.Errorf("advance uid_next: %w", err)
+	if _, err := tx.Exec(ctx, `
+		UPDATE folders SET uid_next = uid_next + 1, unread_count = unread_count + 1, total_count = total_count + 1
+		WHERE id = $1
+	`, folderID); err != nil {
+		return 0, fmt.Errorf("advance uid_next and folder counters: %w", err)
 	}
 
 	// email_messages.id defaults to gen_random_uuid() per the migration - no explicit value needed.
@@ -59,6 +62,10 @@ func (r *InboundMessageRepository) Persist(ctx context.Context, input port.Persi
 
 	if _, err := tx.Exec(ctx, `UPDATE message_blobs SET ref_count = ref_count + 1 WHERE id = $1`, input.Blob.ID); err != nil {
 		return 0, fmt.Errorf("increment blob ref_count: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE mailboxes SET used_bytes = used_bytes + $1 WHERE id = $2`, input.Blob.SizeBytes, input.MailboxID); err != nil {
+		return 0, fmt.Errorf("increment mailbox used_bytes: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
