@@ -92,7 +92,7 @@ services:
     build: { context: ./services/protocols }
     restart: unless-stopped
     logging: *default-logging
-    ports: ["8080:8080", "25:25"]
+    ports: ["8080:8080", "25:25", "143:143"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       PRIMARY_MAIL_HOST: ${PRIMARY_MAIL_HOST:-mail.localhost}

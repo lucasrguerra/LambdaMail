@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/emersion/go-imap/v2/imapserver"
 	gosmtp "github.com/emersion/go-smtp"
 
 	"lambdamail/protocols/internal/application/usecase"
@@ -15,6 +16,7 @@ import (
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	tlsprovider "lambdamail/protocols/internal/infrastructure/tls"
+	imappresentation "lambdamail/protocols/internal/presentation/imap"
 	smtppresentation "lambdamail/protocols/internal/presentation/smtp"
 )
 
@@ -73,6 +75,28 @@ func main() {
 		log.Printf("lambdamail-protocols SMTP listening on %s", smtpServer.Addr)
 		if err := smtpServer.ListenAndServe(); err != nil {
 			log.Fatalf("smtp serve: %v", err)
+		}
+	}()
+
+	authRepo := postgres.NewAuthRepository(pool)
+	imapFolders := postgres.NewImapFolderRepository(pool)
+	messageQuery := postgres.NewMessageQueryRepository(pool)
+	flagRepo := postgres.NewFlagRepository(pool)
+	blobReader := diskstorage.NewLocalDiskBlobReader(pool)
+	imapUseCase := usecase.NewImapSessionUseCase(authRepo, imapFolders, messageQuery, flagRepo, blobReader)
+
+	imapServer := imapserver.New(&imapserver.Options{
+		NewSession: func(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+			return imappresentation.NewSession(c, imapUseCase)
+		},
+		TLSConfig:    &tls.Config{GetCertificate: certProvider.GetCertificate, MinVersion: tls.VersionTLS12},
+		InsecureAuth: false,
+	})
+
+	go func() {
+		log.Printf("lambdamail-protocols IMAP listening on :143")
+		if err := imapServer.ListenAndServe(":143"); err != nil {
+			log.Fatalf("imap serve: %v", err)
 		}
 	}()
 
