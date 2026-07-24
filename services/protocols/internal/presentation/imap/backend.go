@@ -160,14 +160,25 @@ func matchFolders(recs []port.ImapFolderRecord, ref string, patterns []string) [
 // pattern of iterating known messages and calling NumSet.Contains, rather
 // than trying to resolve "*" ranges ourselves).
 func (s *session) numSetIter(numSet imap.NumSet, messages []port.MessageRecord, f func(seqNum uint32, msg port.MessageRecord)) {
+	if numSet == nil {
+		return
+	}
 	for i, msg := range messages {
 		seqNum := uint32(i) + 1
 		var contains bool
 		switch set := numSet.(type) {
 		case imap.SeqSet:
 			contains = set.Contains(seqNum)
+		case *imap.SeqSet:
+			if set != nil {
+				contains = set.Contains(seqNum)
+			}
 		case imap.UIDSet:
 			contains = set.Contains(imap.UID(msg.UID))
+		case *imap.UIDSet:
+			if set != nil {
+				contains = set.Contains(imap.UID(msg.UID))
+			}
 		}
 		if contains {
 			f(seqNum, msg)
