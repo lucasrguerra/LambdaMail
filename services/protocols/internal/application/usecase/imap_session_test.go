@@ -149,6 +149,32 @@ func TestImapSessionUseCase_Expunge_DelegatesToRepository(t *testing.T) {
 	}
 }
 
+type fakeFlagRepository struct {
+	lastFolderID       string
+	lastUID            uint32
+	lastOp             port.FlagOp
+	lastFlags          []string
+	lastUnchangedSince uint64
+}
+
+func (f *fakeFlagRepository) SetFlags(_ context.Context, folderID string, uid uint32, op port.FlagOp, flags []string, unchangedSince uint64) (bool, error) {
+	f.lastFolderID, f.lastUID, f.lastOp, f.lastFlags, f.lastUnchangedSince = folderID, uid, op, flags, unchangedSince
+	return true, nil
+}
+
+func TestImapSessionUseCase_SetFlags_DelegatesToRepository(t *testing.T) {
+	flagRepo := &fakeFlagRepository{}
+	uc := NewImapSessionUseCase(nil, nil, nil, flagRepo, nil, nil, nil)
+
+	updated, err := uc.SetFlags(context.Background(), "folder-1", 7, port.FlagOpAdd, []string{"\\Seen"}, 10)
+	if err != nil || !updated {
+		t.Fatalf("SetFlags error: %v, updated=%v", err, updated)
+	}
+	if flagRepo.lastFolderID != "folder-1" || flagRepo.lastUID != 7 || flagRepo.lastUnchangedSince != 10 {
+		t.Errorf("flagRepo state = %+v, want folder-1 uid 7 unchangedSince 10", flagRepo)
+	}
+}
+
 func TestImapSessionUseCase_CopyMessages_ReturnsRepositoryResult(t *testing.T) {
 	copier := &fakeCopyRepository{result: []port.CopiedMessage{{SourceUID: 3, DestUID: 1}, {SourceUID: 7, DestUID: 2}}}
 	uc := NewImapSessionUseCase(nil, nil, nil, nil, nil, nil, copier)

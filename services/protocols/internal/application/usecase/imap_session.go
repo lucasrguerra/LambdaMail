@@ -23,17 +23,37 @@ var ErrNoSuchFolder = errors.New("imap session: no such folder")
 // HandleImapCommandUseCase (this sub-project's scope: LOGIN, LIST, SELECT,
 // FETCH, STORE; SEARCH/EXPUNGE/IDLE/MOVE land in later sub-projects).
 type ImapSessionUseCase struct {
-	auth     port.AuthRepository
-	folders  port.ImapFolderRepository
-	messages port.MessageQueryRepository
-	flags    port.FlagRepository
-	blobs    port.BlobReader
-	expunger port.ExpungeRepository
-	copier   port.CopyRepository
+	auth           port.AuthRepository
+	folders        port.ImapFolderRepository
+	messages       port.MessageQueryRepository
+	flags          port.FlagRepository
+	blobs          port.BlobReader
+	expunger       port.ExpungeRepository
+	copier         port.CopyRepository
+	trackerManager *MailboxTrackerManager
 }
 
 func NewImapSessionUseCase(auth port.AuthRepository, folders port.ImapFolderRepository, messages port.MessageQueryRepository, flags port.FlagRepository, blobs port.BlobReader, expunger port.ExpungeRepository, copier port.CopyRepository) *ImapSessionUseCase {
-	return &ImapSessionUseCase{auth: auth, folders: folders, messages: messages, flags: flags, blobs: blobs, expunger: expunger, copier: copier}
+	return &ImapSessionUseCase{
+		auth:           auth,
+		folders:        folders,
+		messages:       messages,
+		flags:          flags,
+		blobs:          blobs,
+		expunger:       expunger,
+		copier:         copier,
+		trackerManager: NewMailboxTrackerManager(),
+	}
+}
+
+func (uc *ImapSessionUseCase) SetTrackerManager(tm *MailboxTrackerManager) {
+	if tm != nil {
+		uc.trackerManager = tm
+	}
+}
+
+func (uc *ImapSessionUseCase) GetTrackerManager() *MailboxTrackerManager {
+	return uc.trackerManager
 }
 
 func (uc *ImapSessionUseCase) Login(ctx context.Context, address, password string) (string, error) {
@@ -77,8 +97,8 @@ func (uc *ImapSessionUseCase) ReadBlob(ctx context.Context, blobID uuid.UUID) ([
 	return uc.blobs.ReadByID(ctx, blobID)
 }
 
-func (uc *ImapSessionUseCase) SetFlags(ctx context.Context, folderID string, uid uint32, op port.FlagOp, flags []string) error {
-	return uc.flags.SetFlags(ctx, folderID, uid, op, flags)
+func (uc *ImapSessionUseCase) SetFlags(ctx context.Context, folderID string, uid uint32, op port.FlagOp, flags []string, unchangedSince uint64) (bool, error) {
+	return uc.flags.SetFlags(ctx, folderID, uid, op, flags, unchangedSince)
 }
 
 func (uc *ImapSessionUseCase) Expunge(ctx context.Context, folderID string, uids []uint32) error {

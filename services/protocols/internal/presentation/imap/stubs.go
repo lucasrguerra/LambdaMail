@@ -9,7 +9,6 @@ package imappresentation
 
 import (
 	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
 )
 
 var errNotYetImplemented = &imap.Error{
@@ -25,14 +24,4 @@ func (s *session) Unsubscribe(_ string) error                      { return errN
 func (s *session) Append(_ string, _ imap.LiteralReader, _ *imap.AppendOptions) (*imap.AppendData, error) {
 	return nil, errNotYetImplemented
 }
-// Poll is called by imapserver before the status response of nearly every
-// command in the Authenticated/Selected state (see conn.go's c.poll), not
-// just in response to an explicit client IDLE/NOOP - returning an error here
-// would fail every real command (FETCH, STORE, ...), not just polling. This
-// sub-project doesn't push unsolicited EXISTS/EXPUNGE/FETCH updates (no
-// IDLE support - see Idle below), so reporting "no updates" via a nil
-// return is the correct, spec-compliant no-op, not a stub.
-func (s *session) Poll(_ *imapserver.UpdateWriter, _ bool) error { return nil }
-func (s *session) Idle(_ *imapserver.UpdateWriter, _ <-chan struct{}) error {
-	return errNotYetImplemented
-}
+

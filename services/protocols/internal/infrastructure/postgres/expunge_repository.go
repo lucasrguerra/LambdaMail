@@ -71,7 +71,7 @@ func (r *ExpungeRepository) Expunge(ctx context.Context, folderID string, uids [
 			unreadDelta = 1
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE folders SET total_count = total_count - 1, unread_count = unread_count - $1
+			UPDATE folders SET total_count = total_count - 1, unread_count = unread_count - $1, highest_modseq = highest_modseq + 1
 			WHERE id = $2
 		`, unreadDelta, folderID); err != nil {
 			return fmt.Errorf("decrement folder counters for uid %d: %w", uid, err)

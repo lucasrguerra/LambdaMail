@@ -14,6 +14,7 @@ type MessageRecord struct {
 	SizeBytes  int64
 	ReceivedAt time.Time
 	Flags      []string
+	ModSeq     uint64
 }
 
 // MessageQueryRepository lists a folder's messages for FETCH.

@@ -72,8 +72,9 @@ func (r *CopyRepository) copyOne(ctx context.Context, sourceFolderID string, sou
 	}
 	destUID := uint32(destUIDNext)
 
-	if _, err := tx.Exec(ctx, `UPDATE folders SET uid_next = uid_next + 1, total_count = total_count + 1 WHERE id = $1`, destFolderID); err != nil {
-		return 0, fmt.Errorf("advance destination uid_next: %w", err)
+	var destModSeq int64
+	if err := tx.QueryRow(ctx, `UPDATE folders SET uid_next = uid_next + 1, highest_modseq = highest_modseq + 1, total_count = total_count + 1 WHERE id = $1 RETURNING highest_modseq`, destFolderID).Scan(&destModSeq); err != nil {
+		return 0, fmt.Errorf("advance destination uid_next and highest_modseq: %w", err)
 	}
 
 	var wasSeen bool
@@ -97,14 +98,14 @@ func (r *CopyRepository) copyOne(ctx context.Context, sourceFolderID string, sou
 	var destReceivedAt any
 	err = tx.QueryRow(ctx, `
 		INSERT INTO email_messages (
-			mailbox_id, folder_id, uid, blob_id,
+			mailbox_id, folder_id, uid, modseq, blob_id,
 			sender_address, recipient_addresses, size_bytes,
 			spf_result, dkim_result, dmarc_result,
 			from_display_name, subject, snippet, message_id_header, in_reply_to, thread_id, has_attachments,
 			arc_result, dane_status, tls_version, spam_score, spam_verdict, virus_name
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		RETURNING id, received_at
-	`, destMailboxID, destFolderID, destUID, blobID, senderAddress, recipientAddresses, sizeBytes, spfResult, dkimResult, dmarcResult,
+	`, destMailboxID, destFolderID, destUID, destModSeq, blobID, senderAddress, recipientAddresses, sizeBytes, spfResult, dkimResult, dmarcResult,
 		fromDisplayName, subject, snippet, messageIDHeader, inReplyTo, threadID, hasAttachments,
 		arcResult, daneStatus, tlsVersion, spamScore, spamVerdict, virusName).Scan(&destMessageID, &destReceivedAt)
 	if err != nil {

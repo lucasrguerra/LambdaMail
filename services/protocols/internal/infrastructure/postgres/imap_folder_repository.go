@@ -20,13 +20,13 @@ func NewImapFolderRepository(pool *pgxpool.Pool) *ImapFolderRepository {
 
 func (r *ImapFolderRepository) FindByName(ctx context.Context, mailboxID, name string) (*port.ImapFolderRecord, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT f.id, f.name, f.uid_next, f.uid_validity, f.total_count
+		SELECT f.id, f.name, f.uid_next, f.uid_validity, f.total_count, f.highest_modseq
 		FROM folders f
 		WHERE f.mailbox_id = $1 AND f.name = $2
 	`, mailboxID, name)
 
 	var rec port.ImapFolderRecord
-	if err := row.Scan(&rec.ID, &rec.Name, &rec.UIDNext, &rec.UIDValidity, &rec.NumMessages); err != nil {
+	if err := row.Scan(&rec.ID, &rec.Name, &rec.UIDNext, &rec.UIDValidity, &rec.NumMessages, &rec.HighestModSeq); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -37,7 +37,7 @@ func (r *ImapFolderRepository) FindByName(ctx context.Context, mailboxID, name s
 
 func (r *ImapFolderRepository) ListFolders(ctx context.Context, mailboxID string) ([]port.ImapFolderRecord, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT f.id, f.name, f.uid_next, f.uid_validity, f.total_count
+		SELECT f.id, f.name, f.uid_next, f.uid_validity, f.total_count, f.highest_modseq
 		FROM folders f
 		WHERE f.mailbox_id = $1
 		ORDER BY f.name
@@ -50,7 +50,7 @@ func (r *ImapFolderRepository) ListFolders(ctx context.Context, mailboxID string
 	var out []port.ImapFolderRecord
 	for rows.Next() {
 		var rec port.ImapFolderRecord
-		if err := rows.Scan(&rec.ID, &rec.Name, &rec.UIDNext, &rec.UIDValidity, &rec.NumMessages); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Name, &rec.UIDNext, &rec.UIDValidity, &rec.NumMessages, &rec.HighestModSeq); err != nil {
 			return nil, err
 		}
 		out = append(out, rec)

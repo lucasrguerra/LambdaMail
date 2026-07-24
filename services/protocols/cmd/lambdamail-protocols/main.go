@@ -87,6 +87,7 @@ func main() {
 	expungeRepo := postgres.NewExpungeRepository(pool)
 	copyRepo := postgres.NewCopyRepository(pool)
 	imapUseCase := usecase.NewImapSessionUseCase(authRepo, imapFolders, messageQuery, flagRepo, blobReader, expungeRepo, copyRepo)
+	useCase.SetTrackerManager(imapUseCase.GetTrackerManager(), imapFolders)
 
 	imapServer := imapserver.New(&imapserver.Options{
 		NewSession: func(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
@@ -96,6 +97,8 @@ func main() {
 			imap.CapIMAP4rev1: {},
 			imap.CapMove:      {},
 			imap.CapUIDPlus:   {},
+			imap.CapIdle:      {},
+			imap.CapCondStore: {},
 		},
 		TLSConfig:    &tls.Config{GetCertificate: certProvider.GetCertificate, MinVersion: tls.VersionTLS12},
 		InsecureAuth: false,

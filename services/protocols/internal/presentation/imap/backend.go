@@ -19,6 +19,7 @@ type session struct {
 	useCase        *usecase.ImapSessionUseCase
 	mailboxID      string
 	selectedFolder *port.ImapFolderRecord
+	tracker        *imapserver.SessionTracker
 }
 
 // NewSession is the imapserver.Options.NewSession callback.
@@ -37,7 +38,13 @@ func toIMAPError(err error) error {
 	}
 }
 
-func (s *session) Close() error { return nil }
+func (s *session) Close() error {
+	if s.tracker != nil {
+		s.tracker.Close()
+		s.tracker = nil
+	}
+	return nil
+}
 
 func (s *session) Login(username, password string) error {
 	mailboxID, err := s.useCase.Login(context.Background(), username, password)
@@ -53,15 +60,27 @@ func (s *session) Select(mailbox string, _ *imap.SelectOptions) (*imap.SelectDat
 	if err != nil {
 		return nil, toIMAPError(err)
 	}
+	if s.tracker != nil {
+		s.tracker.Close()
+		s.tracker = nil
+	}
 	s.selectedFolder = rec
+	if tm := s.useCase.GetTrackerManager(); tm != nil {
+		s.tracker = tm.GetTracker(rec.ID, rec.NumMessages).NewSession()
+	}
 	return &imap.SelectData{
-		NumMessages: rec.NumMessages,
-		UIDNext:     imap.UID(rec.UIDNext),
-		UIDValidity: rec.UIDValidity,
+		NumMessages:   rec.NumMessages,
+		UIDNext:       imap.UID(rec.UIDNext),
+		UIDValidity:   rec.UIDValidity,
+		HighestModSeq: rec.HighestModSeq,
 	}, nil
 }
 
 func (s *session) Unselect() error {
+	if s.tracker != nil {
+		s.tracker.Close()
+		s.tracker = nil
+	}
 	s.selectedFolder = nil
 	return nil
 }
@@ -82,7 +101,24 @@ func (s *session) Status(mailbox string, options *imap.StatusOptions) (*imap.Sta
 	if options.UIDValidity {
 		data.UIDValidity = rec.UIDValidity
 	}
+	if options.HighestModSeq {
+		data.HighestModSeq = rec.HighestModSeq
+	}
 	return data, nil
+}
+
+func (s *session) Poll(w *imapserver.UpdateWriter, allowExpunge bool) error {
+	if s.tracker == nil {
+		return nil
+	}
+	return s.tracker.Poll(w, allowExpunge)
+}
+
+func (s *session) Idle(w *imapserver.UpdateWriter, stop <-chan struct{}) error {
+	if s.tracker == nil {
+		return nil
+	}
+	return s.tracker.Idle(w, stop)
 }
 
 func (s *session) List(w *imapserver.ListWriter, ref string, patterns []string, options *imap.ListOptions) error {
@@ -151,6 +187,9 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *
 	var fetchErr error
 	s.numSetIter(numSet, messages, func(seqNum uint32, msg port.MessageRecord) {
 		if fetchErr != nil {
+			return
+		}
+		if options.ChangedSince > 0 && msg.ModSeq <= options.ChangedSince {
 			return
 		}
 		respWriter := w.CreateMessage(seqNum)
@@ -273,6 +312,11 @@ func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imap.UIDSet) error 
 	if err != nil {
 		return err
 	}
+	if tm := s.useCase.GetTrackerManager(); tm != nil && s.selectedFolder != nil {
+		for _, seqNum := range seqNums {
+			tm.NotifyExpunge(s.selectedFolder.ID, seqNum)
+		}
+	}
 	// w is nil in unit tests that only assert the use-case call, since
 	// *imapserver.ExpungeWriter has no exported constructor and can only be
 	// built by a live *imapserver.Conn (same constraint as *ListWriter -
@@ -317,6 +361,9 @@ func (s *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) 
 		sourceUIDs.AddNum(imap.UID(c.SourceUID))
 		destUIDs.AddNum(imap.UID(c.DestUID))
 	}
+	if tm := s.useCase.GetTrackerManager(); tm != nil {
+		tm.NotifyNumMessages(destFolder.ID, destFolder.NumMessages+uint32(len(copied)))
+	}
 	return &imap.CopyData{UIDValidity: destFolder.UIDValidity, SourceUIDs: sourceUIDs, DestUIDs: destUIDs}, nil
 }
 
@@ -344,6 +391,11 @@ func (s *session) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest string
 	seqNums, err := s.expungeUIDs(&copyData.SourceUIDs, false)
 	if err != nil {
 		return err
+	}
+	if tm := s.useCase.GetTrackerManager(); tm != nil && s.selectedFolder != nil {
+		for _, seqNum := range seqNums {
+			tm.NotifyExpunge(s.selectedFolder.ID, seqNum)
+		}
 	}
 	// w is nil in unit tests that only assert the use-case call, mirroring
 	// Expunge's nil-writer accommodation above.
@@ -376,23 +428,30 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *im
 		flagNames[i] = string(f)
 	}
 
+	var unchangedSince uint64
+	if options != nil {
+		unchangedSince = options.UnchangedSince
+	}
+
 	messages, err := s.useCase.FetchMessages(context.Background(), s.selectedFolder.ID)
 	if err != nil {
 		return toIMAPError(err)
 	}
 
-	// Resolve numSet against the folder's real message list (same pattern as
-	// Fetch), rather than pulling raw values via NumSet.Nums(): dynamic
-	// ranges like "1:*" cannot be resolved without a concrete candidate to
-	// test against, and Nums() returns (nil, false) for them. This also
-	// naturally supports plain (non-UID) STORE via the SeqSet case.
 	var storeErr error
-	s.numSetIter(numSet, messages, func(_ uint32, msg port.MessageRecord) {
+	s.numSetIter(numSet, messages, func(seqNum uint32, msg port.MessageRecord) {
 		if storeErr != nil {
 			return
 		}
-		if err := s.useCase.SetFlags(context.Background(), s.selectedFolder.ID, msg.UID, op, flagNames); err != nil {
+		updated, err := s.useCase.SetFlags(context.Background(), s.selectedFolder.ID, msg.UID, op, flagNames, unchangedSince)
+		if err != nil {
 			storeErr = toIMAPError(err)
+			return
+		}
+		if updated {
+			if tm := s.useCase.GetTrackerManager(); tm != nil {
+				tm.NotifyMessageFlags(s.selectedFolder.ID, seqNum, msg.UID, flagNames, s.tracker)
+			}
 		}
 	})
 	if storeErr != nil {

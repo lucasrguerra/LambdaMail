@@ -69,10 +69,10 @@ type fakeFlagCall struct {
 	flags    []string
 }
 
-func (f *fakeFlagRepository) SetFlags(_ context.Context, folderID string, uid uint32, op port.FlagOp, flags []string) error {
+func (f *fakeFlagRepository) SetFlags(_ context.Context, folderID string, uid uint32, op port.FlagOp, flags []string, _ uint64) (bool, error) {
 	f.lastFolderID, f.lastUID, f.lastOp, f.lastFlags = folderID, uid, op, flags
 	f.calls = append(f.calls, fakeFlagCall{folderID: folderID, uid: uid, op: op, flags: flags})
-	return nil
+	return true, nil
 }
 
 type fakeBlobReader struct {
@@ -451,7 +451,7 @@ func TestSession_Expunge_CallsUseCaseWithDeletedUIDsOnly(t *testing.T) {
 	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
 		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
 	}}
-	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{"INBOX": {ID: "folder-1"}}}
+	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{"INBOX": {ID: "folder-1", NumMessages: 3}}}
 	messages := &fakeMessageQueryRepository{messages: []port.MessageRecord{
 		{UID: 1, Flags: []string{"\\Deleted"}},
 		{UID: 2, Flags: nil},
@@ -534,7 +534,7 @@ func TestSession_Move_ExpungesCopiedMessageEvenWithoutDeletedFlag(t *testing.T) 
 		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
 	}}
 	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{
-		"INBOX":   {ID: "folder-1"},
+		"INBOX":   {ID: "folder-1", NumMessages: 1},
 		"Archive": {ID: "folder-2", UIDValidity: 42},
 	}}
 	// UID 5 has no \Deleted flag - MOVE must still expunge it from the

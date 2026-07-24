@@ -9,6 +9,7 @@ type ImapFolderRecord struct {
 	UIDNext     uint32
 	UIDValidity uint32
 	NumMessages uint32
+	HighestModSeq uint64
 }
 
 // ImapFolderRepository resolves a mailbox's folders for LIST and SELECT.
