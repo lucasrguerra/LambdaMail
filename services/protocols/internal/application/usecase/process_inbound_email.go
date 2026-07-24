@@ -36,13 +36,20 @@ type ProcessInboundEmailInput struct {
 // resolution + durable persistence; SPF/DKIM/DMARC/spam/virus checks land in
 // later sub-projects).
 type ProcessInboundEmailUseCase struct {
-	mailboxes port.MailboxRepository
-	blobs     port.BlobStorage
-	messages  port.InboundMessageRepository
+	mailboxes      port.MailboxRepository
+	blobs          port.BlobStorage
+	messages       port.InboundMessageRepository
+	folders        port.ImapFolderRepository
+	trackerManager *MailboxTrackerManager
 }
 
 func NewProcessInboundEmailUseCase(mailboxes port.MailboxRepository, blobs port.BlobStorage, messages port.InboundMessageRepository) *ProcessInboundEmailUseCase {
 	return &ProcessInboundEmailUseCase{mailboxes: mailboxes, blobs: blobs, messages: messages}
+}
+
+func (uc *ProcessInboundEmailUseCase) SetTrackerManager(tm *MailboxTrackerManager, folders port.ImapFolderRepository) {
+	uc.trackerManager = tm
+	uc.folders = folders
 }
 
 // ResolveRecipient is called from the SMTP session's RCPT TO handler. It
@@ -87,6 +94,13 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		})
 		if err != nil {
 			return err
+		}
+
+		if uc.trackerManager != nil && uc.folders != nil {
+			folderRec, err := uc.folders.FindByName(ctx, recipient.ID.String(), "INBOX")
+			if err == nil && folderRec != nil {
+				uc.trackerManager.NotifyNumMessages(folderRec.ID, folderRec.NumMessages)
+			}
 		}
 	}
 	return nil

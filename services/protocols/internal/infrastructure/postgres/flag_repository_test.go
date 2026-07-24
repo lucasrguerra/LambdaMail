@@ -70,8 +70,8 @@ func TestFlagRepository_SetFlags_AddThenDelThenSet(t *testing.T) {
 
 	repo := NewFlagRepository(pool)
 
-	if err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpAdd, []string{"\\Seen", "\\Flagged"}); err != nil {
-		t.Fatalf("add: %v", err)
+	if updated, err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpAdd, []string{"\\Seen", "\\Flagged"}, 0); err != nil || !updated {
+		t.Fatalf("add: updated=%v, err=%v", updated, err)
 	}
 	got := readFlags()
 	sort.Strings(got)
@@ -79,16 +79,16 @@ func TestFlagRepository_SetFlags_AddThenDelThenSet(t *testing.T) {
 		t.Fatalf("after add: flags = %v, want [\\Flagged \\Seen]", got)
 	}
 
-	if err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpDel, []string{"\\Flagged"}); err != nil {
-		t.Fatalf("del: %v", err)
+	if updated, err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpDel, []string{"\\Flagged"}, 0); err != nil || !updated {
+		t.Fatalf("del: updated=%v, err=%v", updated, err)
 	}
 	got = readFlags()
 	if len(got) != 1 || got[0] != "\\Seen" {
 		t.Fatalf("after del: flags = %v, want [\\Seen]", got)
 	}
 
-	if err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpSet, []string{"\\Answered"}); err != nil {
-		t.Fatalf("set: %v", err)
+	if updated, err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpSet, []string{"\\Answered"}, 0); err != nil || !updated {
+		t.Fatalf("set: updated=%v, err=%v", updated, err)
 	}
 	got = readFlags()
 	if len(got) != 1 || got[0] != "\\Answered" {
@@ -99,11 +99,22 @@ func TestFlagRepository_SetFlags_AddThenDelThenSet(t *testing.T) {
 	// single command - must not fail the whole STORE with a primary key
 	// violation on the second INSERT for the same (message_id, received_at,
 	// flag).
-	if err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpSet, []string{"\\Seen", "\\Seen"}); err != nil {
-		t.Fatalf("set with duplicate flags in input: %v", err)
+	if updated, err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpSet, []string{"\\Seen", "\\Seen"}, 0); err != nil || !updated {
+		t.Fatalf("set with duplicate flags in input: updated=%v, err=%v", updated, err)
 	}
 	got = readFlags()
 	if len(got) != 1 || got[0] != "\\Seen" {
 		t.Fatalf("after set with duplicate input flags: flags = %v, want [\\Seen]", got)
+	}
+
+	// Test UNCHANGEDSINCE conditional store:
+	// Message's modseq was updated during the previous SetFlags call.
+	// Providing a lower unchangedSince value must fail (return updated=false).
+	if updated, err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpSet, []string{"\\Flagged"}, 1); err != nil || updated {
+		t.Fatalf("conditional set with lower modseq: expected updated=false, got updated=%v, err=%v", updated, err)
+	}
+	// Providing a matching or higher unchangedSince value must succeed (return updated=true).
+	if updated, err := repo.SetFlags(ctx, folderID.String(), 7, port.FlagOpSet, []string{"\\Flagged"}, 100); err != nil || !updated {
+		t.Fatalf("conditional set with higher modseq: expected updated=true, got updated=%v, err=%v", updated, err)
 	}
 }

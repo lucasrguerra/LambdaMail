@@ -39,21 +39,23 @@ func (r *InboundMessageRepository) Persist(ctx context.Context, input port.Persi
 		return 0, fmt.Errorf("find inbox folder for mailbox %s: %w", input.MailboxID, err)
 	}
 
-	if _, err := tx.Exec(ctx, `
-		UPDATE folders SET uid_next = uid_next + 1, unread_count = unread_count + 1, total_count = total_count + 1
+	var modseq int64
+	if err := tx.QueryRow(ctx, `
+		UPDATE folders SET uid_next = uid_next + 1, highest_modseq = highest_modseq + 1, unread_count = unread_count + 1, total_count = total_count + 1
 		WHERE id = $1
-	`, folderID); err != nil {
-		return 0, fmt.Errorf("advance uid_next and folder counters: %w", err)
+		RETURNING highest_modseq
+	`, folderID).Scan(&modseq); err != nil {
+		return 0, fmt.Errorf("advance uid_next, highest_modseq and folder counters: %w", err)
 	}
 
 	// email_messages.id defaults to gen_random_uuid() per the migration - no explicit value needed.
 	_, err = tx.Exec(ctx, `
 		INSERT INTO email_messages (
-			mailbox_id, folder_id, uid, blob_id,
+			mailbox_id, folder_id, uid, modseq, blob_id,
 			sender_address, recipient_addresses, size_bytes,
 			spf_result, dkim_result, dmarc_result
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, input.MailboxID, folderID, uid, input.Blob.ID,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, input.MailboxID, folderID, uid, modseq, input.Blob.ID,
 		input.SenderAddress, []string{input.RecipientAddress}, input.Blob.SizeBytes,
 		input.SPFResult, input.DKIMResult, input.DMARCResult)
 	if err != nil {

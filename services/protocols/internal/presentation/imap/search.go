@@ -46,7 +46,7 @@ func (s *session) Search(numKind imapserver.NumKind, criteria *imap.SearchCriter
 			return s.useCase.ReadBlob(context.Background(), blobID)
 		}
 
-		if !matchCriteria(seqNum, msg.UID, msg.ReceivedAt, msg.SizeBytes, flags, criteria, loadRaw) {
+		if !matchCriteria(seqNum, msg.UID, msg.ReceivedAt, msg.SizeBytes, msg.ModSeq, flags, criteria, loadRaw) {
 			continue
 		}
 
@@ -81,7 +81,7 @@ func (s *session) Search(numKind imapserver.NumKind, criteria *imap.SearchCriter
 // actually needs them (Header/Body/Text/SentSince/SentBefore), since this
 // codebase is Postgres-backed with blobs fetched on demand rather than
 // always held in memory like imapmemserver's reference message buffer.
-func matchCriteria(seqNum, uid uint32, receivedAt time.Time, sizeBytes int64, flags []imap.Flag, criteria *imap.SearchCriteria, loadRaw func() ([]byte, error)) bool {
+func matchCriteria(seqNum, uid uint32, receivedAt time.Time, sizeBytes int64, modSeq uint64, flags []imap.Flag, criteria *imap.SearchCriteria, loadRaw func() ([]byte, error)) bool {
 	for _, seqSet := range criteria.SeqNum {
 		if seqNum == 0 || !seqSet.Contains(seqNum) {
 			return false
@@ -94,6 +94,12 @@ func matchCriteria(seqNum, uid uint32, receivedAt time.Time, sizeBytes int64, fl
 	}
 	if !matchDate(receivedAt, criteria.Since, criteria.Before) {
 		return false
+	}
+
+	if criteria.ModSeq != nil && criteria.ModSeq.ModSeq > 0 {
+		if modSeq < criteria.ModSeq.ModSeq {
+			return false
+		}
 	}
 
 	flagSet := make(map[imap.Flag]struct{}, len(flags))
@@ -159,13 +165,13 @@ func matchCriteria(seqNum, uid uint32, receivedAt time.Time, sizeBytes int64, fl
 	}
 
 	for _, not := range criteria.Not {
-		if matchCriteria(seqNum, uid, receivedAt, sizeBytes, flags, &not, loadRaw) {
+		if matchCriteria(seqNum, uid, receivedAt, sizeBytes, modSeq, flags, &not, loadRaw) {
 			return false
 		}
 	}
 	for _, or := range criteria.Or {
-		if !matchCriteria(seqNum, uid, receivedAt, sizeBytes, flags, &or[0], loadRaw) &&
-			!matchCriteria(seqNum, uid, receivedAt, sizeBytes, flags, &or[1], loadRaw) {
+		if !matchCriteria(seqNum, uid, receivedAt, sizeBytes, modSeq, flags, &or[0], loadRaw) &&
+			!matchCriteria(seqNum, uid, receivedAt, sizeBytes, modSeq, flags, &or[1], loadRaw) {
 			return false
 		}
 	}
