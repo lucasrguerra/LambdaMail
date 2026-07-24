@@ -18,6 +18,7 @@ import (
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	tlsprovider "lambdamail/protocols/internal/infrastructure/tls"
 	imappresentation "lambdamail/protocols/internal/presentation/imap"
+	pop3presentation "lambdamail/protocols/internal/presentation/pop3"
 	smtppresentation "lambdamail/protocols/internal/presentation/smtp"
 )
 
@@ -108,6 +109,16 @@ func main() {
 		log.Printf("lambdamail-protocols IMAP listening on :143")
 		if err := imapServer.ListenAndServe(":143"); err != nil {
 			log.Fatalf("imap serve: %v", err)
+		}
+	}()
+
+	pop3UseCase := usecase.NewPop3SessionUseCase(authRepo, imapFolders, messageQuery, blobReader, expungeRepo)
+	pop3Server := pop3presentation.NewServer(":110", pop3UseCase, certProvider)
+
+	go func() {
+		log.Printf("lambdamail-protocols POP3 listening on :110")
+		if err := pop3Server.ListenAndServe(); err != nil {
+			log.Fatalf("pop3 serve: %v", err)
 		}
 	}()
 
