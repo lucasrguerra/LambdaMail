@@ -175,8 +175,8 @@ func TestImapIdleAndCondStoreEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SEARCH FLAGGED: %v", err)
 	}
-	if searchRes.Count != 1 {
-		t.Fatalf("SEARCH FLAGGED expected 1 result, got %d", searchRes.Count)
+	if len(searchRes.AllSeqNums()) != 1 {
+		t.Fatalf("SEARCH FLAGGED expected 1 result, got %d (all=%v)", len(searchRes.AllSeqNums()), searchRes.AllSeqNums())
 	}
 
 	// --- IDLE test -----------------------------------------------------------

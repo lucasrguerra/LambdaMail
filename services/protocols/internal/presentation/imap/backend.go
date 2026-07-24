@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
@@ -179,6 +180,8 @@ func (s *session) numSetIter(numSet imap.NumSet, messages []port.MessageRecord, 
 			if set != nil {
 				contains = set.Contains(imap.UID(msg.UID))
 			}
+		default:
+			log.Printf("[DEBUG numSetIter] UNKNOWN numSet type: %T (val=%#v)", numSet, numSet)
 		}
 		if contains {
 			f(seqNum, msg)
