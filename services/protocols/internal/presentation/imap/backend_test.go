@@ -83,6 +83,32 @@ func (f *fakeBlobReader) ReadByID(_ context.Context, blobID uuid.UUID) ([]byte, 
 	return f.content[blobID], nil
 }
 
+// fakeExpungeRepository/fakeCopyRepository duplicate the fakes from
+// internal/application/usecase/imap_session_test.go - Go test files in
+// different packages can't share unexported test helpers.
+type fakeExpungeRepository struct {
+	calls []struct {
+		folderID string
+		uids     []uint32
+	}
+}
+
+func (f *fakeExpungeRepository) Expunge(_ context.Context, folderID string, uids []uint32) error {
+	f.calls = append(f.calls, struct {
+		folderID string
+		uids     []uint32
+	}{folderID, uids})
+	return nil
+}
+
+type fakeCopyRepository struct {
+	result []port.CopiedMessage
+}
+
+func (f *fakeCopyRepository) CopyMessages(_ context.Context, _ string, _ []uint32, _ string) ([]port.CopiedMessage, error) {
+	return f.result, nil
+}
+
 // testPasswordHash/testPassword duplicate the constants from
 // internal/application/usecase/imap_session_test.go - a real Argon2id PHC
 // hash for "correct horse battery staple", generated once with
@@ -94,7 +120,24 @@ const (
 )
 
 func newTestSession(auth *fakeAuthRepository, folders *fakeImapFolderRepository, messages *fakeMessageQueryRepository, flags *fakeFlagRepository, blobs *fakeBlobReader) imapserver.Session {
-	uc := usecase.NewImapSessionUseCase(auth, folders, messages, flags, blobs)
+	// expunger/copier are nil here: none of the tests using this helper
+	// exercise Expunge/CopyMessages, and NewImapSessionUseCase only stores
+	// these interfaces without dereferencing them at construction time.
+	// Tests that DO exercise Expunge/Copy use
+	// newTestSessionWithExpungeAndCopy below instead.
+	return newTestSessionWithExpungeAndCopy(auth, folders, messages, flags, blobs, nil, nil)
+}
+
+func newTestSessionWithExpungeAndCopy(auth *fakeAuthRepository, folders *fakeImapFolderRepository, messages *fakeMessageQueryRepository, flags *fakeFlagRepository, blobs *fakeBlobReader, expunger *fakeExpungeRepository, copier *fakeCopyRepository) imapserver.Session {
+	var expungeRepo port.ExpungeRepository
+	if expunger != nil {
+		expungeRepo = expunger
+	}
+	var copyRepo port.CopyRepository
+	if copier != nil {
+		copyRepo = copier
+	}
+	uc := usecase.NewImapSessionUseCase(auth, folders, messages, flags, blobs, expungeRepo, copyRepo)
 	sess, _, err := NewSession(nil, uc)
 	if err != nil {
 		panic(err)
@@ -400,6 +443,124 @@ func TestSession_List_UsesFolderRepository(t *testing.T) {
 	matched := matchFolders(recs, "", []string{"*"})
 	if len(matched) != 1 || matched[0].Name != "INBOX" {
 		t.Errorf("matched = %+v, want a single INBOX record", matched)
+	}
+}
+
+func TestSession_Expunge_CallsUseCaseWithDeletedUIDsOnly(t *testing.T) {
+	mailboxID := uuid.New()
+	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
+		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
+	}}
+	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{"INBOX": {ID: "folder-1"}}}
+	messages := &fakeMessageQueryRepository{messages: []port.MessageRecord{
+		{UID: 1, Flags: []string{"\\Deleted"}},
+		{UID: 2, Flags: nil},
+		{UID: 3, Flags: []string{"\\Deleted", "\\Seen"}},
+	}}
+	expunger := &fakeExpungeRepository{}
+	sess := newTestSessionWithExpungeAndCopy(auth, folders, messages, &fakeFlagRepository{}, &fakeBlobReader{}, expunger, &fakeCopyRepository{})
+	_ = sess.Login("user@example.test", testPassword)
+	if _, err := sess.Select("INBOX", &imap.SelectOptions{}); err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+
+	if err := sess.Expunge(nil, nil); err != nil {
+		t.Fatalf("Expunge: %v", err)
+	}
+	if len(expunger.calls) != 1 {
+		t.Fatalf("expunger called %d times, want 1", len(expunger.calls))
+	}
+	uids := expunger.calls[0].uids
+	if len(uids) != 2 || uids[0] != 1 || uids[1] != 3 {
+		t.Errorf("expunged uids = %v, want [1 3] (only \\Deleted messages)", uids)
+	}
+}
+
+func TestSession_Copy_CallsUseCaseAndBuildsCopyData(t *testing.T) {
+	mailboxID := uuid.New()
+	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
+		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
+	}}
+	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{
+		"INBOX":   {ID: "folder-1"},
+		"Archive": {ID: "folder-2", UIDValidity: 42},
+	}}
+	messages := &fakeMessageQueryRepository{messages: []port.MessageRecord{{UID: 5}}}
+	copier := &fakeCopyRepository{result: []port.CopiedMessage{{SourceUID: 5, DestUID: 1}}}
+	sess := newTestSessionWithExpungeAndCopy(auth, folders, messages, &fakeFlagRepository{}, &fakeBlobReader{}, &fakeExpungeRepository{}, copier)
+	_ = sess.Login("user@example.test", testPassword)
+	_, _ = sess.Select("INBOX", &imap.SelectOptions{})
+
+	data, err := sess.Copy(imap.UIDSetNum(5), "Archive")
+	if err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	if data.UIDValidity != 42 {
+		t.Errorf("UIDValidity = %d, want 42", data.UIDValidity)
+	}
+	srcNums, _ := data.SourceUIDs.Nums()
+	destNums, _ := data.DestUIDs.Nums()
+	if len(srcNums) != 1 || srcNums[0] != 5 || len(destNums) != 1 || destNums[0] != 1 {
+		t.Errorf("SourceUIDs=%v DestUIDs=%v, want [5]/[1]", srcNums, destNums)
+	}
+}
+
+func TestSession_Copy_FailsForUnknownDestination(t *testing.T) {
+	mailboxID := uuid.New()
+	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
+		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
+	}}
+	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{"INBOX": {ID: "folder-1"}}}
+	sess := newTestSessionWithExpungeAndCopy(auth, folders, &fakeMessageQueryRepository{}, &fakeFlagRepository{}, &fakeBlobReader{}, &fakeExpungeRepository{}, &fakeCopyRepository{})
+	_ = sess.Login("user@example.test", testPassword)
+	_, _ = sess.Select("INBOX", &imap.SelectOptions{})
+
+	_, err := sess.Copy(imap.UIDSetNum(5), "Nonexistent")
+	if err == nil {
+		t.Fatal("expected an error copying to a nonexistent folder, got nil")
+	}
+}
+
+// TestSession_Move_ExpungesCopiedMessageEvenWithoutDeletedFlag proves the
+// RFC 6851 fix: MOVE must expunge exactly the UIDs it just copied,
+// regardless of whether they carry \Deleted. Before this fix, Move called
+// the shared expungeUIDs helper in its \Deleted-requiring mode (the one
+// correct for EXPUNGE), so a message with no \Deleted flag would be copied
+// into the destination but never removed from the source folder - a silent
+// duplication instead of a move.
+func TestSession_Move_ExpungesCopiedMessageEvenWithoutDeletedFlag(t *testing.T) {
+	mailboxID := uuid.New()
+	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
+		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
+	}}
+	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{
+		"INBOX":   {ID: "folder-1"},
+		"Archive": {ID: "folder-2", UIDValidity: 42},
+	}}
+	// UID 5 has no \Deleted flag - MOVE must still expunge it from the
+	// source folder, unlike EXPUNGE which would skip it.
+	messages := &fakeMessageQueryRepository{messages: []port.MessageRecord{{UID: 5, Flags: nil}}}
+	expunger := &fakeExpungeRepository{}
+	copier := &fakeCopyRepository{result: []port.CopiedMessage{{SourceUID: 5, DestUID: 1}}}
+	sess := newTestSessionWithExpungeAndCopy(auth, folders, messages, &fakeFlagRepository{}, &fakeBlobReader{}, expunger, copier)
+	_ = sess.Login("user@example.test", testPassword)
+	if _, err := sess.Select("INBOX", &imap.SelectOptions{}); err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+
+	// w is nil here for the same reason Expunge's tests pass a nil writer:
+	// *imapserver.MoveWriter has no exported constructor and can only be
+	// built by a live *imapserver.Conn.
+	if err := sess.(*session).Move(nil, imap.UIDSetNum(5), "Archive"); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+
+	if len(expunger.calls) != 1 {
+		t.Fatalf("expunger called %d times, want 1", len(expunger.calls))
+	}
+	uids := expunger.calls[0].uids
+	if len(uids) != 1 || uids[0] != 5 {
+		t.Errorf("expunged uids = %v, want [5] (moved even though it has no \\Deleted flag)", uids)
 	}
 }
 

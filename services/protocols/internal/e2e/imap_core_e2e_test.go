@@ -108,10 +108,21 @@ func TestImapCoreEndToEnd(t *testing.T) {
 		postgres.NewMessageQueryRepository(pool),
 		postgres.NewFlagRepository(pool),
 		diskstorage.NewLocalDiskBlobReader(pool),
+		postgres.NewExpungeRepository(pool),
+		postgres.NewCopyRepository(pool),
 	)
 	server := imapserver.New(&imapserver.Options{
 		NewSession: func(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 			return imappresentation.NewSession(c, imapUC)
+		},
+		// Mirror main.go's Caps: without this, imapserver defaults to bare
+		// IMAP4rev1 and won't advertise MOVE/UIDPLUS, which the SEARCH/COPY/
+		// EXPUNGE scenarios below (and the server-side COPYUID response)
+		// depend on the client library correctly attributing.
+		Caps: imap.CapSet{
+			imap.CapIMAP4rev1: {},
+			imap.CapMove:      {},
+			imap.CapUIDPlus:   {},
 		},
 		InsecureAuth: true, // no TLS in this test - InsecureAuth lets LOGIN proceed over plaintext
 	})
@@ -195,5 +206,94 @@ func TestImapCoreEndToEnd(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("flags after STORE = %v, want to include \\Seen", fetchAfterStore[0].Flags)
+	}
+
+	// --- SEARCH: the STORE above set \Seen on the one seeded message -------
+	//
+	// SearchData.Count is only populated when the client requests an
+	// ESEARCH RETURN option (COUNT/MIN/MAX/ALL) - without SearchOptions the
+	// client sends a bare SEARCH command and the server replies with the
+	// classic "* SEARCH <seq-nums>" response, which the client library only
+	// folds into SearchData.All (verified against imapclient/search.go's
+	// handleSearch, which only appends to cmd.data.All for that response
+	// form, vs handleESearch which is the only path that sets data.Count).
+	// So matches must be counted via AllSeqNums(), not Count.
+	searchData, err := client.Search(&imap.SearchCriteria{
+		Flag: []imap.Flag{imap.FlagSeen},
+	}, nil).Wait()
+	if err != nil {
+		t.Fatalf("SEARCH: %v", err)
+	}
+	if matched := searchData.AllSeqNums(); len(matched) != 1 {
+		t.Errorf("SEARCH \\Seen matched %v, want exactly 1 sequence number", matched)
+	}
+
+	// --- COPY + EXPUNGE: seed a second folder the same way INBOX was seeded,
+	// copy the message into it, verify blob dedup accounting in Postgres,
+	// then expunge the (now \Deleted) INBOX original and confirm EXPUNGE
+	// only touched the selected folder.
+	archiveFolderID := "00000000-0000-0000-0000-000000000004"
+	if _, err := pool.Exec(ctx, `INSERT INTO folders (id, mailbox_id, name, special_use) VALUES ($1, $2, 'Archive', 'archive')`, archiveFolderID, mailboxID); err != nil {
+		t.Fatalf("seed Archive folder: %v", err)
+	}
+
+	copyData, err := client.Copy(imap.UIDSetNum(1), "Archive").Wait()
+	if err != nil {
+		t.Fatalf("COPY: %v", err)
+	}
+	destUIDs, ok := copyData.DestUIDs.Nums()
+	if !ok || len(destUIDs) != 1 {
+		t.Fatalf("COPY DestUIDs = %v (ok=%v), want exactly 1 UID", destUIDs, ok)
+	}
+
+	var inboxBlobID, archiveBlobID string
+	if err := pool.QueryRow(ctx, `SELECT blob_id FROM email_messages WHERE folder_id = $1 AND uid = 1 AND expunged_at IS NULL`, folderID).Scan(&inboxBlobID); err != nil {
+		t.Fatalf("query INBOX blob_id: %v", err)
+	}
+	var archiveCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM email_messages WHERE folder_id = $1 AND expunged_at IS NULL`, archiveFolderID).Scan(&archiveCount); err != nil {
+		t.Fatalf("count Archive messages: %v", err)
+	}
+	if archiveCount != 1 {
+		t.Errorf("Archive message count = %d, want 1", archiveCount)
+	}
+	if err := pool.QueryRow(ctx, `SELECT blob_id FROM email_messages WHERE folder_id = $1 AND expunged_at IS NULL`, archiveFolderID).Scan(&archiveBlobID); err != nil {
+		t.Fatalf("query Archive blob_id: %v", err)
+	}
+	if archiveBlobID != inboxBlobID {
+		t.Errorf("Archive blob_id = %s, want same blob as INBOX (%s)", archiveBlobID, inboxBlobID)
+	}
+	var refCount int
+	if err := pool.QueryRow(ctx, `SELECT ref_count FROM message_blobs WHERE id = $1`, inboxBlobID).Scan(&refCount); err != nil {
+		t.Fatalf("query blob ref_count: %v", err)
+	}
+	if refCount != 2 {
+		t.Errorf("message_blobs.ref_count = %d, want 2 after COPY", refCount)
+	}
+
+	if _, err := client.Store(imap.UIDSetNum(1), &imap.StoreFlags{
+		Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted},
+	}, nil).Collect(); err != nil {
+		t.Fatalf("STORE \\Deleted: %v", err)
+	}
+
+	if _, err := client.Expunge().Collect(); err != nil {
+		t.Fatalf("EXPUNGE: %v", err)
+	}
+
+	var inboxCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM email_messages WHERE folder_id = $1 AND expunged_at IS NULL`, folderID).Scan(&inboxCount); err != nil {
+		t.Fatalf("count INBOX messages after EXPUNGE: %v", err)
+	}
+	if inboxCount != 0 {
+		t.Errorf("INBOX message count after EXPUNGE = %d, want 0", inboxCount)
+	}
+
+	var archiveCountAfter int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM email_messages WHERE folder_id = $1 AND expunged_at IS NULL`, archiveFolderID).Scan(&archiveCountAfter); err != nil {
+		t.Fatalf("count Archive messages after EXPUNGE: %v", err)
+	}
+	if archiveCountAfter != 1 {
+		t.Errorf("Archive message count after INBOX EXPUNGE = %d, want 1 (untouched)", archiveCountAfter)
 	}
 }

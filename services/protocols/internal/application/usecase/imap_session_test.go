@@ -32,7 +32,7 @@ func TestImapSessionUseCase_Login_SucceedsForCorrectPassword(t *testing.T) {
 	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
 		"user@example.test": {ID: mailboxID, PasswordHash: testPasswordHash},
 	}}
-	uc := NewImapSessionUseCase(auth, nil, nil, nil, nil)
+	uc := NewImapSessionUseCase(auth, nil, nil, nil, nil, nil, nil)
 
 	gotID, err := uc.Login(context.Background(), "user@example.test", testPassword)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestImapSessionUseCase_Login_FailsForWrongPassword(t *testing.T) {
 	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{
 		"user@example.test": {ID: uuid.New(), PasswordHash: testPasswordHash},
 	}}
-	uc := NewImapSessionUseCase(auth, nil, nil, nil, nil)
+	uc := NewImapSessionUseCase(auth, nil, nil, nil, nil, nil, nil)
 
 	_, err := uc.Login(context.Background(), "user@example.test", "wrong-password")
 	if !errors.Is(err, ErrAuthFailed) {
@@ -57,7 +57,7 @@ func TestImapSessionUseCase_Login_FailsForWrongPassword(t *testing.T) {
 
 func TestImapSessionUseCase_Login_FailsForUnknownAddress(t *testing.T) {
 	auth := &fakeAuthRepository{byAddress: map[string]port.MailboxAuth{}}
-	uc := NewImapSessionUseCase(auth, nil, nil, nil, nil)
+	uc := NewImapSessionUseCase(auth, nil, nil, nil, nil, nil, nil)
 
 	_, err := uc.Login(context.Background(), "nobody@example.test", "anything")
 	if !errors.Is(err, ErrAuthFailed) {
@@ -89,7 +89,7 @@ func TestImapSessionUseCase_SelectFolder_ReturnsRecordForExistingFolder(t *testi
 	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{
 		"INBOX": {ID: "folder-1", Name: "INBOX", UIDNext: 3, UIDValidity: 1000, NumMessages: 2},
 	}}
-	uc := NewImapSessionUseCase(nil, folders, nil, nil, nil)
+	uc := NewImapSessionUseCase(nil, folders, nil, nil, nil, nil, nil)
 
 	rec, err := uc.SelectFolder(context.Background(), "mailbox-1", "INBOX")
 	if err != nil {
@@ -102,10 +102,62 @@ func TestImapSessionUseCase_SelectFolder_ReturnsRecordForExistingFolder(t *testi
 
 func TestImapSessionUseCase_SelectFolder_ReturnsErrNoSuchFolderWhenMissing(t *testing.T) {
 	folders := &fakeImapFolderRepository{byName: map[string]port.ImapFolderRecord{}}
-	uc := NewImapSessionUseCase(nil, folders, nil, nil, nil)
+	uc := NewImapSessionUseCase(nil, folders, nil, nil, nil, nil, nil)
 
 	_, err := uc.SelectFolder(context.Background(), "mailbox-1", "Nonexistent")
 	if !errors.Is(err, ErrNoSuchFolder) {
 		t.Fatalf("error = %v, want ErrNoSuchFolder", err)
+	}
+}
+
+type fakeExpungeRepository struct {
+	calls []struct {
+		folderID string
+		uids     []uint32
+	}
+}
+
+func (f *fakeExpungeRepository) Expunge(_ context.Context, folderID string, uids []uint32) error {
+	f.calls = append(f.calls, struct {
+		folderID string
+		uids     []uint32
+	}{folderID, uids})
+	return nil
+}
+
+type fakeCopyRepository struct {
+	result []port.CopiedMessage
+}
+
+func (f *fakeCopyRepository) CopyMessages(_ context.Context, _ string, _ []uint32, _ string) ([]port.CopiedMessage, error) {
+	return f.result, nil
+}
+
+func TestImapSessionUseCase_Expunge_DelegatesToRepository(t *testing.T) {
+	expunger := &fakeExpungeRepository{}
+	uc := NewImapSessionUseCase(nil, nil, nil, nil, nil, expunger, nil)
+
+	err := uc.Expunge(context.Background(), "folder-1", []uint32{3, 7})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(expunger.calls) != 1 || expunger.calls[0].folderID != "folder-1" {
+		t.Fatalf("calls = %+v, want one call with folderID=folder-1", expunger.calls)
+	}
+	if len(expunger.calls[0].uids) != 2 || expunger.calls[0].uids[0] != 3 || expunger.calls[0].uids[1] != 7 {
+		t.Errorf("uids = %v, want [3 7]", expunger.calls[0].uids)
+	}
+}
+
+func TestImapSessionUseCase_CopyMessages_ReturnsRepositoryResult(t *testing.T) {
+	copier := &fakeCopyRepository{result: []port.CopiedMessage{{SourceUID: 3, DestUID: 1}, {SourceUID: 7, DestUID: 2}}}
+	uc := NewImapSessionUseCase(nil, nil, nil, nil, nil, nil, copier)
+
+	got, err := uc.CopyMessages(context.Background(), "source-folder", []uint32{3, 7}, "dest-folder")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0].DestUID != 1 || got[1].DestUID != 2 {
+		t.Errorf("got = %+v, want [{3 1} {7 2}]", got)
 	}
 }

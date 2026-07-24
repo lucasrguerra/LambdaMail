@@ -28,10 +28,12 @@ type ImapSessionUseCase struct {
 	messages port.MessageQueryRepository
 	flags    port.FlagRepository
 	blobs    port.BlobReader
+	expunger port.ExpungeRepository
+	copier   port.CopyRepository
 }
 
-func NewImapSessionUseCase(auth port.AuthRepository, folders port.ImapFolderRepository, messages port.MessageQueryRepository, flags port.FlagRepository, blobs port.BlobReader) *ImapSessionUseCase {
-	return &ImapSessionUseCase{auth: auth, folders: folders, messages: messages, flags: flags, blobs: blobs}
+func NewImapSessionUseCase(auth port.AuthRepository, folders port.ImapFolderRepository, messages port.MessageQueryRepository, flags port.FlagRepository, blobs port.BlobReader, expunger port.ExpungeRepository, copier port.CopyRepository) *ImapSessionUseCase {
+	return &ImapSessionUseCase{auth: auth, folders: folders, messages: messages, flags: flags, blobs: blobs, expunger: expunger, copier: copier}
 }
 
 func (uc *ImapSessionUseCase) Login(ctx context.Context, address, password string) (string, error) {
@@ -77,4 +79,12 @@ func (uc *ImapSessionUseCase) ReadBlob(ctx context.Context, blobID uuid.UUID) ([
 
 func (uc *ImapSessionUseCase) SetFlags(ctx context.Context, folderID string, uid uint32, op port.FlagOp, flags []string) error {
 	return uc.flags.SetFlags(ctx, folderID, uid, op, flags)
+}
+
+func (uc *ImapSessionUseCase) Expunge(ctx context.Context, folderID string, uids []uint32) error {
+	return uc.expunger.Expunge(ctx, folderID, uids)
+}
+
+func (uc *ImapSessionUseCase) CopyMessages(ctx context.Context, sourceFolderID string, uids []uint32, destFolderID string) ([]port.CopiedMessage, error) {
+	return uc.copier.CopyMessages(ctx, sourceFolderID, uids, destFolderID)
 }

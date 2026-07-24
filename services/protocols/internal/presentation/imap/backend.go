@@ -123,7 +123,7 @@ func matchFolders(recs []port.ImapFolderRecord, ref string, patterns []string) [
 // numSet contains that message (matching imapmemserver's own reference
 // pattern of iterating known messages and calling NumSet.Contains, rather
 // than trying to resolve "*" ranges ourselves).
-func (s *session) numSetIter(numSet imap.NumSet, isUID bool, messages []port.MessageRecord, f func(seqNum uint32, msg port.MessageRecord)) {
+func (s *session) numSetIter(numSet imap.NumSet, messages []port.MessageRecord, f func(seqNum uint32, msg port.MessageRecord)) {
 	for i, msg := range messages {
 		seqNum := uint32(i) + 1
 		var contains bool
@@ -149,7 +149,7 @@ func (s *session) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *
 	}
 
 	var fetchErr error
-	s.numSetIter(numSet, options.UID, messages, func(seqNum uint32, msg port.MessageRecord) {
+	s.numSetIter(numSet, messages, func(seqNum uint32, msg port.MessageRecord) {
 		if fetchErr != nil {
 			return
 		}
@@ -207,6 +207,157 @@ func (s *session) writeFetchResponse(w *imapserver.FetchResponseWriter, msg port
 	return w.Close()
 }
 
+// expungeUIDs marks messages expunged: when requireDeleted is true, every
+// message in the selected folder carrying \Deleted (used by EXPUNGE, per RFC
+// 3501); when false, every message matched by uids regardless of flags (used
+// by MOVE, per RFC 6851 - "MOVE is not required to use the \Deleted flag to
+// mark messages", precisely so a client doesn't have to flag-then-expunge).
+// It tells the use case to mark the matched UIDs expunged, and returns their
+// sequence numbers in descending order (so callers can report EXPUNGE
+// responses without a removal invalidating the sequence numbers of messages
+// reported afterward - matches go-imap/v2's own imapmemserver reference
+// behavior). Shared by Expunge and Move, which each write their own EXPUNGE
+// responses against their own writer type (*imapserver.ExpungeWriter vs
+// *imapserver.MoveWriter): both types embed an unexported *imapserver.Conn
+// field set only by the imapserver package itself, so neither can be
+// constructed outside a live connection, and Move cannot simply delegate to
+// Expunge's full method.
+func (s *session) expungeUIDs(uids *imap.UIDSet, requireDeleted bool) ([]uint32, error) {
+	if s.selectedFolder == nil {
+		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No mailbox selected"}
+	}
+	messages, err := s.useCase.FetchMessages(context.Background(), s.selectedFolder.ID)
+	if err != nil {
+		return nil, toIMAPError(err)
+	}
+
+	var toExpunge []uint32
+	var seqNums []uint32
+	for i, msg := range messages {
+		seqNum := uint32(i) + 1
+		if uids != nil && !uids.Contains(imap.UID(msg.UID)) {
+			continue
+		}
+		if requireDeleted {
+			hasDeleted := false
+			for _, f := range msg.Flags {
+				if imap.Flag(f) == imap.FlagDeleted {
+					hasDeleted = true
+					break
+				}
+			}
+			if !hasDeleted {
+				continue
+			}
+		}
+		toExpunge = append(toExpunge, msg.UID)
+		seqNums = append(seqNums, seqNum)
+	}
+	if len(toExpunge) == 0 {
+		return nil, nil
+	}
+
+	if err := s.useCase.Expunge(context.Background(), s.selectedFolder.ID, toExpunge); err != nil {
+		return nil, toIMAPError(err)
+	}
+
+	// Reverse in place: descending sequence-number order.
+	for i, j := 0, len(seqNums)-1; i < j; i, j = i+1, j-1 {
+		seqNums[i], seqNums[j] = seqNums[j], seqNums[i]
+	}
+	return seqNums, nil
+}
+
+func (s *session) Expunge(w *imapserver.ExpungeWriter, uids *imap.UIDSet) error {
+	seqNums, err := s.expungeUIDs(uids, true)
+	if err != nil {
+		return err
+	}
+	// w is nil in unit tests that only assert the use-case call, since
+	// *imapserver.ExpungeWriter has no exported constructor and can only be
+	// built by a live *imapserver.Conn (same constraint as *ListWriter -
+	// see matchFolders' doc comment above). The real imapserver package
+	// never passes a nil writer.
+	if w == nil {
+		return nil
+	}
+	for _, seqNum := range seqNums {
+		if err := w.WriteExpunge(seqNum); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *session) Copy(numSet imap.NumSet, dest string) (*imap.CopyData, error) {
+	if s.selectedFolder == nil {
+		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No mailbox selected"}
+	}
+	destFolder, err := s.useCase.SelectFolder(context.Background(), s.mailboxID, dest)
+	if err != nil {
+		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeTryCreate, Text: "No such destination mailbox"}
+	}
+
+	messages, err := s.useCase.FetchMessages(context.Background(), s.selectedFolder.ID)
+	if err != nil {
+		return nil, toIMAPError(err)
+	}
+	var uids []uint32
+	s.numSetIter(numSet, messages, func(_ uint32, msg port.MessageRecord) {
+		uids = append(uids, msg.UID)
+	})
+
+	copied, err := s.useCase.CopyMessages(context.Background(), s.selectedFolder.ID, uids, destFolder.ID)
+	if err != nil {
+		return nil, toIMAPError(err)
+	}
+
+	var sourceUIDs, destUIDs imap.UIDSet
+	for _, c := range copied {
+		sourceUIDs.AddNum(imap.UID(c.SourceUID))
+		destUIDs.AddNum(imap.UID(c.DestUID))
+	}
+	return &imap.CopyData{UIDValidity: destFolder.UIDValidity, SourceUIDs: sourceUIDs, DestUIDs: destUIDs}, nil
+}
+
+// Move copies numSet into dest (reusing Copy's logic), reports the COPYUID
+// data, then expunges the just-copied source messages (RFC 6851: MOVE is
+// COPY + EXPUNGE-of-the-moved-messages-only, atomically from the client's
+// point of view). It deliberately does NOT call s.Expunge: that method
+// writes against *imapserver.ExpungeWriter, a different concrete type from
+// the *imapserver.MoveWriter this method receives, even though both expose a
+// method named WriteExpunge - so Move writes its own EXPUNGE responses
+// through its own writer, sharing only the expungeUIDs marking logic.
+func (s *session) Move(w *imapserver.MoveWriter, numSet imap.NumSet, dest string) error {
+	copyData, err := s.Copy(numSet, dest)
+	if err != nil {
+		return err
+	}
+	if w != nil {
+		if err := w.WriteCopyData(copyData); err != nil {
+			return err
+		}
+	}
+
+	// MOVE does not require \Deleted (RFC 6851): expunge exactly the
+	// UIDs Copy just copied, regardless of their flags.
+	seqNums, err := s.expungeUIDs(&copyData.SourceUIDs, false)
+	if err != nil {
+		return err
+	}
+	// w is nil in unit tests that only assert the use-case call, mirroring
+	// Expunge's nil-writer accommodation above.
+	if w == nil {
+		return nil
+	}
+	for _, seqNum := range seqNums {
+		if err := w.WriteExpunge(seqNum); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *session) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *imap.StoreFlags, options *imap.StoreOptions) error {
 	if s.selectedFolder == nil {
 		return &imap.Error{Type: imap.StatusResponseTypeNo, Text: "No mailbox selected"}
@@ -236,7 +387,7 @@ func (s *session) Store(w *imapserver.FetchWriter, numSet imap.NumSet, flags *im
 	// test against, and Nums() returns (nil, false) for them. This also
 	// naturally supports plain (non-UID) STORE via the SeqSet case.
 	var storeErr error
-	s.numSetIter(numSet, true, messages, func(_ uint32, msg port.MessageRecord) {
+	s.numSetIter(numSet, messages, func(_ uint32, msg port.MessageRecord) {
 		if storeErr != nil {
 			return
 		}

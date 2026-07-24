@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 	gosmtp "github.com/emersion/go-smtp"
 
@@ -83,11 +84,18 @@ func main() {
 	messageQuery := postgres.NewMessageQueryRepository(pool)
 	flagRepo := postgres.NewFlagRepository(pool)
 	blobReader := diskstorage.NewLocalDiskBlobReader(pool)
-	imapUseCase := usecase.NewImapSessionUseCase(authRepo, imapFolders, messageQuery, flagRepo, blobReader)
+	expungeRepo := postgres.NewExpungeRepository(pool)
+	copyRepo := postgres.NewCopyRepository(pool)
+	imapUseCase := usecase.NewImapSessionUseCase(authRepo, imapFolders, messageQuery, flagRepo, blobReader, expungeRepo, copyRepo)
 
 	imapServer := imapserver.New(&imapserver.Options{
 		NewSession: func(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 			return imappresentation.NewSession(c, imapUseCase)
+		},
+		Caps: imap.CapSet{
+			imap.CapIMAP4rev1: {},
+			imap.CapMove:      {},
+			imap.CapUIDPlus:   {},
 		},
 		TLSConfig:    &tls.Config{GetCertificate: certProvider.GetCertificate, MinVersion: tls.VersionTLS12},
 		InsecureAuth: false,

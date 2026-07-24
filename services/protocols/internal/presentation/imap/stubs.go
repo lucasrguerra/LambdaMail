@@ -36,12 +36,3 @@ func (s *session) Poll(_ *imapserver.UpdateWriter, _ bool) error { return nil }
 func (s *session) Idle(_ *imapserver.UpdateWriter, _ <-chan struct{}) error {
 	return errNotYetImplemented
 }
-func (s *session) Expunge(_ *imapserver.ExpungeWriter, _ *imap.UIDSet) error {
-	return errNotYetImplemented
-}
-func (s *session) Search(_ imapserver.NumKind, _ *imap.SearchCriteria, _ *imap.SearchOptions) (*imap.SearchData, error) {
-	return nil, errNotYetImplemented
-}
-func (s *session) Copy(_ imap.NumSet, _ string) (*imap.CopyData, error) {
-	return nil, errNotYetImplemented
-}
