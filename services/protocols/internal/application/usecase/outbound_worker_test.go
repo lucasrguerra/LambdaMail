@@ -1,16 +1,13 @@
 package usecase
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
-	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/domain/entity"
 )
 
