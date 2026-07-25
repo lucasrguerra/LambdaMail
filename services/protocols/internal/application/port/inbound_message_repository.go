@@ -13,6 +13,7 @@ type PersistInboundMessageInput struct {
 	Blob             BlobRef
 	SenderAddress    string
 	RecipientAddress string
+	TargetFolderName string // "INBOX", "Junk", etc. (defaults to "INBOX" if empty)
 	SPFResult        string
 	DKIMResult       string
 	DMARCResult      string

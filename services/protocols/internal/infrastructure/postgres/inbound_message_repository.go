@@ -28,15 +28,22 @@ func (r *InboundMessageRepository) Persist(ctx context.Context, input port.Persi
 	}
 	defer tx.Rollback(ctx) // no-op if Commit succeeds
 
+	targetFolder := input.TargetFolderName
+	if targetFolder == "" {
+		targetFolder = "INBOX"
+	}
+
 	var folderID string
 	var uid int64
 	err = tx.QueryRow(ctx, `
 		SELECT id, uid_next FROM folders
-		WHERE mailbox_id = $1 AND special_use = 'inbox'
+		WHERE mailbox_id = $1 AND (special_use = LOWER($2) OR LOWER(name) = LOWER($2))
+		ORDER BY special_use IS NOT NULL DESC
+		LIMIT 1
 		FOR UPDATE
-	`, input.MailboxID).Scan(&folderID, &uid)
+	`, input.MailboxID, targetFolder).Scan(&folderID, &uid)
 	if err != nil {
-		return 0, fmt.Errorf("find inbox folder for mailbox %s: %w", input.MailboxID, err)
+		return 0, fmt.Errorf("find folder %q for mailbox %s: %w", targetFolder, input.MailboxID, err)
 	}
 
 	var modseq int64

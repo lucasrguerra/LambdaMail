@@ -3,11 +3,13 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 
 	"lambdamail/protocols/internal/application/port"
+	"lambdamail/protocols/internal/domain/valueobject"
 )
 
 // ErrRecipientNotFound is returned by ResolveRecipient when no active
@@ -36,6 +38,7 @@ type ProcessInboundEmailInput struct {
 // resolution + durable persistence; SPF/DKIM/DMARC/spam/virus checks land in
 // later sub-projects).
 type ProcessInboundEmailUseCase struct {
+	scanner        port.ContentScanner
 	mailboxes      port.MailboxRepository
 	blobs          port.BlobStorage
 	messages       port.InboundMessageRepository
@@ -45,6 +48,10 @@ type ProcessInboundEmailUseCase struct {
 
 func NewProcessInboundEmailUseCase(mailboxes port.MailboxRepository, blobs port.BlobStorage, messages port.InboundMessageRepository) *ProcessInboundEmailUseCase {
 	return &ProcessInboundEmailUseCase{mailboxes: mailboxes, blobs: blobs, messages: messages}
+}
+
+func (uc *ProcessInboundEmailUseCase) SetScanner(scanner port.ContentScanner) {
+	uc.scanner = scanner
 }
 
 func (uc *ProcessInboundEmailUseCase) SetTrackerManager(tm *MailboxTrackerManager, folders port.ImapFolderRepository) {
@@ -77,7 +84,41 @@ func (uc *ProcessInboundEmailUseCase) ResolveRecipient(ctx context.Context, addr
 // the same blob (PLAN.md section 9's dedup design: 1 email to 50
 // recipients = 1 file).
 func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessInboundEmailInput) error {
-	blob, err := uc.blobs.Store(ctx, input.Body)
+	payload, err := io.ReadAll(input.Body)
+	if err != nil {
+		return err
+	}
+
+	targetFolder := "INBOX"
+
+	if uc.scanner != nil {
+		recipientAddr := ""
+		if len(input.RecipientAddresses) > 0 {
+			recipientAddr = input.RecipientAddresses[0]
+		}
+		scanRes, err := uc.scanner.Scan(ctx, port.ScanInput{
+			Sender:    input.Sender,
+			Recipient: recipientAddr,
+			Payload:   payload,
+		})
+		if err != nil {
+			return err
+		}
+		if scanRes != nil {
+			switch scanRes.Verdict {
+			case valueobject.ScanVerdictVirusReject:
+				return errors.New("554 5.7.1 Virus detected: " + scanRes.VirusName)
+			case valueobject.ScanVerdictSpamReject:
+				return errors.New("554 5.7.1 Spam threshold exceeded")
+			case valueobject.ScanVerdictGreylist:
+				return errors.New("451 4.7.1 Greylisted, please try again later")
+			case valueobject.ScanVerdictSpamJunk:
+				targetFolder = "Junk"
+			}
+		}
+	}
+
+	blob, err := uc.blobs.Store(ctx, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -88,6 +129,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			Blob:             blob,
 			SenderAddress:    input.Sender,
 			RecipientAddress: input.RecipientAddresses[i],
+			TargetFolderName: targetFolder,
 			SPFResult:        "none",
 			DKIMResult:       "none",
 			DMARCResult:      "none",
@@ -97,7 +139,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		}
 
 		if uc.trackerManager != nil && uc.folders != nil {
-			folderRec, err := uc.folders.FindByName(ctx, recipient.ID.String(), "INBOX")
+			folderRec, err := uc.folders.FindByName(ctx, recipient.ID.String(), targetFolder)
 			if err == nil && folderRec != nil {
 				uc.trackerManager.NotifyNumMessages(folderRec.ID, folderRec.NumMessages)
 			}

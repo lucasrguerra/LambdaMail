@@ -12,9 +12,12 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver"
 	gosmtp "github.com/emersion/go-smtp"
 
+	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/application/usecase"
+	"lambdamail/protocols/internal/infrastructure/clamav"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
 	"lambdamail/protocols/internal/infrastructure/postgres"
+	"lambdamail/protocols/internal/infrastructure/rspamd"
 	tlsprovider "lambdamail/protocols/internal/infrastructure/tls"
 	imappresentation "lambdamail/protocols/internal/presentation/imap"
 	httppresentation "lambdamail/protocols/internal/presentation/http"
@@ -41,6 +44,21 @@ func main() {
 	blobs := diskstorage.NewLocalDiskBlobStorage(pool, spoolDir)
 	messages := postgres.NewInboundMessageRepository(pool)
 	useCase := usecase.NewProcessInboundEmailUseCase(mailboxes, blobs, messages)
+
+	clamavAddr := os.Getenv("CLAMAV_ADDR")
+	rspamdURL := os.Getenv("RSPAMD_URL")
+	if clamavAddr != "" || rspamdURL != "" {
+		var scanners []port.ContentScanner
+		if clamavAddr != "" {
+			scanners = append(scanners, clamav.NewClamAVAdapter(clamavAddr))
+		}
+		if rspamdURL != "" {
+			scanners = append(scanners, rspamd.NewRspamdAdapter(rspamdURL))
+		}
+		pipeline := usecase.NewScanningPipeline(scanners...)
+		useCase.SetScanner(pipeline)
+		log.Printf("lambdamail-protocols antispam/antivirus scanner enabled (clamav: %s, rspamd: %s)", clamavAddr, rspamdURL)
+	}
 
 	certProvider, err := tlsprovider.NewLocalFileCertProvider(
 		os.Getenv("PROTOCOLS_CERT_PATH"),
