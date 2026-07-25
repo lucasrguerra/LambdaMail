@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
@@ -16,6 +17,7 @@ import (
 	"lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/infrastructure/clamav"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
+	"lambdamail/protocols/internal/infrastructure/netdns"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	"lambdamail/protocols/internal/infrastructure/rspamd"
 	tlsprovider "lambdamail/protocols/internal/infrastructure/tls"
@@ -154,6 +156,24 @@ func main() {
 
 	reportRepo := postgres.NewReportRepository(pool)
 	reportUseCase := usecase.NewIngestReportsUseCase(reportRepo)
+
+	outboundRepo := postgres.NewOutboundRepository(pool)
+	mxResolver := netdns.NewNetMXResolver()
+	outboundWorker := usecase.NewOutboundWorkerUseCase(outboundRepo, mxResolver, blobReader, useCase, mailboxes, smtpServer.Domain)
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _ = outboundWorker.ProcessBatch(ctx, "protocols-worker-1", 10)
+			}
+		}
+	}()
+
 	router := httppresentation.NewRouter(reportUseCase, func() error { return pool.Ping(ctx) })
 
 	addr := ":8080"

@@ -1,51 +1,79 @@
 package entity
 
 import (
-	"errors"
+	"math/rand"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// OutboundJob is a delivery unit with retry state (PLAN.md section 3 and 6.3).
+type OutboundJobStatus string
+
+const (
+	OutboundJobStatusQueued    OutboundJobStatus = "QUEUED"
+	OutboundJobStatusSending   OutboundJobStatus = "SENDING"
+	OutboundJobStatusDeferred  OutboundJobStatus = "DEFERRED"
+	OutboundJobStatusDelivered OutboundJobStatus = "DELIVERED"
+	OutboundJobStatusBounced   OutboundJobStatus = "BOUNCED"
+	OutboundJobStatusCancelled OutboundJobStatus = "CANCELLED"
+)
+
 type OutboundJob struct {
-	attempt     int
-	maxAttempts int
+	ID                uuid.UUID
+	MailboxID         *uuid.UUID
+	BlobID            uuid.UUID
+	EnvelopeFrom      string
+	EnvelopeTo        string
+	DestinationDomain string
+	Status            OutboundJobStatus
+	Attempt           int
+	NextAttemptAt     time.Time
+	ExpiresAt         time.Time
+	LastSmtpCode      string
+	LastError         string
+	TlsPolicyUsed     string
+	DelayDsnSent      bool
+	CreatedAt         time.Time
 }
 
-var ErrOutboundJobMaxAttemptsExceeded = errors.New("outbound job: attempt count would exceed max_attempts")
-
-func NewOutboundJob(maxAttempts int) *OutboundJob {
-	return &OutboundJob{maxAttempts: maxAttempts}
-}
-
-func (j *OutboundJob) Attempt() int { return j.attempt }
-
-// RecordAttempt enforces "attempt <= max_attempts" (PLAN.md section 3).
-func (j *OutboundJob) RecordAttempt() error {
-	if j.attempt >= j.maxAttempts {
-		return ErrOutboundJobMaxAttemptsExceeded
+// CalculateNextBackoff computes the next retry time and DSN requirements based on attempt count.
+func CalculateNextBackoff(now time.Time, attempt int, expiresAt time.Time) (nextAttemptAt time.Time, sendDelayDsn bool, permanentFailure bool) {
+	if !expiresAt.IsZero() && (now.After(expiresAt) || now.Equal(expiresAt)) {
+		return now, false, true
 	}
-	j.attempt++
-	return nil
-}
 
-// retrySchedule mirrors the accumulated-wait table in PLAN.md section 6.3.
-var retrySchedule = []time.Duration{
-	0,
-	5 * time.Minute,
-	15 * time.Minute,
-	1 * time.Hour,
-	2 * time.Hour,
-	4 * time.Hour,
-	8 * time.Hour,
-	12 * time.Hour,
-}
+	var baseDelay time.Duration
 
-// NextBackoff returns the wait before the next attempt, per the schedule in section 6.3.
-// Attempts beyond the table repeat the last (12h) step, matching the "9+: every 12h" rule.
-func (j *OutboundJob) NextBackoff() time.Duration {
-	idx := j.attempt
-	if idx >= len(retrySchedule) {
-		idx = len(retrySchedule) - 1
+	switch attempt {
+	case 1:
+		baseDelay = 0
+	case 2:
+		baseDelay = 5 * time.Minute
+	case 3:
+		baseDelay = 15 * time.Minute
+	case 4:
+		baseDelay = 1 * time.Hour
+		sendDelayDsn = true
+	case 5:
+		baseDelay = 2 * time.Hour
+	case 6:
+		baseDelay = 4 * time.Hour
+	case 7:
+		baseDelay = 8 * time.Hour
+	default:
+		baseDelay = 12 * time.Hour
 	}
-	return retrySchedule[idx]
+
+	if baseDelay > 0 && attempt >= 5 {
+		// Apply ±20% jitter
+		jitterFactor := 0.8 + rand.Float64()*0.4
+		baseDelay = time.Duration(float64(baseDelay) * jitterFactor)
+	}
+
+	nextAttemptAt = now.Add(baseDelay)
+	if !expiresAt.IsZero() && nextAttemptAt.After(expiresAt) {
+		return expiresAt, sendDelayDsn, true
+	}
+
+	return nextAttemptAt, sendDelayDsn, false
 }
