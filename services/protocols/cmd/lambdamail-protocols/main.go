@@ -13,11 +13,11 @@ import (
 	gosmtp "github.com/emersion/go-smtp"
 
 	"lambdamail/protocols/internal/application/usecase"
-	"lambdamail/protocols/internal/health"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	tlsprovider "lambdamail/protocols/internal/infrastructure/tls"
 	imappresentation "lambdamail/protocols/internal/presentation/imap"
+	httppresentation "lambdamail/protocols/internal/presentation/http"
 	managesievepresentation "lambdamail/protocols/internal/presentation/managesieve"
 	pop3presentation "lambdamail/protocols/internal/presentation/pop3"
 	smtppresentation "lambdamail/protocols/internal/presentation/smtp"
@@ -134,11 +134,14 @@ func main() {
 		}
 	}()
 
-	handler := health.Handler(func() error { return pool.Ping(ctx) })
+	reportRepo := postgres.NewReportRepository(pool)
+	reportUseCase := usecase.NewIngestReportsUseCase(reportRepo)
+	router := httppresentation.NewRouter(reportUseCase, func() error { return pool.Ping(ctx) })
+
 	addr := ":8080"
-	log.Printf("lambdamail-protocols health listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatalf("serve: %v", err)
+	log.Printf("lambdamail-protocols HTTP service listening on %s", addr)
+	if err := http.ListenAndServe(addr, router); err != nil {
+		log.Fatalf("http serve: %v", err)
 	}
 }
 
