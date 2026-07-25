@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 
 	gosmtp "github.com/emersion/go-smtp"
 
@@ -108,6 +109,25 @@ func (s *session) Data(r io.Reader) error {
 		Body:               r,
 	})
 	if err != nil {
+		var smtpErr *gosmtp.SMTPError
+		if errors.As(err, &smtpErr) {
+			return smtpErr
+		}
+		errMsg := err.Error()
+		if strings.HasPrefix(errMsg, "554 ") {
+			return &gosmtp.SMTPError{
+				Code:         554,
+				EnhancedCode: gosmtp.EnhancedCode{5, 7, 1},
+				Message:      strings.TrimPrefix(errMsg, "554 5.7.1 "),
+			}
+		}
+		if strings.HasPrefix(errMsg, "451 ") {
+			return &gosmtp.SMTPError{
+				Code:         451,
+				EnhancedCode: gosmtp.EnhancedCode{4, 7, 1},
+				Message:      strings.TrimPrefix(errMsg, "451 4.7.1 "),
+			}
+		}
 		return &gosmtp.SMTPError{
 			Code:         451,
 			EnhancedCode: gosmtp.EnhancedCode{4, 3, 0},
