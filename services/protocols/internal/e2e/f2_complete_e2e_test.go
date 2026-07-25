@@ -55,10 +55,18 @@ func TestF2CompleteSuiteEndToEnd(t *testing.T) {
 	root := repoRoot(t)
 	sql, err := os.ReadFile(filepath.Join(root, "migrations", "0001_init_schema.up.sql"))
 	if err != nil {
-		t.Fatalf("read migration: %v", err)
+		t.Fatalf("read migration 0001: %v", err)
 	}
 	if _, err := pool.Exec(ctx, string(sql)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+		t.Fatalf("apply migration 0001: %v", err)
+	}
+
+	sql0002, err := os.ReadFile(filepath.Join(root, "migrations", "0002_add_is_system_to_aliases.up.sql"))
+	if err != nil {
+		t.Fatalf("read migration 0002: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(sql0002)); err != nil {
+		t.Fatalf("apply migration 0002: %v", err)
 	}
 
 	// 2. Seed domain, mailbox, INBOX, Archive
