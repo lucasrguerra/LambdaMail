@@ -18,6 +18,7 @@ import (
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	tlsprovider "lambdamail/protocols/internal/infrastructure/tls"
 	imappresentation "lambdamail/protocols/internal/presentation/imap"
+	managesievepresentation "lambdamail/protocols/internal/presentation/managesieve"
 	pop3presentation "lambdamail/protocols/internal/presentation/pop3"
 	smtppresentation "lambdamail/protocols/internal/presentation/smtp"
 )
@@ -119,6 +120,17 @@ func main() {
 		log.Printf("lambdamail-protocols POP3 listening on :110")
 		if err := pop3Server.ListenAndServe(); err != nil {
 			log.Fatalf("pop3 serve: %v", err)
+		}
+	}()
+
+	sieveRepo := postgres.NewSieveRepository(pool)
+	sieveUseCase := usecase.NewManageSieveSessionUseCase(authRepo, sieveRepo)
+	sieveServer := managesievepresentation.NewServer(":4190", sieveUseCase, certProvider)
+
+	go func() {
+		log.Printf("lambdamail-protocols ManageSieve listening on :4190")
+		if err := sieveServer.ListenAndServe(); err != nil {
+			log.Fatalf("managesieve serve: %v", err)
 		}
 	}()
 
