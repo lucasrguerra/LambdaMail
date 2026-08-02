@@ -1,0 +1,179 @@
+name: Release
+
+# Publishes the four service images to GHCR after a merge into main, and again
+# under semver tags when a v* tag is pushed. The deploy host only pulls, so
+# nothing has to be built on the server.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # Nothing is published unless the full suite passes first.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # GHCR rejects an uppercase path, and this repository is "lucasrguerra/LambdaMail".
+  # Lowercasing github.repository here keeps the workflow fork-safe instead of
+  # hardcoding the owner.
+  prepare:
+    name: Namespace das imagens
+    runs-on: ubuntu-latest
+    outputs:
+      namespace: ${{ steps.namespace.outputs.value }}
+    steps:
+      - id: namespace
+        run: echo "value=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+  # Each architecture is built on a runner of its own kind. QEMU emulation
+  # would also work, but it makes the Go and Next builds roughly an order of
+  # magnitude slower.
+  build:
+    name: Build ${{ matrix.service }} (${{ matrix.platform }})
+    needs: [ci, prepare]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both are axes, so this is a cross product: four services on two
+        # architectures is eight jobs. Declaring platform only under `include`
+        # would not multiply anything - include can add keys to existing
+        # combinations, but it cannot create the combinations themselves.
+        service: [protocols, auth, storage, webmail]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Autentica no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadados
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.namespace }}/${{ matrix.service }}
+
+      # Pushed by digest only: the tags are attached later, once both
+      # architectures exist and can be joined into a single manifest list.
+      - name: Build e push por digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.namespace }}/${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.arch }}
+
+      - name: Exporta o digest
+        run: |
+          mkdir -p /tmp/digests
+          # The output already carries the `sha256:` prefix; the file name must
+          # not, since the merge step prepends it again.
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Guarda o digest
+        uses: actions/upload-artifact@v4
+        with:
+          # Slashes are not allowed in artifact names, hence the arch alias.
+          name: digest-${{ matrix.service }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publica ${{ matrix.service }}
+    needs: [build, prepare]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [protocols, auth, storage, webmail]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Autentica no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recupera os digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.service }}-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      # `latest` is what compose pulls. The semver tags only materialise on a
+      # v* tag push and make it possible to pin or roll back to an exact
+      # release; the sha tag does the same for any main build.
+      - name: Metadados
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.namespace }}/${{ matrix.service }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+            type=sha,format=long
+
+      # Joins both architectures under one manifest list, so `docker pull`
+      # resolves to the right one automatically.
+      - name: Cria o manifesto multi-arquitetura
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf '${{ env.REGISTRY }}/${{ needs.prepare.outputs.namespace }}/${{ matrix.service }}@sha256:%s ' *)
+
+      - name: Confere o resultado
+        run: |
+          docker buildx imagetools inspect \
+            "${{ env.REGISTRY }}/${{ needs.prepare.outputs.namespace }}/${{ matrix.service }}:latest" \
+            --format '{{json .Manifest}}' \
+            | jq -r '.manifests[] | select(.platform.os == "linux") | "\(.platform.os)/\(.platform.architecture)"'
+
+      - name: Resumo
+        run: |
+          {
+            echo "### ${{ matrix.service }} publicado (linux/amd64 e linux/arm64)"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
