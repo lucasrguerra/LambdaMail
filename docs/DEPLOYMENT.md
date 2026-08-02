@@ -201,6 +201,32 @@ The tags are published by `release.yml`; `docker buildx imagetools inspect
 ghcr.io/<owner>/lambdamail/webmail:latest` shows what `latest` currently points
 at.
 
+**Pinning has a second edge: bump it on every release.** A pinned tag is an
+instruction to run *that* image, so a deploy triggered without changing it
+re-pulls the same old build and succeeds — the UI simply does not change.
+Redeploying with "ignore cache" does not help, because that clears the *build*
+cache and nothing here is built on the server; the tag being requested is still
+the old one. The two failure modes are mirror images: `latest` never updates
+because Docker already has it, and a stale pin never updates because you asked
+for it by name.
+
+So a release is two steps, not one:
+
+```bash
+# 1. point the tag at the new commit
+IMAGE_TAG=sha-$(git rev-parse HEAD)
+# 2. then deploy
+```
+
+Confirm which one is actually serving before believing a green deployment:
+
+```bash
+curl -s https://<WEBMAIL_HOST>/user/login | grep -o '/_next/static/css/[a-z0-9]*\.css'
+```
+
+The asset fingerprint changes with every build. If it did not move, the old
+image is still running whatever the deployment log said.
+
 ## Troubleshooting
 
 **The web UI is up but nothing can log in.** The auth service refuses to start
