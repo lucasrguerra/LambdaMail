@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lambdamail/protocols/internal/application/port"
@@ -21,13 +22,37 @@ func NewInboundMessageRepository(pool *pgxpool.Pool) *InboundMessageRepository {
 	return &InboundMessageRepository{pool: pool}
 }
 
-func (r *InboundMessageRepository) Persist(ctx context.Context, input port.PersistInboundMessageInput) (int64, error) {
+// PersistAll records every recipient's copy in one transaction, so a delivery
+// that fans out is all-or-nothing and a retried SMTP transaction cannot leave
+// an earlier recipient with a duplicate.
+func (r *InboundMessageRepository) PersistAll(ctx context.Context, inputs []port.PersistInboundMessageInput) ([]int64, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer tx.Rollback(ctx) // no-op if Commit succeeds
 
+	uids := make([]int64, 0, len(inputs))
+	for _, input := range inputs {
+		uid, err := persistOne(ctx, tx, input)
+		if err != nil {
+			return nil, err
+		}
+		uids = append(uids, uid)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return uids, nil
+}
+
+// persistOne writes one recipient's copy inside the caller's transaction.
+func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessageInput) (int64, error) {
 	targetFolder := input.TargetFolderName
 	if targetFolder == "" {
 		targetFolder = "INBOX"
@@ -35,7 +60,7 @@ func (r *InboundMessageRepository) Persist(ctx context.Context, input port.Persi
 
 	var folderID string
 	var uid int64
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT id, uid_next FROM folders
 		WHERE mailbox_id = $1 AND (special_use = LOWER($2) OR LOWER(name) = LOWER($2))
 		ORDER BY special_use IS NOT NULL DESC
@@ -84,8 +109,5 @@ func (r *InboundMessageRepository) Persist(ctx context.Context, input port.Persi
 		return 0, fmt.Errorf("insert outbox event: %w", err)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("commit: %w", err)
-	}
 	return uid, nil
 }

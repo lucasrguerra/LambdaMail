@@ -22,6 +22,11 @@ type Router struct {
 	reportUseCase *appusecase.IngestReportsUseCase
 	pingFunc      func() error
 	mtaStsMode    valueobject.MtaStsMode
+	// degradedFunc reports a condition that leaves the service running but
+	// not fit for production, the clearest case being a self-signed
+	// certificate standing in for one Traefik never issued
+	// (PLAN.md section 8.4).
+	degradedFunc func() error
 }
 
 func NewRouter(reportUseCase *appusecase.IngestReportsUseCase, pingFunc func() error) *Router {
@@ -62,6 +67,13 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/reports/tlsrpt", r.handleTlsRptIngest)
 }
 
+// SetDegradedCheck registers the probe behind the "degraded" health state.
+// Returning an error means the process is serving but something an operator
+// must fix is wrong.
+func (r *Router) SetDegradedCheck(check func() error) {
+	r.degradedFunc = check
+}
+
 func (r *Router) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	if r.pingFunc != nil {
 		if err := r.pingFunc(); err != nil {
@@ -69,6 +81,21 @@ func (r *Router) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			return
 		}
 	}
+
+	// Degraded still answers 200: the container is alive and must not be
+	// restarted in a loop over a certificate problem a restart cannot fix.
+	// The distinction is carried in the body and the header so monitoring can
+	// alert on it (PLAN.md section 8.4).
+	if r.degradedFunc != nil {
+		if err := r.degradedFunc(); err != nil {
+			w.Header().Set("X-LambdaMail-Health", "degraded")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "DEGRADED: %v\n", err)
+			return
+		}
+	}
+
+	w.Header().Set("X-LambdaMail-Health", "ok")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK\n"))
 }

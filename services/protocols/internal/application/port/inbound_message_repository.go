@@ -19,12 +19,22 @@ type PersistInboundMessageInput struct {
 	DMARCResult      string
 }
 
-// InboundMessageRepository durably records an accepted inbound message for
-// one recipient: allocates the next folder UID, inserts the email_messages
+// InboundMessageRepository durably records an accepted inbound message: for
+// each recipient it allocates the next folder UID, inserts the email_messages
 // row, increments the blob's ref_count, and writes the transactional outbox
-// event - all in a single transaction (PLAN.md section 6.1, section 9.4).
+// event (PLAN.md section 6.1, section 9.4).
 type InboundMessageRepository interface {
-	// Persist returns the allocated IMAP UID on success. The caller may only
-	// report success to the SMTP client after this returns without error.
-	Persist(ctx context.Context, input PersistInboundMessageInput) (uid int64, err error)
+	// PersistAll records every recipient's copy in a single transaction and
+	// returns the allocated IMAP UIDs, in the order the inputs were given.
+	//
+	// One transaction for the whole delivery is a correctness requirement,
+	// not an optimisation. An alias fanning out to several mailboxes is one
+	// SMTP transaction with one reply: if the second insert failed after the
+	// first had committed, the sender would be told to retry and the first
+	// recipient would receive the message twice. Either all recipients get
+	// it, or the sender is asked to try again.
+	//
+	// The caller may only report success to the SMTP client after this
+	// returns without error.
+	PersistAll(ctx context.Context, inputs []PersistInboundMessageInput) (uids []int64, err error)
 }

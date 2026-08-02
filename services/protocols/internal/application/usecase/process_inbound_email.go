@@ -171,7 +171,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		// having published it. Quarantine is left to the spam filter, which
 		// files rather than refuses.
 		if authResult.DMARC == port.AuthResultFail && authResult.DmarcPolicy == "reject" {
-			return errors.New("550 5.7.1 DMARC policy rejects this message")
+			return rejectDmarc()
 		}
 
 		if authResult.AuthenticationResults != "" {
@@ -212,11 +212,11 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		if scanRes != nil {
 			switch scanRes.Verdict {
 			case valueobject.ScanVerdictVirusReject:
-				return errors.New("554 5.7.1 Virus detected: " + scanRes.VirusName)
+				return rejectVirus(scanRes.VirusName)
 			case valueobject.ScanVerdictSpamReject:
-				return errors.New("554 5.7.1 Spam threshold exceeded")
+				return rejectSpam()
 			case valueobject.ScanVerdictGreylist:
-				return errors.New("451 4.7.1 Greylisted, please try again later")
+				return deferGreylisted()
 			case valueobject.ScanVerdictSpamJunk:
 				targetFolder = "Junk"
 			}
@@ -229,8 +229,14 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		return err
 	}
 
+	// Every recipient is handed to the repository at once so the whole
+	// delivery commits or none of it does. Persisting them one call at a time
+	// would mean a failure halfway through leaves the earlier recipients with
+	// a copy while the sender is told to retry - and the retry delivers to
+	// them a second time.
+	persistInputs := make([]port.PersistInboundMessageInput, len(input.Recipients))
 	for i, recipient := range input.Recipients {
-		_, err := uc.messages.Persist(ctx, port.PersistInboundMessageInput{
+		persistInputs[i] = port.PersistInboundMessageInput{
 			MailboxID:        recipient.ID,
 			Blob:             blob,
 			SenderAddress:    input.Sender,
@@ -239,11 +245,16 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			SPFResult:        authResult.SPF,
 			DKIMResult:       authResult.DKIM,
 			DMARCResult:      authResult.DMARC,
-		})
-		if err != nil {
-			return err
 		}
+	}
 
+	if _, err := uc.messages.PersistAll(ctx, persistInputs); err != nil {
+		return err
+	}
+
+	// Notifications happen only after the commit: an IDLE client told about a
+	// message that then rolled back would show one that does not exist.
+	for _, recipient := range input.Recipients {
 		if uc.trackerManager != nil && uc.folders != nil {
 			folderRec, err := uc.folders.FindByName(ctx, recipient.ID.String(), targetFolder)
 			if err == nil && folderRec != nil {

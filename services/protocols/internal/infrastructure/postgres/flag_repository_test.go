@@ -37,7 +37,7 @@ func TestFlagRepository_SetFlags_AddThenDelThenSet(t *testing.T) {
 	}
 	blobID := uuid.New()
 	_, err = pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes) VALUES ($1, $2, 'local', '/tmp/x', 10)`,
-		blobID, "1111110000000000000000000000000000000000000000000000000000000000"[:64])
+		blobID, testBlobDigest())
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}

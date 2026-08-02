@@ -42,7 +42,7 @@ func TestCopyRepository_CopyMessages_AllocatesNewUIDsAndPreservesFlags(t *testin
 	}
 	blobID := uuid.New()
 	_, err = pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes, ref_count) VALUES ($1, $2, 'local', '/tmp/x', 10, 1)`,
-		blobID, uuid.New().String()+uuid.New().String()[:32])
+		blobID, testBlobDigest())
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}

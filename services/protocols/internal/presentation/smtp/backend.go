@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strings"
 
 	gosmtp "github.com/emersion/go-smtp"
 
@@ -141,28 +140,23 @@ func (s *session) Data(r io.Reader) error {
 		if errors.As(err, &smtpErr) {
 			return smtpErr
 		}
-		errMsg := err.Error()
-		if strings.HasPrefix(errMsg, "550 ") {
+
+		// A refusal the use case decided on carries its own reply. Rendering
+		// it here is the only place the wire format is chosen.
+		var rejection *usecase.SmtpRejection
+		if errors.As(err, &rejection) {
 			return &gosmtp.SMTPError{
-				Code:         550,
-				EnhancedCode: gosmtp.EnhancedCode{5, 7, 1},
-				Message:      strings.TrimPrefix(errMsg, "550 5.7.1 "),
+				Code: rejection.Code,
+				EnhancedCode: gosmtp.EnhancedCode{
+					rejection.EnhancedCode[0], rejection.EnhancedCode[1], rejection.EnhancedCode[2],
+				},
+				Message: rejection.Message,
 			}
 		}
-		if strings.HasPrefix(errMsg, "554 ") {
-			return &gosmtp.SMTPError{
-				Code:         554,
-				EnhancedCode: gosmtp.EnhancedCode{5, 7, 1},
-				Message:      strings.TrimPrefix(errMsg, "554 5.7.1 "),
-			}
-		}
-		if strings.HasPrefix(errMsg, "451 ") {
-			return &gosmtp.SMTPError{
-				Code:         451,
-				EnhancedCode: gosmtp.EnhancedCode{4, 7, 1},
-				Message:      strings.TrimPrefix(errMsg, "451 4.7.1 "),
-			}
-		}
+
+		// Anything else is an internal failure. It is reported as temporary so
+		// the sender retries: the message was not stored, and telling the peer
+		// it failed permanently would discard mail over a bug on this side.
 		return &gosmtp.SMTPError{
 			Code:         451,
 			EnhancedCode: gosmtp.EnhancedCode{4, 3, 0},

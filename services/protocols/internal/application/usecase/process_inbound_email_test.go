@@ -105,15 +105,31 @@ func (s *stubBlobStorage) Store(_ context.Context, r io.Reader) (port.BlobRef, e
 	return s.ref, s.err
 }
 
+// errRepositoryFailure stands in for any persistence error.
+var errRepositoryFailure = errors.New("repository is unavailable")
+
 type recordingMessageRepository struct {
 	persisted []port.PersistInboundMessageInput
 	nextUID   int64
+	// failAfter makes PersistAll reject a batch larger than this many
+	// recipients, standing in for a partial write in the real repository.
+	failAfter int
 }
 
-func (r *recordingMessageRepository) Persist(_ context.Context, input port.PersistInboundMessageInput) (int64, error) {
-	r.persisted = append(r.persisted, input)
-	r.nextUID++
-	return r.nextUID, nil
+func (r *recordingMessageRepository) PersistAll(_ context.Context, inputs []port.PersistInboundMessageInput) ([]int64, error) {
+	// The real repository commits once for the whole batch, so a failure
+	// records nothing. Mirroring that here keeps the mock honest.
+	if r.failAfter > 0 && len(inputs) > r.failAfter {
+		return nil, errRepositoryFailure
+	}
+
+	uids := make([]int64, 0, len(inputs))
+	for _, input := range inputs {
+		r.persisted = append(r.persisted, input)
+		r.nextUID++
+		uids = append(uids, r.nextUID)
+	}
+	return uids, nil
 }
 
 func TestUseCase_Handle_StoresBlobOnceAndPersistsOncePerRecipient(t *testing.T) {
@@ -169,5 +185,33 @@ func TestUseCase_Handle_PropagatesBlobStorageError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when blob storage fails, got nil")
+	}
+}
+
+// One SMTP transaction gets one reply, so a fan-out delivery has to be
+// all-or-nothing: if the sender is told to retry, no recipient may already
+// hold a copy, or the retry duplicates it for them.
+func TestUseCase_Handle_DoesNotPartiallyDeliverOnFanOut(t *testing.T) {
+	blobs := &stubBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "abc123", SizeBytes: 42}}
+	messages := &recordingMessageRepository{failAfter: 1}
+	uc := NewProcessInboundEmailUseCase(nil, blobs, messages)
+
+	recipients := []port.MailboxRecord{
+		{ID: uuid.New()},
+		{ID: uuid.New()},
+	}
+
+	err := uc.Handle(context.Background(), ProcessInboundEmailInput{
+		Sender:             "sender@remote.test",
+		Recipients:         recipients,
+		RecipientAddresses: []string{"alias@example.test", "alias@example.test"},
+		Body:               bytes.NewBufferString("Subject: hi\r\n\r\nbody\r\n"),
+	})
+
+	if err == nil {
+		t.Fatal("Handle reported success even though persistence failed")
+	}
+	if len(messages.persisted) != 0 {
+		t.Errorf("%d recipients were left with a copy after a failed delivery; the sender's retry would duplicate it", len(messages.persisted))
 	}
 }

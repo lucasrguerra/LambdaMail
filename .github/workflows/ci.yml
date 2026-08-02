@@ -1,18 +1,28 @@
 name: CI
 
+# Runs on every branch and pull request. Publishing lives in release.yml and
+# only runs once this workflow has passed.
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
+    branches: [main]
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lang-lint:
+    name: Lint de idioma (R9)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: node scripts/lang-lint.mjs
 
   go-protocols:
+    name: Go (protocols)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -49,6 +59,7 @@ jobs:
           TEST_DATABASE_URL: postgres://lambdamail_test:lambdamail_test@localhost:5432/lambdamail_test?sslmode=disable
 
   ts-auth:
+    name: TypeScript (auth)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -62,6 +73,7 @@ jobs:
       - run: npm test
 
   ts-storage:
+    name: TypeScript (storage)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -75,6 +87,7 @@ jobs:
       - run: npm test
 
   webmail-build:
+    name: Build (webmail)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -86,12 +99,70 @@ jobs:
       - run: npm install
       - run: npm run build
 
+  security:
+    name: Trivy (dependências, segredos e Dockerfiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A mail server holds credentials for every mailbox it serves, so the
+      # secret scanner matters as much as the vulnerability one here: a DKIM
+      # key or a Cloudflare token committed by accident is a full compromise.
+      - name: Repositório
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          skip-dirs: services/auth/node_modules,services/storage/node_modules,services/webmail/node_modules,services/webmail/.next
+
+  image:
+    name: Imagem (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [protocols, auth, storage, webmail]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built but not pushed: this proves each Dockerfile still works on every
+      # branch, while publishing stays in release.yml.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: false
+          load: true
+          tags: lambdamail-${{ matrix.service }}:ci
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Trivy na imagem
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: lambdamail-${{ matrix.service }}:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
   compose-up:
+    name: Stack completa
     runs-on: ubuntu-latest
     needs: [go-protocols, ts-auth, ts-storage, webmail-build]
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
+      # The proxy network is declared external because Coolify owns it on the
+      # deploy host. Nothing creates it here, and without it compose refuses to
+      # start the stack at all.
+      - name: Cria a rede do proxy
+        run: docker network create "${COOLIFY_PROXY_NETWORK:-coolify}"
+      # --build makes compose build each service locally and tag it under the
+      # same name the published image uses, so the stack comes up without ever
+      # reaching the registry.
       - run: docker compose --env-file .env up --build --wait
       - run: docker compose ps
       - run: docker compose down -v
