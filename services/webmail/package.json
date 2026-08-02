@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start -p 3000"
+    "start": "next start -p 3000",
+    "test": "vitest run"
   },
   "dependencies": {
     "next": "15.5.21",
@@ -15,7 +16,8 @@
   "devDependencies": {
     "typescript": "^5.5.4",
     "@types/node": "^20.14.0",
-    "@types/react": "^18.3.3"
+    "@types/react": "^18.3.3",
+    "vitest": "^2.0.5"
   },
   "overrides": {
     "sharp": "^0.35.0",

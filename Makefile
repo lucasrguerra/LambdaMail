@@ -13,6 +13,7 @@ test:
 	cd services/protocols && go test ./...
 	cd services/auth && npm test
 	cd services/storage && npm test
+	cd services/webmail && npm test
 
 lint:
 	cd services/protocols && go vet ./...

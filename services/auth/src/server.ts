@@ -2,10 +2,11 @@ import { createServer } from "node:http";
 import { Client } from "pg";
 import { Redis } from "ioredis";
 import { buildHealthHandler } from "./health.js";
+import { handleApiRequest } from "./router.js";
 
 const port = Number(process.env.PORT ?? 3001);
 
-const handler = buildHealthHandler(
+const healthHandler = buildHealthHandler(
   async () => {
     const client = new Client({ connectionString: process.env.DATABASE_URL });
     await client.connect();
@@ -19,7 +20,14 @@ const handler = buildHealthHandler(
   },
 );
 
-createServer(handler).listen(port, () => {
-  // F0 scaffold: only health endpoints are wired. Auth use cases land in F1+.
+const server = createServer((req, res) => {
+  if (handleApiRequest(req, res)) {
+    return;
+  }
+  healthHandler(req, res);
+});
+
+server.listen(port, () => {
   console.log(`auth service listening on ${port}`);
 });
+

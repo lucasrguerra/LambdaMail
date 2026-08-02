@@ -1,0 +1,78 @@
+{
+  "common": {
+    "appName": "LambdaMail",
+    "userPortal": "Webmail",
+    "adminPortal": "Management Console",
+    "loading": "Loading...",
+    "save": "Save Changes",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "search": "Search",
+    "status": "Status",
+    "actions": "Actions",
+    "refresh": "Refresh",
+    "logout": "Log Out"
+  },
+  "auth": {
+    "userLoginTitle": "Webmail Sign In",
+    "adminLoginTitle": "Admin Console Sign In",
+    "emailLabel": "Email Address",
+    "passwordLabel": "Password",
+    "signInButton": "Sign In",
+    "totpCodeLabel": "6-Digit Authenticator Code",
+    "verifyCodeButton": "Verify Code",
+    "invalidCredentials": "Invalid email or password",
+    "mfaRequired": "Two-factor authentication code required"
+  },
+  "mail": {
+    "inbox": "Inbox",
+    "sent": "Sent",
+    "drafts": "Drafts",
+    "trash": "Trash",
+    "junk": "Spam",
+    "archive": "Archive",
+    "compose": "Compose Email",
+    "noMessages": "No messages in this folder",
+    "unreadCount": "{count, plural, =0 {No unread messages} one {# unread message} other {# unread messages}}",
+    "loadImages": "Load Remote Images",
+    "reply": "Reply",
+    "forward": "Forward",
+    "undoSend": "Undo Send ({seconds}s remaining)"
+  },
+  "settings": {
+    "title": "Account Settings",
+    "security": "Security & 2FA",
+    "appPasswords": "App Passwords",
+    "sessions": "Active Sessions",
+    "mfaStatus": "Two-Factor Authentication Status",
+    "mfaEnabled": "2FA is Active",
+    "mfaDisabled": "2FA is Disabled",
+    "enableMfa": "Enable 2FA",
+    "generateAppPassword": "Generate App Password",
+    "recoveryCodesTitle": "Recovery Codes",
+    "saveRecoveryCodes": "Save these recovery codes in a safe place. They will not be shown again."
+  },
+  "admin": {
+    "dashboardTitle": "System Dashboard",
+    "domainsTitle": "Domains & DNS (13 Records)",
+    "mailboxesTitle": "Mailboxes & Accounts",
+    "aliasesTitle": "Aliases & Routing",
+    "queueTitle": "Outbound Delivery Queue",
+    "dmarcTitle": "DMARC Analytics",
+    "securityTitle": "Security & Audit Log",
+    "preflightTitle": "Preflight Diagnostics",
+    "reconcileDns": "Reconcile DNS Records",
+    "dnsStatusVerified": "VERIFIED",
+    "dnsStatusDrift": "DRIFT DETECTED",
+    "dnsStatusPartial": "PARTIAL",
+    "retryJob": "Retry Delivery",
+    "cancelJob": "Cancel Job",
+    "freezeDomain": "Freeze Destination"
+  },
+  "errors": {
+    "unauthorized": "Session expired or unauthorized",
+    "forbidden": "Access forbidden for this account surface",
+    "serverError": "Internal server error occurred"
+  }
+}
