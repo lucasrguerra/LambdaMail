@@ -182,8 +182,17 @@ Deploys pull the images CI published rather than building on the server;
 source instead.
 
 Migrations run automatically on start, before the services that depend on them.
-To pin a version, set `IMAGE_TAG` to a release version or a `sha-` tag rather
-than `latest`.
+**Pin `IMAGE_TAG` to a `sha-` tag rather than leaving it on `latest`.** Not
+only for rollback: `docker compose up` does not re-pull a tag it already has
+locally, so a deployment left on `latest` will happily keep running the image
+it pulled the first time while reporting success. An immutable tag changes on
+every release, which is what forces the pull.
+
+    IMAGE_TAG=sha-<full commit sha>
+
+The tags are published by `release.yml`; `docker buildx imagetools inspect
+ghcr.io/<owner>/lambdamail/webmail:latest` shows what `latest` currently points
+at.
 
 ## Troubleshooting
 
