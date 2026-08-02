@@ -162,7 +162,18 @@ func run(cfg config) {
 	}
 
 	// ------------------------------------------------------------- HTTP API
+	// The webmail reads and sends through this service because the folder,
+	// UID, flag and blob logic already lives here; duplicating it in another
+	// service would mean two implementations of the same IMAP semantics.
+	webmailUC := usecase.NewWebmailUseCase(
+		postgres.NewWebmailRepository(pool), blobReader, submissionUC, authRepo, cfg.PrimaryMailHost,
+	)
+
 	router := httppresentation.NewRouter(usecase.NewIngestReportsUseCase(reportRepo), func() error { return pool.Ping(ctx) })
+	if cfg.JwtSecret == "" {
+		log.Printf("JWT_SECRET is not set: the webmail mail API stays disabled")
+	}
+	router.SetMailAPI(webmailUC, cfg.JwtSecret)
 	router.SetDegradedCheck(certDegraded)
 	applyMtaStsMode(router, cfg)
 

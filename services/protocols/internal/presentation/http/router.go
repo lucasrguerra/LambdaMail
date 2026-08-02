@@ -22,6 +22,10 @@ type Router struct {
 	reportUseCase *appusecase.IngestReportsUseCase
 	pingFunc      func() error
 	mtaStsMode    valueobject.MtaStsMode
+	// mail serves the webmail's message screens. It stays nil when no session
+	// secret is configured, and the routes then answer 503 rather than
+	// pretending to be open.
+	mail *mailAPI
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued
@@ -63,6 +67,11 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/.well-known/autoconfig/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/autodiscover/autodiscover.xml", r.handleOutlookAutodiscover)
+	r.mux.HandleFunc("/api/v1/mail/folders", r.handleMailFolders)
+	r.mux.HandleFunc("/api/v1/mail/messages", r.handleMailMessages)
+	r.mux.HandleFunc("/api/v1/mail/message/", r.handleMailMessage)
+	r.mux.HandleFunc("/api/v1/mail/seen", r.handleMailSeen)
+	r.mux.HandleFunc("/api/v1/mail/send", r.handleMailSend)
 	r.mux.HandleFunc("/api/v1/reports/dmarc", r.handleDmarcIngest)
 	r.mux.HandleFunc("/api/v1/reports/tlsrpt", r.handleTlsRptIngest)
 }
@@ -218,4 +227,61 @@ func baseDomain(host string) string {
 		}
 	}
 	return host
+}
+
+// SetMailAPI wires the webmail message API. Without it the mail routes exist
+// but report that the feature is not configured, which is a clearer failure
+// than a 404 that looks like a typo in the path.
+func (r *Router) SetMailAPI(useCase *appusecase.WebmailUseCase, sessionSecret string) {
+	if useCase == nil || sessionSecret == "" {
+		return
+	}
+	r.mail = &mailAPI{useCase: useCase, sessions: NewWebSessionVerifier(sessionSecret)}
+}
+
+func (r *Router) mailReady(w http.ResponseWriter) bool {
+	if r.mail == nil {
+		writeError(w, http.StatusServiceUnavailable, "MAIL_API_DISABLED",
+			"The mail API needs JWT_SECRET to verify webmail sessions")
+		return false
+	}
+	return true
+}
+
+func (r *Router) handleMailFolders(w http.ResponseWriter, req *http.Request) {
+	if r.mailReady(w) {
+		r.mail.handleFolders(w, req)
+	}
+}
+
+func (r *Router) handleMailMessages(w http.ResponseWriter, req *http.Request) {
+	if r.mailReady(w) {
+		r.mail.handleMessages(w, req)
+	}
+}
+
+func (r *Router) handleMailMessage(w http.ResponseWriter, req *http.Request) {
+	if r.mailReady(w) {
+		r.mail.handleMessage(w, req)
+	}
+}
+
+func (r *Router) handleMailSeen(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleSeen(w, req)
+	}
+}
+
+func (r *Router) handleMailSend(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleSend(w, req)
+	}
 }
