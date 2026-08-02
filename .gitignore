@@ -28,3 +28,6 @@ local/
 Thumbs.db
 .vscode/
 .idea/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
