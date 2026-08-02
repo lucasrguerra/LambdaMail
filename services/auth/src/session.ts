@@ -12,7 +12,10 @@ export interface SessionTokenPayload {
   // Separates the short-lived token handed out between password and second
   // factor from a real session. Without it, a challenge token - issued before
   // any second factor was proven - would be accepted anywhere a session is.
-  purpose: "mfa_challenge" | "session";
+  // mfa_enrollment is issued when the password was right but no second factor
+  // exists yet. It permits enrolling one and nothing else, which is what turns
+  // the admin console's "enroll first" from a dead end into a step.
+  purpose: "mfa_challenge" | "mfa_enrollment" | "session";
   iat: number;
   exp: number;
 }

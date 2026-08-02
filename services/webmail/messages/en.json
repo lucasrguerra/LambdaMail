@@ -142,6 +142,7 @@
     "signOutOthers": "Sign out other sessions",
     "changePassword": "Change password",
     "currentPassword": "Current password",
-    "newPassword": "New password (min. 12 characters)"
+    "newPassword": "New password (min. 12 characters)",
+    "toggleMenu": "Toggle navigation menu"
   }
 }

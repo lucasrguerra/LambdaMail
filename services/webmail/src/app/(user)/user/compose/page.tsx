@@ -2,7 +2,25 @@
 
 import React, { useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
+import {
+  Send,
+  Paperclip,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Link as LinkIcon,
+  Trash2,
+  Undo2,
+  X,
+  Sparkles,
+  CheckCircle2,
+} from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
+import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
+import { Button } from "../../../../components/ui/Button";
 
 interface AttachedFile {
   id: string;
@@ -31,7 +49,6 @@ export default function ComposePage({
 
   const editorRef = useRef<HTMLDivElement>(null);
 
-  // Load signature from localStorage
   useEffect(() => {
     const savedSig = localStorage.getItem("lm_user_signature");
     if (editorRef.current && savedSig) {
@@ -39,11 +56,10 @@ export default function ComposePage({
     }
   }, []);
 
-  // Auto-draft debouncer
   useEffect(() => {
     if (!to && !subject) return;
     const timer = setTimeout(() => {
-      setDraftStatus("Draft auto-saved");
+      setDraftStatus("Rascunho salvo automaticamente");
     }, 2500);
     return () => clearTimeout(timer);
   }, [to, subject]);
@@ -71,11 +87,10 @@ export default function ComposePage({
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     setSending(true);
-    setUndoSeconds(30);
+    setUndoSeconds(10);
 
     const bodyHtml = editorRef.current?.innerHTML || "";
 
-    // Simulated network send with undo window
     const interval = setInterval(() => {
       setUndoSeconds((prev) => {
         if (prev === null || prev <= 1) {
@@ -114,81 +129,88 @@ export default function ComposePage({
   };
 
   return (
-    <div className="flex-1 p-6 bg-slate-950 flex flex-col items-center overflow-y-auto">
-      <div className="glass-panel p-6 rounded-2xl max-w-3xl w-full border border-slate-800 shadow-2xl space-y-4">
+    <div className="flex-1 p-6 md:p-8 bg-dark-bg flex flex-col items-center overflow-y-auto">
+      <Card className="max-w-3xl w-full border border-slate-800 shadow-2xl space-y-5">
         <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <h1 className="text-lg font-bold text-white flex items-center gap-2">
-            <span>&#128221;</span> {t("mail.compose")}
+          <h1 className="text-xl font-bold text-white flex items-center gap-2 tracking-tight">
+            <Send className="w-5 h-5 text-indigo-400" />
+            <span>{t("mail.compose")}</span>
           </h1>
-          <span className="text-xs text-emerald-400 font-mono">{draftStatus}</span>
+          {draftStatus && (
+            <span className="text-xs text-emerald-400 font-mono flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {draftStatus}
+            </span>
+          )}
         </div>
 
         {undoSeconds !== null && (
           <div className="p-4 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-between text-indigo-300 text-xs">
-            <span>
-              {t("mail.undoSend")} ({undoSeconds}s remaining)
-            </span>
-            <button
-              onClick={handleUndo}
-              className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-colors"
-            >
-              Undo Send
-            </button>
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-indigo-400 animate-spin" />
+              <span>
+                {t("mail.undoSend")} ({undoSeconds}s restantes)
+              </span>
+            </div>
+            <Button variant="primary" size="sm" onClick={handleUndo}>
+              <Undo2 className="w-3.5 h-3.5" />
+              Desfazer Envio
+            </Button>
           </div>
         )}
 
-        <form onSubmit={handleSend} className="space-y-3 text-xs">
+        <form onSubmit={handleSend} className="space-y-4 text-xs">
           <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="font-medium text-slate-300">{t("ui.toRecipients")}</label>
+            <div className="flex justify-between items-center mb-1.5">
+              <label className="font-semibold text-slate-300">{t("ui.toRecipients")}</label>
               <button
                 type="button"
                 onClick={() => setShowCcBcc(!showCcBcc)}
-                className="text-indigo-400 hover:underline"
+                className="text-indigo-400 hover:text-indigo-300 font-medium hover:underline"
               >
-                {showCcBcc ? "- Hide Cc/Bcc" : "+ Cc/Bcc"}
+                {showCcBcc ? "- Ocultar Cc/Bcc" : "+ Adicionar Cc/Bcc"}
               </button>
             </div>
             <input
               type="text"
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              placeholder="recipient@domain.com"
+              placeholder="recipient@example.com"
               required
               disabled={sending}
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 
           {showCcBcc && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="font-medium text-slate-300 mb-1 block">Cc</label>
+                <label className="font-semibold text-slate-300 mb-1 block">Cc</label>
                 <input
                   type="text"
                   value={cc}
                   onChange={(e) => setCc(e.target.value)}
                   placeholder="cc@domain.com"
                   disabled={sending}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>
               <div>
-                <label className="font-medium text-slate-300 mb-1 block">Bcc</label>
+                <label className="font-semibold text-slate-300 mb-1 block">Bcc</label>
                 <input
                   type="text"
                   value={bcc}
                   onChange={(e) => setBcc(e.target.value)}
                   placeholder="bcc@domain.com"
                   disabled={sending}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
           )}
 
           <div>
-            <label className="font-medium text-slate-300 mb-1 block">{t("ui.subject")}</label>
+            <label className="font-semibold text-slate-300 mb-1.5 block">{t("ui.subject")}</label>
             <input
               type="text"
               value={subject}
@@ -196,83 +218,75 @@ export default function ComposePage({
               placeholder={t("ui.subject")}
               required
               disabled={sending}
-              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 
-          {/* Rich Text Editor Formatting Toolbar */}
+          {/* Formatting Toolbar */}
           <div>
-            <label className="font-medium text-slate-300 mb-1 block">{t("ui.messageBody")}</label>
-            <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-900">
-              <div className="flex items-center gap-1 p-2 bg-slate-950 border-b border-slate-800 flex-wrap text-slate-300">
+            <label className="font-semibold text-slate-300 mb-1.5 block">{t("ui.messageBody")}</label>
+            <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/90">
+              <div className="flex items-center gap-1 p-2 bg-slate-950/80 border-b border-slate-800/80 flex-wrap text-slate-300">
                 <button
                   type="button"
                   onClick={() => executeFormat("bold")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded font-bold"
-                  title="Bold"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
+                  title="Negrito"
                 >
-                  B
+                  <Bold className="w-4 h-4" />
                 </button>
                 <button
                   type="button"
                   onClick={() => executeFormat("italic")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded italic"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
                   title="Italic"
                 >
-                  I
+                  <Italic className="w-4 h-4" />
                 </button>
                 <button
                   type="button"
                   onClick={() => executeFormat("underline")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded underline"
-                  title="Underline"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
+                  title="Sublinhado"
                 >
-                  U
+                  <Underline className="w-4 h-4" />
                 </button>
                 <button
                   type="button"
                   onClick={() => executeFormat("strikeThrough")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded line-through"
-                  title="Strikethrough"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
+                  title="Tachado"
                 >
-                  S
+                  <Strikethrough className="w-4 h-4" />
                 </button>
                 <span className="w-px h-4 bg-slate-800 mx-1" />
                 <button
                   type="button"
                   onClick={() => executeFormat("insertUnorderedList")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded"
-                  title="Bullet List"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
+                  title="Lista"
                 >
-                  &bull; List
+                  <List className="w-4 h-4" />
                 </button>
                 <button
                   type="button"
                   onClick={() => executeFormat("insertOrderedList")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded"
-                  title="Numbered List"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
+                  title="Lista Numerada"
                 >
-                  1. List
+                  <ListOrdered className="w-4 h-4" />
                 </button>
                 <span className="w-px h-4 bg-slate-800 mx-1" />
                 <button
                   type="button"
                   onClick={() => {
-                    const url = prompt("Enter URL:");
+                    const url = prompt("Insira a URL:");
                     if (url) executeFormat("createLink", url);
                   }}
-                  className="px-2 py-1 hover:bg-slate-800 rounded text-indigo-400"
-                  title="Insert Link"
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-indigo-400 hover:text-indigo-300"
+                  title="Inserir Link"
                 >
-                  Link
-                </button>
-                <button
-                  type="button"
-                  onClick={() => executeFormat("removeFormat")}
-                  className="px-2 py-1 hover:bg-slate-800 rounded text-slate-500"
-                  title="Clear Formatting"
-                >
-                  Clear
+                  <LinkIcon className="w-4 h-4" />
                 </button>
               </div>
 
@@ -288,9 +302,10 @@ export default function ComposePage({
           {/* Attachment Selector & Display */}
           <div className="pt-2">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-medium text-slate-300">Attachments ({attachments.length})</span>
-              <label className="cursor-pointer text-indigo-400 hover:underline flex items-center gap-1 font-medium">
-                <span>&#128206; Add Files...</span>
+              <span className="font-semibold text-slate-300">Anexos ({attachments.length})</span>
+              <label className="cursor-pointer text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 font-medium">
+                <Paperclip className="w-3.5 h-3.5" />
+                <span>Adicionar Arquivos...</span>
                 <input
                   type="file"
                   multiple
@@ -305,9 +320,9 @@ export default function ComposePage({
                 {attachments.map((file) => (
                   <div
                     key={file.id}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-slate-200"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200"
                   >
-                    <span>&#128196;</span>
+                    <Paperclip className="w-3 h-3 text-indigo-400" />
                     <span className="font-medium max-w-[140px] truncate">{file.name}</span>
                     <span className="text-[10px] text-slate-500">
                       ({(file.size / 1024).toFixed(1)} KB)
@@ -315,9 +330,9 @@ export default function ComposePage({
                     <button
                       type="button"
                       onClick={() => removeAttachment(file.id)}
-                      className="text-red-400 hover:text-red-300 font-bold ml-1"
+                      className="text-slate-400 hover:text-rose-400 ml-1"
                     >
-                      &times;
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 ))}
@@ -326,20 +341,19 @@ export default function ComposePage({
           </div>
 
           <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-            <Link href="/user/mail/inbox" className="text-slate-400 hover:text-slate-200">
-              Discard
+            <Link href="/user/mail/inbox">
+              <Button variant="ghost" size="md">
+                Descartar
+              </Button>
             </Link>
 
-            <button
-              type="submit"
-              disabled={sending}
-              className="py-2.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition-colors shadow-lg shadow-indigo-600/20 disabled:opacity-50"
-            >
-              {sending ? "Queued..." : "Send Message"}
-            </button>
+            <Button type="submit" variant="primary" size="md" disabled={sending}>
+              <Send className="w-4 h-4" />
+              <span>{sending ? "Sending..." : "Send message"}</span>
+            </Button>
           </div>
         </form>
-      </div>
+      </Card>
     </div>
   );
 }

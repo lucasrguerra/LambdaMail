@@ -10,6 +10,13 @@ export default function AdminLoginPage() {
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  // Enrolment state: the console requires a second factor, so an account
+  // without one is walked through creating it here rather than being told to
+  // go and find another screen.
+  const [enrolmentToken, setEnrolmentToken] = useState<string | null>(null);
+  const [enrolSecret, setEnrolSecret] = useState<string | null>(null);
+  const [enrolUri, setEnrolUri] = useState<string | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -19,6 +26,23 @@ export default function AdminLoginPage() {
     setLoading(true);
 
     try {
+      if (enrolmentToken) {
+        const res = await fetch("/api/v1/user/mfa/totp/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${enrolmentToken}` },
+          body: JSON.stringify({ code: mfaCode }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || "Verification failed");
+        // Shown once. The operator signs in again with the factor they just
+        // created, which is also the first proof that it works.
+        setRecoveryCodes(data.recovery_codes ?? []);
+        setEnrolmentToken(null);
+        setEnrolSecret(null);
+        setMfaCode("");
+        return;
+      }
+
       if (challengeToken) {
         // Step 2: Mandatory Admin 2FA Code
         const res = await fetch("/api/v1/auth/mfa/verify", {
@@ -39,6 +63,22 @@ export default function AdminLoginPage() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
+
+      // The password was right but no second factor exists. The response
+      // carries a grant that permits enrolling one and nothing else.
+      if (res.status === 403 && data.error === "MFA_ENROLLMENT_REQUIRED" && data.enrollment_token) {
+        const enroll = await fetch("/api/v1/user/mfa/totp/enroll", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${data.enrollment_token}` },
+        });
+        const enrolData = await enroll.json();
+        if (!enroll.ok) throw new Error(enrolData.message || "Could not start enrolment");
+        setEnrolmentToken(data.enrollment_token);
+        setEnrolSecret(enrolData.secret);
+        setEnrolUri(enrolData.uri);
+        return;
+      }
+
       if (!res.ok) throw new Error(data.message || "Admin authentication failed");
 
       if (data.mfa_required) {
@@ -73,7 +113,59 @@ export default function AdminLoginPage() {
         )}
 
         <form onSubmit={handleLogin} className="space-y-4">
-          {!challengeToken ? (
+          {recoveryCodes ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
+                <div className="mb-1 font-bold">{t("settings.recoveryCodesTitle")}</div>
+                <p className="mb-2">{t("settings.saveRecoveryCodes")}</p>
+                <div className="grid grid-cols-2 gap-1 font-mono text-[11px] text-white">
+                  {recoveryCodes.map((code) => (
+                    <span key={code}>{code}</span>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRecoveryCodes(null)}
+                className="w-full rounded-xl bg-emerald-600 py-3 font-medium text-white transition-colors hover:bg-emerald-500"
+              >
+                {t("auth.signInButton")}
+              </button>
+            </div>
+          ) : enrolSecret ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-300">
+                {t("auth.mfaRequired")}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-300">{t("settings.enableMfa")}</label>
+                <code className="block break-all rounded-lg border border-slate-800 bg-slate-900 p-3 font-mono text-sm text-white">
+                  {enrolSecret}
+                </code>
+                {enrolUri && (
+                  <a
+                    href={enrolUri}
+                    className="mt-1 block truncate text-[11px] text-indigo-400 hover:underline"
+                  >
+                    {enrolUri}
+                  </a>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-300">{t("auth.totpCodeLabel")}</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  maxLength={6}
+                  required
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-4 py-2.5 text-center font-mono text-lg tracking-widest text-white focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          ) : !challengeToken ? (
             <>
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.emailLabel")}</label>

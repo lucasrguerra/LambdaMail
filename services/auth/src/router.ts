@@ -6,6 +6,9 @@ import { createJwt, verifyJwt, isSurfaceAuthorized, type SessionTokenPayload } f
 import * as repo from "./repository.js";
 
 const CHALLENGE_TTL_SECONDS = 300;
+// Long enough to scan a code and type one back, short enough that a token
+// granting enrolment is not left lying around.
+const ENROLMENT_TTL_SECONDS = 900;
 const SESSION_TTL_SECONDS = 28800;
 
 /** Cookie scoped to the whole origin: the API lives under /api, so a cookie
@@ -94,7 +97,19 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url.startsWith("/api/v1/admin/") && !isSurfaceAuthorized(session, "admin")) {
       return sendJson(res, 401, { error: "UNAUTHORIZED", message: "Admin session required" });
     }
-    if (url.startsWith("/api/v1/user/") && !isSurfaceAuthorized(session, "user")) {
+    // The two enrolment endpoints also accept the short-lived token handed out
+    // when a password was correct but no second factor exists. It grants
+    // nothing else, so an operator can enrol from the admin login screen
+    // instead of having to discover the webmail settings.
+    const isEnrolmentRoute =
+      url === "/api/v1/user/mfa/totp/enroll" || url === "/api/v1/user/mfa/totp/confirm";
+    const hasEnrolmentGrant = session?.purpose === "mfa_enrollment";
+
+    if (
+      url.startsWith("/api/v1/user/") &&
+      !isSurfaceAuthorized(session, "user") &&
+      !(isEnrolmentRoute && hasEnrolmentGrant)
+    ) {
       return sendJson(res, 401, { error: "UNAUTHORIZED", message: "User session required" });
     }
 
@@ -217,9 +232,23 @@ async function login(req: IncomingMessage, res: ServerResponse, surface: "user" 
   // An admin whose second factor is not enrolled must not fall through to a
   // full session: the admin surface requires MFA unconditionally.
   if (surface === "admin" && !(await repo.hasConfirmedTotp(mailbox.id))) {
+    const enrolmentToken = createJwt(
+      {
+        sub: mailbox.id,
+        email: mailbox.email_address,
+        role: mailbox.role,
+        domainId: mailbox.domain_id,
+        surface: "user",
+        aud: "lambdamail:user",
+        mfaSatisfied: false,
+        purpose: "mfa_enrollment",
+      },
+      ENROLMENT_TTL_SECONDS,
+    );
     return sendJson(res, 403, {
       error: "MFA_ENROLLMENT_REQUIRED",
-      message: "Enroll a second factor from the webmail settings before using the admin console",
+      message: "The admin console requires a second factor. Enrol one to continue.",
+      enrollment_token: enrolmentToken,
     });
   }
 

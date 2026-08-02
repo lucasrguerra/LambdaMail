@@ -142,6 +142,7 @@
     "signOutOthers": "Encerrar as outras sessoes",
     "changePassword": "Alterar senha",
     "currentPassword": "Senha atual",
-    "newPassword": "Nova senha (min. 12 caracteres)"
+    "newPassword": "Nova senha (min. 12 caracteres)",
+    "toggleMenu": "Abrir ou fechar o menu"
   }
 }

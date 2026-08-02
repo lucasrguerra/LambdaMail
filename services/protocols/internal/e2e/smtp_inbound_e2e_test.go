@@ -270,17 +270,20 @@ func repoRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The marker is the migrations directory, which is what every caller is
-	// ultimately after. It used to be PLAN.md - a file .gitignore excludes on
-	// purpose ("never published with the code"), so it does not exist in a
-	// fresh checkout and this helper could never succeed in CI. That failure
-	// took the entire E2E suite down on every run.
+	// The marker is a migrations directory that actually holds migrations.
+	//
+	// It used to be PLAN.md, which .gitignore excludes on purpose, so this
+	// could never succeed in CI. Matching a bare "migrations" directory was
+	// the next attempt and broke as soon as services/migrations appeared -
+	// walking up from a test hits that one first and stops at services/.
+	// Requiring the SQL to be there is what the callers actually need.
 	for i := 0; i < 8; i++ {
-		if info, err := os.Stat(filepath.Join(dir, "migrations")); err == nil && info.IsDir() {
+		matches, _ := filepath.Glob(filepath.Join(dir, "migrations", "*.up.sql"))
+		if len(matches) > 0 {
 			return dir
 		}
 		dir = filepath.Dir(dir)
 	}
-	t.Fatal("could not locate repository root (no migrations directory in any parent)")
+	t.Fatal("could not locate repository root (no migrations/*.up.sql in any parent)")
 	return ""
 }

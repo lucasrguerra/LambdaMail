@@ -1,7 +1,23 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Inbox,
+  Send,
+  Layers,
+  HardDrive,
+  CheckCircle2,
+  Server,
+  ShieldCheck,
+  Globe,
+  RefreshCw,
+  Zap,
+} from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
+import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
+import { Badge } from "../../../../components/ui/Badge";
+import { Button } from "../../../../components/ui/Button";
 
 interface DashboardMetrics {
   inbound_24h: number;
@@ -18,89 +34,174 @@ interface DashboardMetrics {
 export default function AdminDashboardPage() {
   const t = useTranslations();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  const fetchMetrics = () => {
+    setLoading(true);
     fetch("/api/v1/admin/dashboard")
       .then((res) => res.json())
       .then((data) => setMetrics(data))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchMetrics();
   }, []);
 
+  const kpis = [
+    {
+      title: t("ui.inboundVolume"),
+      value: metrics?.inbound_24h ?? 1420,
+      subtext: "100% SPF/DKIM validado",
+      icon: Inbox,
+      color: "text-indigo-400",
+      bg: "bg-indigo-500/10",
+    },
+    {
+      title: t("ui.outboundDelivered"),
+      value: metrics?.outbound_24h ?? 890,
+      subtext: t("ui.daneVerified"),
+      icon: Send,
+      color: "text-emerald-400",
+      bg: "bg-emerald-500/10",
+    },
+    {
+      title: t("ui.queueDepth"),
+      value: metrics?.queue_depth ?? 3,
+      subtext: t("ui.postgresRunner"),
+      icon: Layers,
+      color: "text-cyan-400",
+      bg: "bg-cyan-500/10",
+    },
+    {
+      title: t("ui.diskUsed"),
+      value: `${metrics?.disk_used_percent ?? 18.4}%`,
+      subtext: t("ui.localDisk"),
+      icon: HardDrive,
+      color: "text-amber-400",
+      bg: "bg-amber-500/10",
+    },
+  ];
+
   return (
-    <div className="p-8 space-y-8">
-      <div className="flex items-center justify-between">
+    <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
+      {/* Header Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">{t("admin.dashboardTitle")}</h1>
-          <p className="text-xs text-slate-400">{t("ui.liveMetrics")}</p>
-        </div>
-        <span className="badge-verified px-3 py-1 rounded-full text-xs font-bold font-mono">
-          PREFLIGHT: {metrics?.preflight_status || "HEALTHY"}
-        </span>
-      </div>
-
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.inboundVolume")}</div>
-          <div className="text-3xl font-extrabold text-white">{metrics?.inbound_24h ?? 1420}</div>
-          <div className="text-[10px] text-emerald-400 mt-2">100% SPF/DKIM validated</div>
+          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+            {t("admin.dashboardTitle")}
+            <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-normal">
+              v1.2 Live
+            </span>
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">{t("ui.liveMetrics")}</p>
         </div>
 
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.outboundDelivered")}</div>
-          <div className="text-3xl font-extrabold text-white">{metrics?.outbound_24h ?? 890}</div>
-          <div className="text-[10px] text-emerald-400 mt-2">{t("ui.daneVerified")}</div>
-        </div>
-
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.queueDepth")}</div>
-          <div className="text-3xl font-extrabold text-indigo-400">{metrics?.queue_depth ?? 3}</div>
-          <div className="text-[10px] text-slate-500 mt-2">{t("ui.postgresRunner")}</div>
-        </div>
-
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.diskUsed")}</div>
-          <div className="text-3xl font-extrabold text-emerald-400">{metrics?.disk_used_percent ?? 18.4}%</div>
-          <div className="text-[10px] text-slate-500 mt-2">{t("ui.localDisk")}</div>
+        <div className="flex items-center gap-3">
+          <Badge variant="success" className="font-mono py-1">
+            <Zap className="w-3.5 h-3.5 mr-1 animate-pulse" />
+            PREFLIGHT: {metrics?.preflight_status || "HEALTHY"}
+          </Badge>
+          <Button variant="outline" size="sm" onClick={fetchMetrics} disabled={loading}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Atualizar</span>
+          </Button>
         </div>
       </div>
 
-      {/* Security & Health Breakdown */}
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <h2 className="text-lg font-bold text-white mb-4">{t("ui.coreInfra")}</h2>
-          <div className="space-y-3 text-xs">
-            <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-slate-300">{t("ui.smtpListener")}</span>
-              <span className="badge-verified px-2 py-0.5 rounded text-[10px]">{t("ui.online")}</span>
-            </div>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-slate-300">{t("ui.imapEngine")}</span>
-              <span className="badge-verified px-2 py-0.5 rounded text-[10px]">{t("ui.online")}</span>
-            </div>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-slate-300">{t("ui.scanners")}</span>
-              <span className="badge-verified px-2 py-0.5 rounded text-[10px]">{t("ui.healthy")}</span>
-            </div>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
-              <span className="text-slate-300">Traefik Acme Watcher (fsnotify + poll)</span>
-              <span className="badge-verified px-2 py-0.5 rounded text-[10px]">{t("ui.watching")}</span>
-            </div>
+      {/* KPI Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        {kpis.map((kpi, idx) => {
+          const Icon = kpi.icon;
+          return (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: idx * 0.05 }}
+            >
+              <Card hoverable className="relative overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-400">{kpi.title}</span>
+                  <div className={`w-9 h-9 rounded-xl ${kpi.bg} flex items-center justify-center`}>
+                    <Icon className={`w-5 h-5 ${kpi.color}`} />
+                  </div>
+                </div>
+                <div className="text-3xl font-black text-white mt-3 tracking-tight">
+                  {kpi.value}
+                </div>
+                <div className="text-xs text-slate-400 mt-2 flex items-center gap-1 font-mono">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 inline" />
+                  {kpi.subtext}
+                </div>
+              </Card>
+            </motion.div>
+          );
+        })}
+      </div>
+
+      {/* Security & System Infra */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Core Infrastructure Health */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Server className="w-5 h-5 text-emerald-400" />
+              {t("ui.coreInfra")}
+            </CardTitle>
+            <Badge variant="info">4/4 Ativos</Badge>
+          </CardHeader>
+          <div className="space-y-3">
+            {[
+              { name: t("ui.smtpListener"), status: t("ui.online"), port: "Porta 25 / 587" },
+              { name: t("ui.imapEngine"), status: t("ui.online"), port: "Porta 993 (SSL)" },
+              { name: t("ui.scanners"), status: t("ui.healthy"), port: "Rspamd Engine" },
+              { name: "Traefik Acme Watcher", status: t("ui.watching"), port: "fsnotify + poll" },
+            ].map((svc, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/80 hover:border-slate-700/60 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <div>
+                    <span className="text-xs font-semibold text-slate-200 block">{svc.name}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">{svc.port}</span>
+                  </div>
+                </div>
+                <Badge variant="success">{svc.status}</Badge>
+              </div>
+            ))}
           </div>
-        </div>
+        </Card>
 
-        <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <h2 className="text-lg font-bold text-white mb-4">{t("ui.domainVerification")}</h2>
-          <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-200">example.com</span>
-              <span className="badge-verified px-2 py-0.5 rounded text-[10px]">13 RECORDS VERIFIED</span>
+        {/* Domain Reconciliation */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="w-5 h-5 text-indigo-400" />
+              {t("ui.domainVerification")}
+            </CardTitle>
+            <Badge variant="success">Auto-Reconciled</Badge>
+          </CardHeader>
+          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span className="font-bold text-sm text-slate-100">example.com</span>
+              </div>
+              <Badge variant="success">13 RECORDS VERIFIED</Badge>
             </div>
-            <p className="text-[11px] text-slate-400">
-              Cloudflare DNS automation active. SPF, DKIM (RSA+Ed25519), DMARC (quarantine), MTA-STS (testing), and TLS-RPT records auto-reconciled.
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Cloudflare DNS automation active. SPF, DKIM (RSA 2048 + Ed25519), DMARC (quarantine), MTA-STS e TLS-RPT totalmente sincronizados e validados.
             </p>
+            <div className="pt-2 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800 font-mono">
+              <span>Last checked: just now</span>
+              <span className="text-indigo-400 hover:underline cursor-pointer">Verificar Registros &rarr;</span>
+            </div>
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );

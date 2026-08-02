@@ -2,6 +2,23 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Inbox,
+  Send,
+  FileText,
+  Archive,
+  AlertTriangle,
+  Trash2,
+  Settings,
+  PenSquare,
+  LogOut,
+  Mail,
+  ShieldCheck,
+  Menu,
+  X,
+} from "lucide-react";
 import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 
@@ -13,11 +30,11 @@ interface FolderCount {
 
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations();
+  const pathname = usePathname();
   const [folders, setFolders] = useState<FolderCount[]>([]);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    // The badge counts used to be literals in the markup, so an empty inbox
-    // still advertised unread mail.
     void fetch("/api/v1/mail/folders")
       .then((res) => (res.ok ? res.json() : []))
       .then(setFolders)
@@ -26,132 +43,164 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
 
   const unreadFor = (role: string) =>
     folders.find((f) => f.special_use === role || f.name.toLowerCase() === role)?.unread_count ?? 0;
-  return (
-    <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-slate-800 bg-slate-900/50 flex flex-col justify-between p-4">
-        <div>
-          {/* Webmail Surface Branding */}
-          <div className="flex items-center gap-3 px-2 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold">
-              @
-            </div>
-            <div>
-              <div className="font-bold text-sm text-white">LambdaMail</div>
-              <div className="text-[10px] text-slate-400 uppercase tracking-wider font-mono">{t("common.userPortal")}</div>
+
+  const navItems = [
+    { href: "/user/mail/inbox", label: t("mail.inbox"), icon: Inbox, role: "inbox" },
+    { href: "/user/mail/sent", label: t("mail.sent"), icon: Send, role: "sent" },
+    { href: "/user/mail/drafts", label: t("mail.drafts"), icon: FileText, role: "drafts" },
+    { href: "/user/mail/archive", label: "Archive", icon: Archive, role: "archive" },
+    { href: "/user/mail/junk", label: "Spam", icon: AlertTriangle, role: "junk" },
+    { href: "/user/mail/trash", label: "Trash", icon: Trash2, role: "trash" },
+  ];
+
+  const handleLogout = () => {
+    void fetch("/api/v1/auth/logout", { method: "POST" }).finally(() => {
+      window.location.href = "/user/login";
+    });
+  };
+
+  const SidebarContent = (
+    <div className="flex flex-col justify-between h-full p-4">
+      <div>
+        {/* Webmail Surface Branding */}
+        <div className="flex items-center gap-3 px-2 mb-6">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 border border-indigo-400/30 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">
+            <Mail className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <div className="font-bold text-base text-white tracking-tight">LambdaMail</div>
+            <div className="text-[10px] text-indigo-400 uppercase tracking-widest font-mono font-semibold">
+              {t("common.userPortal")}
             </div>
           </div>
-
-          <Link
-            href="/user/compose"
-            className="flex items-center justify-center gap-2 w-full py-2.5 px-4 mb-6 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-colors shadow-lg shadow-indigo-600/20"
-          >
-            <span>+</span> {t("mail.compose")}
-          </Link>
-
-          {/* Folder Navigation List */}
-          <nav className="space-y-1 text-sm font-medium">
-            <Link
-              href="/user/mail/inbox"
-              className="flex items-center justify-between px-3 py-2 rounded-lg bg-indigo-600/10 text-indigo-300 border border-indigo-500/20"
-            >
-              <div className="flex items-center gap-2.5">
-                <span>&#128236;</span> {t("mail.inbox")}
-              </div>
-              {unreadFor("inbox") > 0 && (
-                <span className="text-xs bg-indigo-500/30 px-2 py-0.5 rounded-full font-bold">
-                  {unreadFor("inbox")}
-                </span>
-              )}
-            </Link>
-
-            <Link
-              href="/user/mail/sent"
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <span>&#128234;</span> {t("mail.sent")}
-              </div>
-            </Link>
-
-            <Link
-              href="/user/mail/drafts"
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <span>&#128221;</span> {t("mail.drafts")}
-              </div>
-              {unreadFor("drafts") > 0 && (
-                <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full">{unreadFor("drafts")}</span>
-              )}
-            </Link>
-
-            <Link
-              href="/user/mail/archive"
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <span>&#128451;</span> Archive
-              </div>
-            </Link>
-
-            <Link
-              href="/user/mail/junk"
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <span>&#9888;</span> Spam
-              </div>
-            </Link>
-
-            <Link
-              href="/user/mail/trash"
-              className="flex items-center justify-between px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
-            >
-              <div className="flex items-center gap-2.5">
-                <span>&#128465;</span> Trash
-              </div>
-            </Link>
-          </nav>
         </div>
 
-        {/* User Settings & Account Footer */}
-        {/* Language and session controls */}
-        <div className="mb-3 flex items-center justify-between gap-2">
+        {/* Compose Floating Button */}
+        <Link
+          href="/user/compose"
+          className="group relative flex items-center justify-center gap-2 w-full py-3 px-4 mb-6 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all duration-200 shadow-lg shadow-indigo-600/30 active:scale-[0.98]"
+        >
+          <PenSquare className="w-4 h-4 transition-transform group-hover:rotate-12" />
+          <span>{t("mail.compose")}</span>
+        </Link>
+
+        {/* Folder Navigation List */}
+        <nav className="space-y-1 text-sm font-medium">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = pathname === item.href || (item.role === "inbox" && pathname === "/user/mail");
+            const unread = unreadFor(item.role);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all duration-150 ${
+                  isActive
+                    ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Icon className={`w-4 h-4 ${isActive ? "text-indigo-400" : "text-slate-400"}`} />
+                  <span>{item.label}</span>
+                </div>
+                {unread > 0 && (
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                      isActive ? "bg-indigo-500/40 text-indigo-200" : "bg-slate-800 text-slate-300"
+                    }`}
+                  >
+                    {unread}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Footer Controls & User Settings */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/60 border border-slate-800/80">
           <LanguageSwitcher />
           <button
             type="button"
-            onClick={() => {
-              void fetch("/api/v1/auth/logout", { method: "POST" }).finally(() => {
-                window.location.href = "/user/login";
-              });
-            }}
-            className="rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:text-white"
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700/80 text-xs font-medium text-slate-300 hover:text-rose-400 hover:border-rose-500/40 hover:bg-rose-500/10 transition-all"
           >
-            {t("settings.signOut")}
+            <LogOut className="w-3.5 h-3.5" />
+            <span>{t("settings.signOut")}</span>
           </button>
         </div>
-        <div className="pt-4 border-t border-slate-800">
-          <Link
-            href="/user/settings"
-            className="flex items-center justify-between p-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors"
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-7 h-7 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs flex-shrink-0">
-                U
-              </div>
-              <div className="truncate">
-                <div className="text-xs font-medium text-slate-200 truncate">user@lambdamail.local</div>
-                <div className="text-[10px] text-slate-400">Settings & 2FA</div>
+
+        <Link
+          href="/user/settings"
+          className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
+            pathname === "/user/settings"
+              ? "bg-indigo-600/15 border-indigo-500/30 text-slate-100"
+              : "bg-slate-900/80 border-slate-800 hover:border-slate-700 text-slate-300"
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-sm">
+              U
+            </div>
+            <div className="truncate">
+              <div className="text-xs font-semibold text-slate-200 truncate">user@lambdamail.local</div>
+              <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-emerald-400 inline" /> 2FA Ativo
               </div>
             </div>
-            <span className="text-slate-400 text-xs">&#9881;</span>
-          </Link>
+          </div>
+          <Settings className="w-4 h-4 text-slate-400 hover:text-slate-200 transition-colors" />
+        </Link>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-dark-bg text-slate-100">
+      {/* Mobile Top Header */}
+      <div className="md:hidden flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/90 z-20 w-full fixed top-0 left-0">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">
+            <Mail className="w-4 h-4" />
+          </div>
+          <span className="font-bold text-slate-100">LambdaMail</span>
         </div>
+        <button
+          onClick={() => setMobileOpen(!mobileOpen)}
+          aria-label={t("ui.toggleMenu")}
+          aria-expanded={mobileOpen}
+          className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+        >
+          {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+      </div>
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex w-64 border-r border-slate-800/80 bg-slate-900/60 backdrop-blur-xl flex-col flex-shrink-0">
+        {SidebarContent}
       </aside>
 
+      {/* Mobile Overlay Menu */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.aside
+            initial={{ x: "-100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "-100%" }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className="fixed inset-0 z-30 bg-slate-950 w-72 border-r border-slate-800 pt-16 md:hidden"
+          >
+            {SidebarContent}
+          </motion.aside>
+        )}
+      </AnimatePresence>
+
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+      <main className="flex-1 flex flex-col overflow-hidden pt-16 md:pt-0 bg-dark-bg relative">
         {children}
       </main>
     </div>

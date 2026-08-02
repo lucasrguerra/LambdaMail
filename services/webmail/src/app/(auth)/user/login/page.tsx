@@ -2,7 +2,10 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { Mail, Lock, ShieldCheck, ArrowLeft, KeyRound, AlertCircle } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
+import { Card } from "../../../../components/ui/Card";
+import { Button } from "../../../../components/ui/Button";
 
 export default function UserLoginPage() {
   const t = useTranslations();
@@ -27,7 +30,7 @@ export default function UserLoginPage() {
           body: JSON.stringify({ challenge_token: challengeToken, code: mfaCode }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Verification failed");
+        if (!res.ok) throw new Error(data.message || "Two-factor verification failed");
         window.location.href = "/user/mail/inbox";
         return;
       }
@@ -39,7 +42,7 @@ export default function UserLoginPage() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Authentication failed");
+      if (!res.ok) throw new Error(data.message || "Invalid credentials");
 
       if (data.mfa_required) {
         setChallengeToken(data.challenge_token);
@@ -47,91 +50,109 @@ export default function UserLoginPage() {
         window.location.href = "/user/mail/inbox";
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(err instanceof Error ? err.message : "Ocorreu um erro ao autenticar");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-slate-950">
-      <div className="glass-panel p-8 rounded-2xl max-w-md w-full border border-slate-800 shadow-2xl">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-xl">
-            @
+    <div className="min-h-screen flex items-center justify-center px-4 bg-dark-bg relative overflow-hidden">
+      {/* Background Ambient Glow */}
+      <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl pointer-events-none" />
+
+      <Card className="max-w-md w-full border border-slate-800 shadow-2xl p-8 z-10">
+        <div className="flex items-center gap-3.5 mb-6">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">
+            <Mail className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">{t("auth.userLoginTitle")}</h1>
+            <h1 className="text-xl font-extrabold text-white tracking-tight">{t("auth.userLoginTitle")}</h1>
             <p className="text-xs text-slate-400">{t("common.appName")} &middot; {t("common.userPortal")}</p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-            {error}
+          <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-4 text-xs">
           {!challengeToken ? (
             <>
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.emailLabel")}</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="user@domain.com"
-                  required
-                  className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
-                />
+                <label className="block font-semibold text-slate-300 mb-1.5">{t("auth.emailLabel")}</label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="user@domain.com"
+                    required
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.passwordLabel")}</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="************"
-                  required
-                  className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
-                />
+                <label className="block font-semibold text-slate-300 mb-1.5">{t("auth.passwordLabel")}</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="************"
+                    required
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
               </div>
             </>
           ) : (
             <div>
-              <div className="p-3 mb-4 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs">
-                {t("auth.mfaRequired")}
+              <div className="p-3.5 mb-4 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                <span>{t("auth.mfaRequired")}</span>
               </div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.totpCodeLabel")}</label>
-              <input
-                type="text"
-                value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value)}
-                placeholder="123456"
-                maxLength={6}
-                required
-                className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-center tracking-widest text-lg font-mono focus:outline-none focus:border-indigo-500 transition-colors"
-              />
+              <label className="block font-semibold text-slate-300 mb-1.5">{t("auth.totpCodeLabel")}</label>
+              <div className="relative">
+                <KeyRound className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-500" />
+                <input
+                  type="text"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="123456"
+                  maxLength={6}
+                  required
+                  className="w-full pl-10 pr-4 py-3 rounded-xl bg-slate-900/90 border border-slate-800 text-white text-center tracking-widest text-lg font-mono focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+              </div>
             </div>
           )}
 
-          <button
+          <Button
             type="submit"
+            variant="primary"
+            size="lg"
+            className="w-full mt-2"
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors shadow-lg shadow-indigo-600/20 disabled:opacity-50"
           >
             {loading ? t("common.loading") : challengeToken ? t("auth.verifyCodeButton") : t("auth.signInButton")}
-          </button>
+          </Button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
-          <Link href="/" className="text-xs text-slate-400 hover:text-slate-200 transition-colors">
-            Back to Surface Selector
+        <div className="mt-6 pt-4 border-t border-slate-800/80 text-center">
+          <Link href="/" className="text-xs text-slate-400 hover:text-slate-200 transition-colors inline-flex items-center gap-1.5">
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to surface selection</span>
           </Link>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

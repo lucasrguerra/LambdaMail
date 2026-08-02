@@ -142,6 +142,7 @@
     "signOutOthers": "Cerrar las otras sesiones",
     "changePassword": "Cambiar contrasena",
     "currentPassword": "Contrasena actual",
-    "newPassword": "Nueva contrasena (min. 12 caracteres)"
+    "newPassword": "Nueva contrasena (min. 12 caracteres)",
+    "toggleMenu": "Abrir o cerrar el menu"
   }
 }

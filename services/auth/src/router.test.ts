@@ -211,11 +211,64 @@ describeDb("auth API against a real database", () => {
     }
   });
 
-  it("refuses the admin console until a second factor is enrolled", async () => {
-    const res = await post("/api/v1/auth/admin/login", { email: adminEmail(), password: PASSWORD });
+  // Refusing is right, but refusing without a way forward was a dead end: the
+  // console needs a second factor, and the operator had to already know that
+  // enrolment lives on the other surface.
+  it("hands back an enrolment grant instead of a dead end", async () => {
+    const email = `deadend@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash, role)
+       VALUES ($1, 'deadend', $2, $3, 'SUPER_ADMIN') ON CONFLICT (domain_id, local_part) DO NOTHING`,
+      [DOMAIN_ID, email, await hashPassword(PASSWORD)],
+    );
+
+    const res = await post("/api/v1/auth/admin/login", { email, password: PASSWORD });
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("MFA_ENROLLMENT_REQUIRED");
-  });
+
+    const grant = res.body.enrollment_token as unknown as string;
+    expect(grant).toBeDefined();
+
+    // The grant enrols, and the account can then reach the console.
+    const enroll = await post("/api/v1/user/mfa/totp/enroll", {}, grant);
+    expect(enroll.status).toBe(200);
+
+    const secret = enroll.body.secret as unknown as string;
+    const confirm = await post("/api/v1/user/mfa/totp/confirm",
+      { code: generateHotp(base32Decode(secret), getCurrentStep()) }, grant);
+    expect(confirm.status).toBe(200);
+
+    const mailboxId = (await query<{ id: string }>(
+      `SELECT id FROM mailboxes WHERE email_address = $1`, [email]))[0].id;
+    await query(`UPDATE mfa_totp SET last_used_step = NULL WHERE mailbox_id = $1`, [mailboxId]);
+
+    const challenge = await post("/api/v1/auth/admin/login", { email, password: PASSWORD });
+    expect(challenge.body.mfa_required).toBe(true);
+    const verified = await post("/api/v1/auth/mfa/verify", {
+      challenge_token: challenge.body.challenge_token,
+      code: generateHotp(base32Decode(secret), getCurrentStep()),
+    });
+    expect(verified.status).toBe(200);
+    expect((await get("/api/v1/admin/dashboard", verified.body.token)).status).toBe(200);
+  }, 120000);
+
+  // The grant is for enrolling and nothing else.
+  it("refuses to use an enrolment grant as a session", async () => {
+    const email = `grantscope@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash, role)
+       VALUES ($1, 'grantscope', $2, $3, 'SUPER_ADMIN') ON CONFLICT (domain_id, local_part) DO NOTHING`,
+      [DOMAIN_ID, email, await hashPassword(PASSWORD)],
+    );
+
+    const res = await post("/api/v1/auth/admin/login", { email, password: PASSWORD });
+    const grant = res.body.enrollment_token as unknown as string;
+
+    expect((await get("/api/v1/admin/dashboard", grant)).status).toBe(401);
+    expect((await get("/api/v1/user/me", grant)).status).toBe(401);
+    expect((await get("/api/v1/user/sessions", grant)).status).toBe(401);
+    expect((await get("/api/v1/user/app-passwords", grant)).status).toBe(401);
+  }, 90000);
 
   it("grants the admin console after a real second factor", { timeout: 60000 }, async () => {
     // Enrollment happens on the user surface, which the admin also owns.
