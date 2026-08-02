@@ -398,8 +398,14 @@ export async function preflightSummary(): Promise<Record<string, unknown>> {
   const domains = await query<{ name: string; dns_status: string; dane_enabled: boolean }>(
     `SELECT name, dns_status, dane_enabled FROM domains ORDER BY name`,
   );
+  // Each check carries a key and its subject rather than a finished English
+  // sentence. The console builds the label from these, so a reader with the
+  // interface in Portuguese no longer sees "DNS records for example.com"
+  // spliced into an otherwise translated page.
   const checks = domains.map((d) => ({
-    name: `DNS records for ${d.name}`,
+    key: "dnsRecordsFor",
+    target: d.name,
+    name: `DNS records for ${d.name}`, // kept for any client not yet using key/target
     status: d.dns_status === "VERIFIED" ? "PASS" : d.dns_status === "PENDING" ? "PENDING" : "FAIL",
     detail: d.dns_status,
   }));

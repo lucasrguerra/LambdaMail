@@ -1,445 +1,360 @@
 "use client";
 
-import React, { useState } from "react";
-import {
-  Globe,
-  RefreshCw,
-  Plus,
-  KeyRound,
-  ShieldCheck,
-  CheckCircle2,
-  ArrowRight,
-  Copy,
-  Layers,
-  Sparkles,
-} from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Globe, RefreshCw, Plus, KeyRound, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
+import { Card } from "../../../../components/ui/Card";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
 
-interface DnsRecord {
-  type: string;
+/**
+ * Domains, read from the database.
+ *
+ * The previous version of this screen was a mockup end to end. It rendered a
+ * fixed table of thirteen DNS records for "example.com", every one of them
+ * marked VERIFIED; its onboarding wizard had four steps of which only the first
+ * called anything, step three printing "Cloudflare connection validated, 13
+ * records created and propagated" without a request behind it; and its DKIM
+ * rotation posted {domain_id: "default-domain"} to an endpoint whose field is
+ * "domain", swallowed the resulting 400, and displayed a made-up TXT record as
+ * though a key had been issued. Rotation therefore never once worked from here.
+ *
+ * What is shown now is what the API returns, and the one thing the backend
+ * cannot yet do - verify individual DNS records against a resolver - says so
+ * instead of drawing a table of green ticks.
+ */
+
+interface Domain {
+  id: string;
   name: string;
-  expectedValue: string;
-  actualValue: string;
-  status: "VERIFIED" | "DRIFT" | "PARTIAL";
+  dns_status: string;
+  dmarc_policy: string | null;
+  mta_sts_mode: string | null;
+  dane_enabled: boolean;
+  is_active: boolean;
+  dns_last_checked_at: string | null;
+  mailbox_count: number;
 }
 
-const DNS_RECORDS_13: DnsRecord[] = [
-  { type: "MX", name: "@", expectedValue: "10 mail.example.com", actualValue: "10 mail.example.com", status: "VERIFIED" },
-  { type: "TXT", name: "@", expectedValue: "v=spf1 mx ~all", actualValue: "v=spf1 mx ~all", status: "VERIFIED" },
-  { type: "TXT", name: "default._domainkey", expectedValue: "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GN...", actualValue: "v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GN...", status: "VERIFIED" },
-  { type: "TXT", name: "ed25519._domainkey", expectedValue: "v=DKIM1; k=ed25519; p=117p2...==", actualValue: "v=DKIM1; k=ed25519; p=117p2...==", status: "VERIFIED" },
-  { type: "TXT", name: "_dmarc", expectedValue: "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com", actualValue: "v=DMARC1; p=quarantine; rua=mailto:dmarc@example.com", status: "VERIFIED" },
-  { type: "TXT", name: "_mta-sts", expectedValue: "v=STSv1; id=20260802", actualValue: "v=STSv1; id=20260802", status: "VERIFIED" },
-  { type: "CNAME", name: "mta-sts", expectedValue: "mail.example.com", actualValue: "mail.example.com", status: "VERIFIED" },
-  { type: "TXT", name: "_smtp._tlsa", expectedValue: "3 1 1 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", actualValue: "3 1 1 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", status: "VERIFIED" },
-  { type: "TXT", name: "_smtp._tls", expectedValue: "v=TLSRPTv1; rua=mailto:tlsrpt@example.com", actualValue: "v=TLSRPTv1; rua=mailto:tlsrpt@example.com", status: "VERIFIED" },
-  { type: "SRV", name: "_autodiscover._tcp", expectedValue: "0 0 443 mail.example.com", actualValue: "0 0 443 mail.example.com", status: "VERIFIED" },
-  { type: "SRV", name: "_submission._tcp", expectedValue: "0 0 587 mail.example.com", actualValue: "0 0 587 mail.example.com", status: "VERIFIED" },
-  { type: "SRV", name: "_imaps._tcp", expectedValue: "0 0 993 mail.example.com", actualValue: "0 0 993 mail.example.com", status: "VERIFIED" },
-  { type: "A", name: "mail", expectedValue: "203.0.113.195", actualValue: "203.0.113.195", status: "VERIFIED" },
-];
+function statusVariant(status: string): "success" | "warning" | "danger" {
+  if (status === "VERIFIED") return "success";
+  if (status === "PENDING" || status === "PARTIAL") return "warning";
+  return "danger";
+}
 
 export default function AdminDomainsPage() {
   const t = useTranslations();
 
-  const [activeTab, setActiveTab] = useState<"dns" | "onboarding" | "dkim">("dns");
+  const [activeTab, setActiveTab] = useState<"domains" | "onboarding" | "dkim">("domains");
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   const [reconciling, setReconciling] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-
-  // Guided Onboarding Wizard state
-  const [onboardStep, setOnboardStep] = useState(1);
   const [onboardDomain, setOnboardDomain] = useState("");
-  const [onboardAdminEmail, setOnboardAdminEmail] = useState("");
-  const [onboardSuccess, setOnboardSuccess] = useState(false);
+  const [onboarding, setOnboarding] = useState(false);
 
-  // DKIM Rotation Wizard state
-  const [dkimKeyType, setDkimKeyType] = useState<"Ed25519" | "RSA-2048">("Ed25519");
-  const [dkimSelector, setDkimSelector] = useState("s202608");
-  const [dkimRotationStep, setDkimRotationStep] = useState<"idle" | "generated" | "active">("idle");
-  const [generatedDkimTxt, setGeneratedDkimTxt] = useState<string | null>(null);
+  const [dkimAlgorithm, setDkimAlgorithm] = useState<"ed25519" | "rsa2048">("ed25519");
+  const [dkimSelector, setDkimSelector] = useState("s1");
+  const [dkimRecord, setDkimRecord] = useState<{ name: string; value: string; overlapDays: number } | null>(null);
+  const [rotating, setRotating] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/v1/admin/domains");
+      if (!res.ok) throw new Error();
+      const data: Domain[] = await res.json();
+      setDomains(data);
+      // Keeps the current pick if it still exists, so a refresh after an action
+      // does not silently retarget the next operation at another domain.
+      setSelectedId((prev) => (data.some((d) => d.id === prev) ? prev : (data[0]?.id ?? "")));
+      setError(null);
+    } catch {
+      setDomains([]);
+      setError(t("errors.loadFailed"));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const selected = domains.find((d) => d.id === selectedId) ?? null;
 
   const handleReconcile = async () => {
+    if (!selected) return;
     setReconciling(true);
-    setSyncMessage(null);
+    setNotice(null);
+    setError(null);
     try {
+      // The real domain id, not the literal string "default-domain" that used
+      // to be sent here for every domain on the server.
       const res = await fetch("/api/v1/admin/domains/reconcile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain_id: "default-domain" }),
+        body: JSON.stringify({ domain_id: selected.id }),
       });
-      if (res.ok) {
-        setSyncMessage("Cloudflare sync finished: all 13 DNS records verified.");
-      } else {
-        setSyncMessage("DNS reconciliation requested.");
-      }
-    } catch {
-      setSyncMessage("Could not reach the reconciliation endpoint.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      setNotice(data.message ?? t("settings.settingsSaved"));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
     } finally {
       setReconciling(false);
     }
   };
 
-  const handleStartDkimRotation = async () => {
+  const handleOnboard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onboardDomain.trim()) return;
+    setOnboarding(true);
+    setNotice(null);
+    setError(null);
     try {
-      await fetch("/api/v1/admin/dkim/rotate", {
+      const res = await fetch("/api/v1/admin/domains/onboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: onboardDomain.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      setOnboardDomain("");
+      setNotice(`${data.name}`);
+      await load();
+      setActiveTab("domains");
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
+    } finally {
+      setOnboarding(false);
+    }
+  };
+
+  const handleRotateDkim = async () => {
+    if (!selected) return;
+    setRotating(true);
+    setNotice(null);
+    setError(null);
+    setDkimRecord(null);
+    try {
+      // The endpoint's field is "domain" and it wants the name. Sending the
+      // wrong field is what made every previous rotation fail unnoticed.
+      const res = await fetch("/api/v1/admin/dkim/rotate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          domain_id: "default-domain",
+          domain: selected.name,
           selector: dkimSelector,
-          algorithm: dkimKeyType.toLowerCase().includes("ed") ? "ed25519" : "rsa2048",
+          algorithm: dkimAlgorithm,
         }),
       });
-    } catch {
-      // fallback handling
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      // The key that was actually generated and sealed, not a sample string.
+      setDkimRecord({
+        name: `${data.selector}._domainkey.${data.domain}`,
+        value: data.public_key_record,
+        overlapDays: data.overlap_days,
+      });
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
+    } finally {
+      setRotating(false);
     }
-    setDkimRotationStep("generated");
-    setGeneratedDkimTxt(`v=DKIM1; k=${dkimKeyType.toLowerCase().includes("ed") ? "ed25519" : "rsa"}; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3...`);
   };
 
-  const handleActivateDkim = () => {
-    setDkimRotationStep("active");
-  };
-
-  const handleNextOnboardStep = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (onboardStep === 1 && !onboardDomain) return;
-    if (onboardStep === 1) {
-      try {
-        await fetch("/api/v1/admin/domains/onboard", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domain: onboardDomain }),
-        });
-      } catch {
-        // fallback
-      }
-    }
-    if (onboardStep < 4) {
-      setOnboardStep(onboardStep + 1);
-    } else {
-      setOnboardSuccess(true);
-    }
-  };
+  const tabs = [
+    { id: "domains" as const, label: t("admin.domainsTitle"), icon: Globe },
+    { id: "onboarding" as const, label: t("common.add"), icon: Plus },
+    { id: "dkim" as const, label: "DKIM", icon: KeyRound },
+  ];
 
   return (
-    <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
-      {/* Header & Tabs */}
+    <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
             {t("admin.domainsTitle")}
           </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            DNS reconciliation, guided domain onboarding and signing key rotation DKIM.
-          </p>
         </div>
 
-        {/* Tab Selection Controls */}
         <div className="flex bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 text-xs font-medium self-start md:self-auto">
-          <button
-            onClick={() => setActiveTab("dns")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-              activeTab === "dns"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span>Matriz 13 Registros DNS</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("onboarding")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-              activeTab === "onboarding"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Onboarding Guiado</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("dkim")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-              activeTab === "dkim"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <KeyRound className="w-3.5 h-3.5" />
-            <span>DKIM key rotation</span>
-          </button>
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
+                  activeTab === tab.id
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* TAB 1: 13 DNS RECORDS RECONCILIATION */}
-      {activeTab === "dns" && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <Card className="flex-1 p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold">
-                  <Globe className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-base font-bold text-white">example.com</div>
-                  <div className="text-xs text-slate-400">Primary domain | DMARC: quarantine | MTA-STS: testing</div>
-                </div>
-              </div>
-              <Badge variant="success">13 / 13 VERIFICADOS</Badge>
-            </Card>
+      {notice && (
+        <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
+      {error && (
+        <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+          {error}
+        </div>
+      )}
 
-            <Button
-              variant="primary"
-              size="md"
-              onClick={handleReconcile}
-              disabled={reconciling}
-              className="self-stretch sm:self-auto"
-            >
-              <RefreshCw className={`w-4 h-4 ${reconciling ? "animate-spin" : ""}`} />
-              <span>{reconciling ? "Sincronizando Cloudflare API..." : "Reconciliar Registros DNS"}</span>
-            </Button>
-          </div>
-
-          {syncMessage && (
-            <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-              <span>{syncMessage}</span>
-            </div>
+      {activeTab === "domains" && (
+        <div className="space-y-4">
+          {domains.length === 0 && !loading ? (
+            <Card className="p-8 text-center text-xs text-slate-500">{t("admin.noDomains")}</Card>
+          ) : (
+            domains.map((d) => (
+              <Card key={d.id} className="p-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 flex-shrink-0">
+                      <Globe className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-base font-bold text-white truncate">{d.name}</div>
+                      <div className="text-xs text-slate-400">
+                        {t("admin.mailboxCount", { count: d.mailbox_count })}
+                        {d.dmarc_policy ? ` | DMARC: ${d.dmarc_policy}` : ""}
+                        {d.mta_sts_mode ? ` | MTA-STS: ${d.mta_sts_mode}` : ""}
+                        {d.dane_enabled ? " | DANE" : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Badge variant={statusVariant(d.dns_status)}>{d.dns_status}</Badge>
+                    <Button
+                      variant={selectedId === d.id ? "primary" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedId(d.id)}
+                    >
+                      {selectedId === d.id ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
+                      <span>{selectedId === d.id ? t("common.status") : t("common.add")}</span>
+                    </Button>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-slate-800 text-[11px] text-slate-500 font-mono">
+                  {t("admin.lastChecked", {
+                    when: d.dns_last_checked_at
+                      ? new Date(d.dns_last_checked_at).toLocaleString()
+                      : t("common.never"),
+                  })}
+                </div>
+              </Card>
+            ))
           )}
 
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-800 bg-slate-900/80 font-bold text-xs text-slate-300 flex items-center justify-between">
-              <span>Expected 13 DNS records versus actual state</span>
+          {/* Says what reconciliation currently does. The old copy announced
+              "Cloudflare sync finished: all 13 DNS records verified" on every
+              press - including when the request failed - while the endpoint
+              behind it only writes an audit entry. */}
+          <Card className="space-y-3">
+            <div className="flex items-start gap-2 text-xs text-amber-300">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <p>{t("admin.reconcileNotImplemented")}</p>
             </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                    <th className="p-3.5">Tipo</th>
-                    <th className="p-3.5">{t("ui.recordName")}</th>
-                    <th className="p-3.5">{t("ui.expectedValue")}</th>
-                    <th className="p-3.5">{t("ui.actualRecord")}</th>
-                    <th className="p-3.5">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {DNS_RECORDS_13.map((rec, idx) => (
-                    <tr key={idx} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="p-3.5 font-bold text-emerald-400">{rec.type}</td>
-                      <td className="p-3.5 text-slate-200">{rec.name}</td>
-                      <td className="p-3.5 text-slate-300 truncate max-w-xs">{rec.expectedValue}</td>
-                      <td className="p-3.5 text-slate-400 truncate max-w-xs">{rec.actualValue}</td>
-                      <td className="p-3.5">
-                        <Badge variant="success">{rec.status}</Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Button variant="outline" size="sm" onClick={handleReconcile} disabled={reconciling || !selected}>
+              <RefreshCw className={`w-3.5 h-3.5 ${reconciling ? "animate-spin" : ""}`} />
+              <span>{t("admin.reconcileDns")}</span>
+            </Button>
           </Card>
         </div>
       )}
 
-      {/* TAB 2: GUIDED DOMAIN ONBOARDING WIZARD */}
       {activeTab === "onboarding" && (
-        <Card className="max-w-3xl space-y-6">
+        <Card className="max-w-2xl space-y-4">
           <div>
-            <h2 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-emerald-400" />
-              Guided domain onboarding
-            </h2>
-            <p className="text-xs text-slate-400">
-              Step by step provisioning for new domains and their Cloudflare records DNS.
-            </p>
+            <h2 className="text-lg font-bold text-white mb-1">{t("admin.onboardTitle")}</h2>
+            <p className="text-xs text-slate-400">{t("admin.onboardIntro")}</p>
           </div>
-
-          {/* Stepper Header */}
-          <div className="grid grid-cols-4 gap-2 text-center text-xs">
-            {["1. Domain", "2. DNS records", "3. Verification", "4. Aliases"].map((label, idx) => (
-              <div
-                key={idx}
-                className={`p-2.5 rounded-xl border font-semibold transition-all ${
-                  onboardStep === idx + 1
-                    ? "bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow-sm"
-                    : onboardStep > idx + 1
-                    ? "bg-slate-900 border-slate-700 text-slate-400"
-                    : "bg-slate-950 border-slate-800 text-slate-600"
-                }`}
-              >
-                {label}
-              </div>
-            ))}
-          </div>
-
-          {onboardSuccess ? (
-            <div className="p-5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 space-y-2">
-              <div className="font-bold text-base flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                Domain onboarding complete
-              </div>
-              <p className="text-xs leading-relaxed">
-                The domain <strong>{onboardDomain}</strong> was provisioned with the 13 DNS records and the RFC 2142 aliases.
-              </p>
+          <form onSubmit={handleOnboard} className="space-y-3 text-xs">
+            <div>
+              <label className="font-semibold text-slate-300 block mb-1">{t("admin.domainName")}</label>
+              <input
+                type="text"
+                value={onboardDomain}
+                onChange={(e) => setOnboardDomain(e.target.value)}
+                placeholder="example.org"
+                required
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              />
             </div>
-          ) : (
-            <form onSubmit={handleNextOnboardStep} className="space-y-4 text-xs">
-              {onboardStep === 1 && (
-                <div className="space-y-3">
-                  <div>
-                    <label className="font-semibold text-slate-300 block mb-1">Domain name</label>
-                    <input
-                      type="text"
-                      value={onboardDomain}
-                      onChange={(e) => setOnboardDomain(e.target.value)}
-                      placeholder="novafirma.com"
-                      required
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-semibold text-slate-300 block mb-1">E-mail do Administrador Principal</label>
-                    <input
-                      type="email"
-                      value={onboardAdminEmail}
-                      onChange={(e) => setOnboardAdminEmail(e.target.value)}
-                      placeholder="admin@novafirma.com"
-                      required
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {onboardStep === 2 && (
-                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-2">
-                  <div className="font-bold text-white">The 13 DNS records generated:</div>
-                  <pre className="font-mono text-[11px] text-slate-300 leading-relaxed overflow-x-auto p-3 bg-slate-950 rounded-lg border border-slate-800">
-                    MX 10 mail.{onboardDomain}&#10;
-                    TXT v=spf1 mx ~all&#10;
-                    TXT default._domainkey IN TXT &quot;v=DKIM1; k=rsa; p=...&quot;&#10;
-                    TXT ed25519._domainkey IN TXT &quot;v=DKIM1; k=ed25519; p=...&quot;&#10;
-                    TXT _dmarc IN TXT &quot;v=DMARC1; p=quarantine; rua=mailto:dmarc@{onboardDomain}&quot;
-                  </pre>
-                </div>
-              )}
-
-              {onboardStep === 3 && (
-                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-2">
-                  <div className="font-bold text-white">Verificando Registros via API Cloudflare...</div>
-                  <div className="p-3 bg-slate-950 rounded-lg text-emerald-400 font-mono text-xs flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>Cloudflare connection validated. 13 records created and propagated.</span>
-                  </div>
-                </div>
-              )}
-
-              {onboardStep === 4 && (
-                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-2">
-                  <div className="font-bold text-white">Provisioning the standard aliases (RFC 2142):</div>
-                  <ul className="list-disc list-inside text-slate-300 space-y-1 font-mono text-xs">
-                    <li>postmaster@{onboardDomain} &rarr; {onboardAdminEmail}</li>
-                    <li>abuse@{onboardDomain} &rarr; {onboardAdminEmail}</li>
-                    <li>security@{onboardDomain} &rarr; {onboardAdminEmail}</li>
-                  </ul>
-                </div>
-              )}
-
-              <div className="flex justify-between pt-4 border-t border-slate-800">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="md"
-                  disabled={onboardStep === 1}
-                  onClick={() => setOnboardStep(onboardStep - 1)}
-                >
-                  Voltar
-                </Button>
-
-                <Button type="submit" variant="primary" size="md">
-                  <span>{onboardStep === 4 ? "Concluir Onboarding" : "Next step"}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
-              </div>
-            </form>
-          )}
+            <Button type="submit" variant="primary" size="md" disabled={onboarding}>
+              <Plus className="w-4 h-4" />
+              <span>{onboarding ? t("common.loading") : t("common.add")}</span>
+            </Button>
+          </form>
         </Card>
       )}
 
-      {/* TAB 3: GUIDED DKIM KEY ROTATION WIZARD */}
       {activeTab === "dkim" && (
-        <Card className="max-w-3xl space-y-6">
+        <Card className="max-w-3xl space-y-5">
           <div>
             <h2 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
               <KeyRound className="w-5 h-5 text-indigo-400" />
-              DKIM key rotation
+              {t("admin.dkimTitle")}
             </h2>
             <p className="text-xs text-slate-400">
-              Replace a domain signing key without interrupting deliverability.
+              {selected ? selected.name : t("admin.noDomains")}
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">Tipo da Chave de Assinatura</label>
+              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.dkimAlgorithm")}</label>
               <select
-                value={dkimKeyType}
-                onChange={(e) => setDkimKeyType(e.target.value as "Ed25519" | "RSA-2048")}
+                value={dkimAlgorithm}
+                onChange={(e) => setDkimAlgorithm(e.target.value as "ed25519" | "rsa2048")}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
               >
-                <option value="Ed25519">Ed25519 (fast and compact)</option>
-                <option value="RSA-2048">RSA-2048 (Compatibilidade Legada)</option>
+                <option value="ed25519">Ed25519</option>
+                <option value="rsa2048">RSA-2048</option>
               </select>
             </div>
-
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">Nome do Seletor DKIM</label>
+              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.dkimSelector")}</label>
               <input
                 type="text"
                 value={dkimSelector}
                 onChange={(e) => setDkimSelector(e.target.value)}
+                pattern="[A-Za-z0-9-]{1,63}"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
               />
             </div>
           </div>
 
-          {dkimRotationStep === "idle" && (
-            <Button variant="primary" size="md" onClick={handleStartDkimRotation}>
-              <KeyRound className="w-4 h-4" />
-              <span>Gerar Novo Par de Chaves DKIM</span>
-            </Button>
-          )}
+          <Button variant="primary" size="md" onClick={handleRotateDkim} disabled={rotating || !selected}>
+            <KeyRound className="w-4 h-4" />
+            <span>{rotating ? t("common.loading") : t("admin.dkimRotate")}</span>
+          </Button>
 
-          {dkimRotationStep === "generated" && generatedDkimTxt && (
-            <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-4 text-xs">
-              <div className="font-bold text-white">1. Adicione o Novo Registro de Seletor DKIM no DNS:</div>
+          {dkimRecord && (
+            <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-3 text-xs">
+              <div className="font-bold text-white">{t("admin.dkimPublishRecord")}</div>
               <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 font-mono text-[11px] text-emerald-400 break-all">
-                {dkimSelector}._domainkey.example.com IN TXT &quot;{generatedDkimTxt}&quot;
+                {dkimRecord.name} IN TXT &quot;{dkimRecord.value}&quot;
               </div>
-
               <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/25 text-amber-300">
-                <strong>Dual-signature overlap active (7 days)</strong>
-                <p className="mt-1">Both keys sign outbound mail so nothing fails while DNS propagates.</p>
+                {t("admin.dkimOverlap", { days: dkimRecord.overlapDays })}
               </div>
-
-              <Button variant="primary" size="md" onClick={handleActivateDkim}>
-                Ativar Nova Chave e Desativar Anterior
-              </Button>
-            </div>
-          )}
-
-          {dkimRotationStep === "active" && (
-            <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>DKIM key rotation complete. The selector &quot;{dkimSelector}&quot; is active.</span>
             </div>
           )}
         </Card>

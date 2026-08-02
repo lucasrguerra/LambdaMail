@@ -54,6 +54,11 @@ services:
     networks: [backend]
 
   # ----------------------------------------------------------- MIGRATE
+  # The only service with no healthcheck, deliberately: it is a one-shot job
+  # that applies the migrations and exits. Everything that depends on it waits
+  # on service_completed_successfully, which is a stronger guarantee than a
+  # probe - a health check on a container that is meant to stop would report
+  # unhealthy exactly when it has done its job.
   migrate:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/migrations:${IMAGE_TAG:-latest}
     restart: "no"
@@ -96,7 +101,12 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "rspamadm control stat >/dev/null 2>&1 || exit 1"]
       interval: 30s
+      # Without an explicit timeout Docker allows 30s, which overlaps the next
+      # probe; and without a start_period the first checks run while the
+      # worker is still loading maps and mark the container unhealthy.
+      timeout: 10s
       retries: 3
+      start_period: 60s
     mem_limit: 768m
     networks: [backend, egress]    # egress: RBL/DNSBL lookups and fuzzy storage
 
@@ -112,6 +122,7 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
       interval: 60s
+      timeout: 15s                # clamd answers slowly while scanning
       retries: 5
       start_period: 300s          # the initial signature load is slow
     mem_limit: 2g                 # ClamAV genuinely needs this
@@ -174,6 +185,7 @@ services:
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3002/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
+      timeout: 5s
       retries: 3
       start_period: 20s
     mem_limit: 1g
@@ -312,6 +324,16 @@ services:
       # TLS listener comes up without a certificate (section 8.2, trap 2).
       - traefik.http.routers.lm-mailhost.rule=Host(`${PRIMARY_MAIL_HOST}`)
       - traefik.http.routers.lm-mailhost.tls.certresolver=letsencrypt
+    # The one service that was never probed, despite being the only one users
+    # reach directly: a wedged Next process kept its container "running" and
+    # Traefik kept routing to it. The image ships no curl or wget, so this uses
+    # node's own fetch, as auth and storage do.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     mem_limit: 512m
     networks: [backend, proxy]
 

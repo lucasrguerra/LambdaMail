@@ -16,14 +16,17 @@ import {
   Menu,
   X,
   Lock,
+  Mail,
 } from "lucide-react";
 import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
+import { useAccount } from "../../../lib/useAccount";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const account = useAccount("admin");
 
   const navItems = [
     { href: "/admin/dashboard", label: t("admin.dashboardTitle"), icon: LayoutDashboard },
@@ -56,14 +59,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </div>
 
-        {/* Security Badge Indicator */}
-        <div className="mb-6 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2">
-          <Lock className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-          <div>
-            <strong className="block text-[11px] font-semibold text-emerald-300">Isolated Surface</strong>
-            <span className="text-[10px] text-emerald-400/80 font-mono">aud: lambdamail:admin</span>
-          </div>
-        </div>
+        {/* Leaving the console needs no ceremony - the webmail session was
+            never given up to get here, so this is a plain link back. Coming the
+            other way is what costs a second factor. */}
+        <Link
+          href="/user/mail/inbox"
+          className="mb-6 flex items-center gap-2 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-xs font-semibold text-indigo-300 hover:border-indigo-500/50 hover:bg-indigo-500/15 transition-all"
+        >
+          <Mail className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">{t("admin.backToWebmail")}</span>
+        </Link>
 
         {/* Admin Navigation */}
         <nav className="space-y-1 text-sm font-medium">
@@ -107,12 +112,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="pt-3 border-t border-slate-800/80">
           <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-xs flex-shrink-0">
-                A
+              <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-xs flex-shrink-0 uppercase">
+                {account?.email?.[0] ?? "?"}
               </div>
               <div className="truncate">
-                <div className="text-xs font-semibold text-slate-200 truncate">admin@lambdamail.local</div>
-                <div className="text-[10px] text-emerald-400 font-mono">SUPER_ADMIN (2FA)</div>
+                <div className="text-xs font-semibold text-slate-200 truncate">
+                  {account?.email ?? t("common.loading")}
+                </div>
+                <div className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  {account?.role ?? ""}
+                </div>
               </div>
             </div>
           </div>
@@ -129,7 +139,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold">
             <Sliders className="w-4 h-4" />
           </div>
-          <span className="font-bold text-slate-100">LambdaMail Admin</span>
+          <span className="font-bold text-slate-100">{t("common.appName")} {t("common.adminPortal")}</span>
         </div>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}

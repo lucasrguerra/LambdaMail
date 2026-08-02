@@ -12,12 +12,12 @@ import {
   Trash2,
   Plus,
   Lock,
-  Sparkles,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
+import { Card } from "../../../../components/ui/Card";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
+import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
 
 interface SieveRule {
   id: string;
@@ -62,16 +62,18 @@ export default function UserSettingsPage() {
   const [newPassword, setNewPassword] = useState("");
 
   const [vacationEnabled, setVacationEnabled] = useState(false);
-  const [vacationSubject, setVacationSubject] = useState("Out of office auto-reply");
-  const [vacationBody, setVacationBody] = useState("Thank you for your message. I am currently away from my desk.");
+  const [vacationSubject, setVacationSubject] = useState(() => t("settings.vacationDefaultSubject"));
+  const [vacationBody, setVacationBody] = useState(() => t("settings.vacationDefaultBody"));
   const [vacationSaved, setVacationSaved] = useState(false);
 
   const [signature, setSignature] = useState("");
   const [sigSaved, setSigSaved] = useState(false);
 
-  const [rules, setRules] = useState<SieveRule[]>([
-    { id: "rule-1", field: "Subject", match: "contains", value: "[Boletim]", action: "move", targetFolder: "Archive" },
-  ]);
+  // Starts empty rather than with a sample rule. A seeded "[Boletim]" filter
+  // used to sit here, and because saving posts the whole list, the first time
+  // anyone added or removed a rule that invented filter was written into their
+  // real Sieve script and began moving their mail.
+  const [rules, setRules] = useState<SieveRule[]>([]);
   const [newField, setNewField] = useState<"From" | "Subject" | "Header">("Subject");
   const [newMatch, setNewMatch] = useState<"contains" | "equals" | "matches">("contains");
   const [newValue, setNewValue] = useState("");
@@ -107,7 +109,7 @@ export default function UserSettingsPage() {
       setSigSaved(true);
       setTimeout(() => setSigSaved(false), 2000);
     } catch {
-      setMessage("Falha ao salvar assinatura");
+      setMessage(t("settings.signatureSaveFailed"));
     }
   };
 
@@ -122,7 +124,7 @@ export default function UserSettingsPage() {
       setVacationSaved(true);
       setTimeout(() => setVacationSaved(false), 2000);
     } catch {
-      setMessage("Could not save the auto-reply");
+      setMessage(t("settings.autoReplySaveFailed"));
     }
   };
 
@@ -246,9 +248,7 @@ export default function UserSettingsPage() {
           <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
             {t("settings.title")}
           </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Two-factor, Sieve rules, the auto-reply and your signature.
-          </p>
+          <p className="text-sm text-slate-400 mt-1">{t("settings.subtitle")}</p>
         </div>
 
         {message && (
@@ -266,9 +266,7 @@ export default function UserSettingsPage() {
                 <Shield className="w-5 h-5 text-indigo-400" />
                 {t("ui.twoFactorSection")}
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Proteja sua conta com Google Authenticator, Aegis, Authy ou 1Password.
-              </p>
+              <p className="text-xs text-slate-400 mt-0.5">{t("settings.twoFactorIntro")}</p>
             </div>
             <Badge variant={mfaEnabled ? "success" : "warning"}>
               {mfaEnabled ? t("settings.mfaEnabled") : t("settings.mfaDisabled")}
@@ -292,12 +290,7 @@ export default function UserSettingsPage() {
 
           {qrSecret && (
             <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-4 text-xs">
-              <div className="text-slate-300">
-                Digitalize esta chave no seu aplicativo autenticador ou copie a chave secreta:
-              </div>
-              <div className="p-3 bg-slate-950 rounded-lg font-mono text-indigo-400 break-all border border-slate-800">
-                Secreto: {qrSecret}
-              </div>
+              <TotpEnrolment secret={qrSecret} uri={qrUri} />
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
@@ -306,20 +299,25 @@ export default function UserSettingsPage() {
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ secret: qrSecret, code: totpCode }),
                   });
-                  const data = await res.json();
+                  const data = await res.json().catch(() => ({}));
                   if (res.ok) {
                     setMfaEnabled(true);
-                    setRecoveryCodes(data.recovery_codes);
+                    setRecoveryCodes(data.recovery_codes ?? []);
                     setQrSecret(null);
+                    setTotpCode("");
+                  } else {
+                    setMessage(data.message ?? t("auth.verificationFailed"));
                   }
                 }}
                 className="pt-2 flex items-center gap-3"
               >
                 <input
                   type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   value={totpCode}
                   onChange={(e) => setTotpCode(e.target.value)}
-                  placeholder="Six-digit code"
+                  placeholder={t("settings.sixDigitCode")}
                   maxLength={6}
                   required
                   className="px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono text-center focus:outline-none focus:border-indigo-500"
@@ -332,15 +330,11 @@ export default function UserSettingsPage() {
           )}
 
           {recoveryCodes && (
-            <div className="mt-4 p-4 rounded-xl bg-slate-900/90 border border-emerald-500/30">
-              <h3 className="text-xs font-bold text-white mb-1">{t("settings.recoveryCodesTitle")}</h3>
-              <p className="text-[11px] text-slate-400 mb-3">{t("settings.saveRecoveryCodes")}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center font-mono text-xs text-emerald-400 bg-slate-950 p-3 rounded-xl border border-slate-800">
-                {recoveryCodes.map((code, idx) => (
-                  <div key={idx} className="p-1 border border-slate-800 rounded-lg">{code}</div>
-                ))}
-              </div>
-            </div>
+            <RecoveryCodes
+              codes={recoveryCodes}
+              onContinue={() => setRecoveryCodes(null)}
+              continueLabel={t("common.continue")}
+            />
           )}
         </Card>
 
@@ -349,9 +343,9 @@ export default function UserSettingsPage() {
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Filter className="w-5 h-5 text-indigo-400" />
-              Filtros Visuais Sieve (RFC 5228)
+              {t("settings.sieveTitle")}
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">Automatic sorting and filing rules.</p>
+            <p className="text-xs text-slate-400 mt-0.5">{t("settings.sieveIntro")}</p>
           </div>
 
           <form onSubmit={addSieveRule} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-xs bg-slate-900/60 p-4 rounded-xl border border-slate-800">
@@ -360,9 +354,9 @@ export default function UserSettingsPage() {
               onChange={(e) => setNewField(e.target.value as "From" | "Subject" | "Header")}
               className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
             >
-              <option value="Subject">Assunto</option>
-              <option value="From">De</option>
-              <option value="Header">Header</option>
+              <option value="Subject">{t("settings.fieldSubject")}</option>
+              <option value="From">{t("settings.fieldFrom")}</option>
+              <option value="Header">{t("settings.fieldHeader")}</option>
             </select>
 
             <select
@@ -370,16 +364,16 @@ export default function UserSettingsPage() {
               onChange={(e) => setNewMatch(e.target.value as "contains" | "equals" | "matches")}
               className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
             >
-              <option value="contains">contains</option>
-              <option value="equals">equals</option>
-              <option value="matches">corresponde a regex</option>
+              <option value="contains">{t("settings.matchContains")}</option>
+              <option value="equals">{t("settings.matchEquals")}</option>
+              <option value="matches">{t("settings.matchRegex")}</option>
             </select>
 
             <input
               type="text"
               value={newValue}
               onChange={(e) => setNewValue(e.target.value)}
-              placeholder="Valor a corresponder..."
+              placeholder={t("settings.valuePlaceholder")}
               required
               className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
@@ -389,14 +383,14 @@ export default function UserSettingsPage() {
               onChange={(e) => setNewAction(e.target.value as "move" | "flag" | "discard" | "redirect")}
               className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
             >
-              <option value="move">Mover para Arquivo</option>
-              <option value="flag">Flag message</option>
-              <option value="discard">Descartar</option>
+              <option value="move">{t("settings.actionMove")}</option>
+              <option value="flag">{t("settings.actionFlag")}</option>
+              <option value="discard">{t("settings.actionDiscard")}</option>
             </select>
 
             <Button type="submit" variant="primary" size="sm" className="w-full">
               <Plus className="w-4 h-4" />
-              <span>Adicionar Regra</span>
+              <span>{t("settings.addRule")}</span>
             </Button>
           </form>
 
@@ -404,7 +398,8 @@ export default function UserSettingsPage() {
             {rules.map((r) => (
               <div key={r.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                 <span className="font-mono text-slate-200">
-                  SE <strong>{r.field}</strong> {r.match} &quot;{r.value}&quot; &rarr; THEN {r.action.toUpperCase()}
+                  {t("settings.ruleIf")} <strong>{r.field}</strong> {r.match} &quot;{r.value}&quot; &rarr;{" "}
+                  {t("settings.ruleThen")} {r.action.toUpperCase()}
                 </span>
                 <button
                   onClick={() => removeSieveRule(r.id)}
@@ -423,9 +418,9 @@ export default function UserSettingsPage() {
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Palmtree className="w-5 h-5 text-indigo-400" />
-                Out of office auto-reply
+                {t("settings.vacationTitle")}
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">Reply automatically to incoming mail while you are awer ausente.</p>
+              <p className="text-xs text-slate-400 mt-0.5">{t("settings.vacationIntro")}</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -441,14 +436,14 @@ export default function UserSettingsPage() {
           {vacationSaved && (
             <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Settings saved.</span>
+              <span>{t("settings.settingsSaved")}</span>
             </div>
           )}
 
           {vacationEnabled && (
             <form onSubmit={saveVacationResponder} className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-slate-300 mb-1.5 block">Assunto da Resposta</label>
+                <label className="font-semibold text-slate-300 mb-1.5 block">{t("settings.vacationSubjectLabel")}</label>
                 <input
                   type="text"
                   value={vacationSubject}
@@ -458,7 +453,7 @@ export default function UserSettingsPage() {
               </div>
 
               <div>
-                <label className="font-semibold text-slate-300 mb-1.5 block">Message body</label>
+                <label className="font-semibold text-slate-300 mb-1.5 block">{t("settings.vacationBodyLabel")}</label>
                 <textarea
                   rows={4}
                   value={vacationBody}
@@ -468,7 +463,7 @@ export default function UserSettingsPage() {
               </div>
 
               <Button type="submit" variant="primary" size="sm">
-                Save auto-reply
+                {t("settings.saveAutoReply")}
               </Button>
             </form>
           )}
@@ -479,15 +474,15 @@ export default function UserSettingsPage() {
           <div>
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <FileText className="w-5 h-5 text-indigo-400" />
-              Assinatura de E-mail
+              {t("settings.signatureTitle")}
             </h2>
-            <p className="text-slate-400 mt-0.5">Assinatura anexada automaticamente nas mensagens compostas.</p>
+            <p className="text-slate-400 mt-0.5">{t("settings.signatureIntro")}</p>
           </div>
 
           {sigSaved && (
             <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Assinatura salva com sucesso!</span>
+              <span>{t("settings.signatureSaved")}</span>
             </div>
           )}
 
@@ -495,7 +490,7 @@ export default function UserSettingsPage() {
             rows={4}
             value={signature}
             onChange={(e) => setSignature(e.target.value)}
-            placeholder="Atenciosamente,&#10;Seu Nome&#10;Seu Cargo"
+            placeholder={t("settings.signaturePlaceholder")}
             className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
           />
 
@@ -526,7 +521,7 @@ export default function UserSettingsPage() {
               type="text"
               value={newAppPassLabel}
               onChange={(e) => setNewAppPassLabel(e.target.value)}
-              placeholder="Thunderbird / Outlook Mobile"
+              placeholder={t("settings.appPasswordPlaceholder")}
               className="flex-1 px-3.5 py-2 text-xs rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
             />
             <Button type="submit" variant="primary" size="sm">
