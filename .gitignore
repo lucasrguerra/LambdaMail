@@ -1,7 +1,10 @@
-# Internal planning docs — never published with the code
+# Internal planning docs - never published with the code
 PLAN.md
-docs/
+DEVELOPMENT_RULES.md
 .superpowers/
+# docs/ holds the deployment and operations guides and IS published; keep
+# internal notes out of it by name rather than ignoring the whole directory.
+docs/internal/
 
 # Dependencies
 node_modules/

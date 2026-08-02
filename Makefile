@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint migrate-up migrate-down gen-dev-cert seed
+.PHONY: up down logs test lint migrate-up migrate-down gen-dev-cert seed preflight create-admin reset-password
 
 up:
 	docker compose --env-file .env up --build
@@ -35,3 +35,23 @@ gen-dev-cert:
 
 seed:
 	docker compose exec -T db psql -U $${POSTGRES_USER:-lambdamail} -d $${POSTGRES_DB:-lambdamail} < scripts/dev-seed.sql
+
+# Environment diagnostics (PLAN.md section 15). Run this before pointing DNS at
+# the host: it reports outbound port 25, PTR/FCrDNS, RBL listings and the
+# Cloudflare token scope.
+preflight:
+	docker compose run --rm --entrypoint /app/lambdamail-protocols protocols preflight
+
+# First login on a fresh deployment. Nothing else creates a mailbox, so without
+# this there is no way into the admin console.
+#   make create-admin EMAIL=you@example.com PASSWORD='...'
+create-admin:
+	@test -n "$(EMAIL)" || (echo "EMAIL is required" && exit 1)
+	@test -n "$(PASSWORD)" || (echo "PASSWORD is required" && exit 1)
+	docker compose run --rm --entrypoint node auth dist/cli.js create-admin "$(EMAIL)" "$(PASSWORD)"
+
+# Recovers a locked-out account. Every session it had is signed out.
+reset-password:
+	@test -n "$(EMAIL)" || (echo "EMAIL is required" && exit 1)
+	@test -n "$(PASSWORD)" || (echo "PASSWORD is required" && exit 1)
+	docker compose run --rm --entrypoint node auth dist/cli.js reset-password "$(EMAIL)" "$(PASSWORD)"

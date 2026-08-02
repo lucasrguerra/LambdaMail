@@ -123,6 +123,10 @@ services:
     restart: *restart
     logging: *default-logging
     environment:
+      # Drives the Secure attribute on session cookies. Without it the cookies
+      # are issued unsecured, which behind a TLS terminator is a downgrade
+      # waiting to happen.
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -153,6 +157,7 @@ services:
     restart: *restart
     logging: *default-logging
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3002
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -262,6 +267,7 @@ services:
     restart: *restart
     logging: *default-logging
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
       AUTH_SERVICE_URL: http://auth:3001
       STORAGE_SERVICE_URL: http://storage:3002
