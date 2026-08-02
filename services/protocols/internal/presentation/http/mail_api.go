@@ -1,11 +1,14 @@
 package httppresentation
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/emersion/go-message"
 
 	"lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/infrastructure/postgres"
@@ -99,7 +102,14 @@ func (m *mailAPI) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uid, err := strconv.ParseUint(strings.TrimPrefix(r.URL.Path, "/api/v1/mail/message/"), 10, 32)
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/mail/message/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_UID", "Message UID is required")
+		return
+	}
+
+	uid, err := strconv.ParseUint(parts[0], 10, 32)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_UID", "Message UID must be a number")
 		return
@@ -116,11 +126,42 @@ func (m *mailAPI) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle attachment subpath: /api/v1/mail/message/{uid}/attachment/{filename}
+	if len(parts) >= 3 && parts[1] == "attachment" {
+		m.handleAttachmentDownload(w, r, raw, parts[2])
+		return
+	}
+
 	// Parsed here rather than in the browser: this service already depends on
 	// a MIME library, and a second parser in TypeScript would be a second set
 	// of edge cases to get wrong.
 	writeJSON(w, http.StatusOK, usecase.RenderMessage(raw, uint32(uid)))
 }
+
+func (m *mailAPI) handleAttachmentDownload(w http.ResponseWriter, _ *http.Request, raw []byte, filename string) {
+	entity, err := message.Read(bytes.NewReader(raw))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Attachment not found")
+		return
+	}
+
+	data, contentType := usecase.ExtractAttachment(entity, filename)
+	if data == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Attachment not found")
+		return
+	}
+
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
 
 func (m *mailAPI) handleSeen(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.authenticate(w, r)

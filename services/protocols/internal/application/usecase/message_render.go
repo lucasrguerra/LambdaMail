@@ -110,3 +110,36 @@ func collectParts(entity *message.Entity, out *RenderedMessage) {
 		out.HTML = string(body)
 	}
 }
+
+// ExtractAttachment walks the MIME tree and returns bytes and content-type for a named attachment.
+func ExtractAttachment(entity *message.Entity, targetName string) ([]byte, string) {
+	if multipart := entity.MultipartReader(); multipart != nil {
+		for {
+			part, err := multipart.NextPart()
+			if err != nil {
+				break
+			}
+			if data, ctype := ExtractAttachment(part, targetName); data != nil {
+				return data, ctype
+			}
+		}
+	}
+
+	mediaType, _, _ := entity.Header.ContentType()
+	disposition, params, err := entity.Header.ContentDisposition()
+	name := params["filename"]
+	if name == "" {
+		_, paramsCT, _ := entity.Header.ContentType()
+		name = paramsCT["name"]
+	}
+
+	if (err == nil && disposition == "attachment" && (targetName == "" || strings.EqualFold(name, targetName))) ||
+		(targetName != "" && strings.EqualFold(name, targetName)) {
+		body, err := io.ReadAll(entity.Body)
+		if err == nil {
+			return body, mediaType
+		}
+	}
+	return nil, ""
+}
+
