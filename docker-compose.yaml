@@ -55,10 +55,9 @@ services:
 
   # ----------------------------------------------------------- MIGRATE
   migrate:
-    image: migrate/migrate:v4.17.1
+    image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/migrations:${IMAGE_TAG:-latest}
     restart: "no"
     logging: *default-logging
-    volumes: ["./migrations:/migrations"]
     depends_on:
       db: { condition: service_healthy }
     entrypoint:
@@ -71,13 +70,12 @@ services:
 
   # ------------------------------------------------------------ RSPAMD
   rspamd:
-    image: rspamd/rspamd:3.9
+    image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/rspamd:${IMAGE_TAG:-latest}
     restart: *restart
     logging: *default-logging
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
-      - ./config/rspamd:/etc/rspamd/local.d:ro
       - rspamd_data:/var/lib/rspamd
     # Rspamd does NOT expand environment variables in its UCL config - a
     # "${REDIS_PASSWORD}" written into a .conf reaches Redis as that literal

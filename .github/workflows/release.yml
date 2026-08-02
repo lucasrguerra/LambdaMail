@@ -50,7 +50,7 @@ jobs:
         # architectures is eight jobs. Declaring platform only under `include`
         # would not multiply anything - include can add keys to existing
         # combinations, but it cannot create the combinations themselves.
-        service: [protocols, auth, storage, webmail]
+        service: [protocols, auth, storage, webmail, migrations, rspamd]
         platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
@@ -83,7 +83,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v7
         with:
-          context: services/${{ matrix.service }}
+          context: ${{ (matrix.service == 'migrations' || matrix.service == 'rspamd') && '.' || format('services/{0}', matrix.service) }}
+          file: services/${{ matrix.service }}/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.namespace }}/${{ matrix.service }},push-by-digest=true,name-canonical=true,push=true
@@ -117,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [protocols, auth, storage, webmail]
+        service: [protocols, auth, storage, webmail, migrations, rspamd]
     steps:
       - uses: actions/checkout@v7
 

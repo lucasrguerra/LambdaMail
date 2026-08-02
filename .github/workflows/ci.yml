@@ -163,7 +163,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [protocols, auth, storage, webmail]
+        service: [protocols, auth, storage, webmail, migrations, rspamd]
     steps:
       - uses: actions/checkout@v7
 
@@ -174,7 +174,8 @@ jobs:
       - name: Build
         uses: docker/build-push-action@v7
         with:
-          context: services/${{ matrix.service }}
+          context: ${{ (matrix.service == 'migrations' || matrix.service == 'rspamd') && '.' || format('services/{0}', matrix.service) }}
+          file: services/${{ matrix.service }}/Dockerfile
           push: false
           load: true
           tags: lambdamail-${{ matrix.service }}:ci

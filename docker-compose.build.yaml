@@ -19,3 +19,14 @@ services:
 
   web:
     build: { context: ./services/webmail }
+
+  # These two carry repository files, so their context is the root.
+  migrate:
+    build:
+      context: .
+      dockerfile: services/migrations/Dockerfile
+
+  rspamd:
+    build:
+      context: .
+      dockerfile: services/rspamd/Dockerfile
