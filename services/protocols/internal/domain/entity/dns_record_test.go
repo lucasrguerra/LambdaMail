@@ -4,21 +4,43 @@ import (
 	"testing"
 )
 
-func TestBuild13DnsRecordSpecs_GeneratesMandatoryRecords(t *testing.T) {
-	specs := Build13DnsRecordSpecs(
-		"example.test",
-		"mail.example.test",
-		"192.0.2.1",
-		"2001:db8::1",
-		"rsaPubKeyBase64",
-		"edPubKeyBase64",
-		"hash123",
-		true,
-	)
+func TestBuildDnsRecordSpecs_GeneratesMandatoryRecords(t *testing.T) {
+	specs := BuildDnsRecordSpecs(DnsRecordSpec{
+		DomainName:    "example.test",
+		MailHost:      "mail.example.test",
+		ServerIPv4:    "192.0.2.1",
+		ServerIPv6:    "2001:db8::1",
+		RsaDkimPubKey: "rsaPubKeyBase64",
+		EdDkimPubKey:  "edPubKeyBase64",
+		TlsaHashes:    []string{"hash123"},
+		DaneEnabled:   true,
+	})
 
-	// Should contain 13 records (11 mandatory + 1 AAAA + 1 TLSA)
-	if len(specs) != 13 {
-		t.Fatalf("expected 13 records, got %d", len(specs))
+	// PLAN.md section 7.1 numbers 13 records (11 always-on, plus AAAA when
+	// IPv6 is configured and TLSA when DANE is on). Section 7.2 adds three
+	// unnumbered client-autoconfiguration records: the _pop3s SRV, the
+	// autoconfig CNAME and the _autodiscover SRV.
+	const numberedRecords, convenienceRecords = 13, 3
+	if len(specs) != numberedRecords+convenienceRecords {
+		t.Fatalf("expected %d records, got %d", numberedRecords+convenienceRecords, len(specs))
+	}
+
+	// The HTTPS endpoints of section 7.3 are unreachable without the names
+	// that point at them.
+	for _, required := range []struct{ recType, name string }{
+		{"CNAME", "autoconfig.example.test"},
+		{"SRV", "_pop3s._tcp.example.test"},
+		{"SRV", "_autodiscover._tcp.example.test"},
+	} {
+		found := false
+		for _, r := range specs {
+			if r.Type == required.recType && r.Name == required.name {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s %s not found in specs", required.recType, required.name)
+		}
 	}
 
 	// Verify MX

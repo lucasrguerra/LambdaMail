@@ -3,6 +3,9 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -37,8 +40,13 @@ func (r *OutboundRepository) FetchNextReady(ctx context.Context, workerID string
 	rows, err := r.pool.Query(ctx, `
 		WITH ready_jobs AS (
 			SELECT id FROM outbound_jobs
-			WHERE status IN ('QUEUED', 'DEFERRED')
-			  AND next_attempt_at <= NOW()
+			WHERE (
+			        (status IN ('QUEUED', 'DEFERRED') AND next_attempt_at <= NOW())
+			        -- Reclaim jobs whose worker died mid-delivery. Without this
+			        -- they stay SENDING forever and the message is silently
+			        -- lost, which contradicts ADR-002's durability guarantee.
+			     OR (status = 'SENDING' AND locked_until IS NOT NULL AND locked_until <= NOW())
+			      )
 			ORDER BY next_attempt_at ASC
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
@@ -88,6 +96,22 @@ func (r *OutboundRepository) FetchNextReady(ctx context.Context, workerID string
 	}
 
 	return jobs, nil
+}
+
+// CountRecipientsSince counts queued recipients, not messages: one message to
+// fifty addresses is fifty recipients against the limit, which is the number
+// that matters for abuse.
+func (r *OutboundRepository) CountRecipientsSince(ctx context.Context, mailboxID uuid.UUID, since time.Time) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM outbound_jobs
+		WHERE mailbox_id = $1 AND created_at >= $2
+	`, mailboxID, since).Scan(&count)
+
+	if err != nil {
+		return 0, fmt.Errorf("count recent recipients for mailbox %s: %w", mailboxID, err)
+	}
+	return count, nil
 }
 
 func (r *OutboundRepository) UpdateJob(ctx context.Context, job *entity.OutboundJob) error {

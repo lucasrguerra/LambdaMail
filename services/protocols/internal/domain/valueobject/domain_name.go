@@ -11,9 +11,9 @@ type DomainName struct {
 }
 
 var (
-	ErrDomainNameEmpty         = errors.New("domain name: must not be empty")
-	ErrDomainNameNotFQDN       = errors.New("domain name: must contain at least one dot (not a FQDN)")
-	ErrDomainNameInvalidLabel  = errors.New("domain name: label must not start or end with a hyphen")
+	ErrDomainNameEmpty        = errors.New("domain name: must not be empty")
+	ErrDomainNameNotFQDN      = errors.New("domain name: must contain at least one dot (not a FQDN)")
+	ErrDomainNameInvalidLabel = errors.New("domain name: label must not start or end with a hyphen")
 )
 
 // NewDomainName validates and normalizes raw into a DomainName.

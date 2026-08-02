@@ -2,13 +2,11 @@ package e2e
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
+	"github.com/google/uuid"
 
 	appusecase "lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/domain/entity"
@@ -38,21 +36,7 @@ func TestDnsSyncAndSystemAliasesEndToEnd(t *testing.T) {
 	}
 	defer pool.Close()
 
-	root := repoRoot(t)
-	migrations := []string{
-		"0001_init_schema.up.sql",
-		"0002_add_is_system_to_aliases.up.sql",
-		"0003_create_report_tables.up.sql",
-	}
-	for _, m := range migrations {
-		sql, err := os.ReadFile(filepath.Join(root, "migrations", m))
-		if err != nil {
-			t.Fatalf("read migration %s: %v", m, err)
-		}
-		if _, err := pool.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("apply migration %s: %v", m, err)
-		}
-	}
+	applyMigrations(t, ctx, pool)
 
 	// Seed domain & admin mailbox
 	domainID := uuid.New()
@@ -86,8 +70,11 @@ func TestDnsSyncAndSystemAliasesEndToEnd(t *testing.T) {
 		t.Fatalf("SyncDnsRecords execute: %v", err)
 	}
 
-	if out.CreatedCount != 13 {
-		t.Errorf("CreatedCount = %d, want 13", out.CreatedCount)
+	// The 13 numbered records of PLAN.md section 7.1 plus the three
+	// client-autoconfiguration records of section 7.2.
+	const expectedRecords = 16
+	if out.CreatedCount != expectedRecords {
+		t.Errorf("CreatedCount = %d, want %d", out.CreatedCount, expectedRecords)
 	}
 
 	// Verify 4 system aliases in PostgreSQL (postmaster@, abuse@, dmarc@, tlsrpt@)

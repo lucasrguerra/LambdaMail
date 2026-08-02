@@ -14,9 +14,9 @@ type EmailAddress struct {
 }
 
 var (
-	ErrEmailMissingAtSign  = errors.New("email address: missing '@' separator")
-	ErrEmailEmptyLocalPart = errors.New("email address: local part must not be empty")
-	ErrEmailEmptyDomain    = errors.New("email address: domain must not be empty")
+	ErrEmailMissingAtSign    = errors.New("email address: missing '@' separator")
+	ErrEmailEmptyLocalPart   = errors.New("email address: local part must not be empty")
+	ErrEmailEmptyDomain      = errors.New("email address: domain must not be empty")
 	ErrEmailLocalPartTooLong = errors.New("email address: local part exceeds 64 octets (RFC 5321 4.5.3.1.1)")
 )
 

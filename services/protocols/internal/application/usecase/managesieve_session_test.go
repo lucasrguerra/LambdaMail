@@ -135,7 +135,7 @@ func TestManageSieveSessionUseCase_Put_Get_List_SetActive_Delete(t *testing.T) {
 		t.Fatalf("SetActive failed: %v", err)
 	}
 
-	// 6. Delete active script fails per RFC 5804 §2.7
+	// 6. Delete active script fails per RFC 5804 section 2.7
 	if err := uc.DeleteScript(ctx, gotID, "main_rules"); !errors.Is(err, ErrActiveScriptDelete) {
 		t.Fatalf("expected ErrActiveScriptDelete, got %v", err)
 	}

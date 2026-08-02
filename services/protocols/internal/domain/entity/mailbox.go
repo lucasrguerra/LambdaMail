@@ -24,7 +24,7 @@ func NewMailbox(domainID uuid.UUID, address valueobject.EmailAddress, hash value
 
 func (m *Mailbox) Address() valueobject.EmailAddress { return m.address }
 func (m *Mailbox) UsedBytes() int64                  { return m.usedBytes }
-func (m *Mailbox) Quota() valueobject.QuotaLimit      { return m.quota }
+func (m *Mailbox) Quota() valueobject.QuotaLimit     { return m.quota }
 
 // RecordUsage sets used_bytes, enforcing "used_bytes <= quota_bytes" (PLAN.md section 3).
 func (m *Mailbox) RecordUsage(bytes int64) error {

@@ -24,4 +24,3 @@ func (s *session) Unsubscribe(_ string) error                      { return errN
 func (s *session) Append(_ string, _ imap.LiteralReader, _ *imap.AppendOptions) (*imap.AppendData, error) {
 	return nil, errNotYetImplemented
 }
-

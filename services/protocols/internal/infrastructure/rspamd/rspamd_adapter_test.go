@@ -18,7 +18,12 @@ func TestRspamdAdapter_Scan_MapsActions(t *testing.T) {
 	}{
 		{"no action", valueobject.ScanVerdictClean},
 		{"add header", valueobject.ScanVerdictSpamJunk},
+		{"rewrite subject", valueobject.ScanVerdictSpamJunk},
 		{"greylist", valueobject.ScanVerdictGreylist},
+		// Rspamd's "soft reject" asks the sender to come back later (rate
+		// limit, transient policy). Treating it as clean would accept mail
+		// the filter explicitly refused to accept yet.
+		{"soft reject", valueobject.ScanVerdictGreylist},
 		{"reject", valueobject.ScanVerdictSpamReject},
 	}
 

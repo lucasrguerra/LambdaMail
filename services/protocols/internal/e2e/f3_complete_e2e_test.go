@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,12 +17,14 @@ import (
 
 	appusecase "lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/domain/entity"
+	"lambdamail/protocols/internal/domain/valueobject"
 	"lambdamail/protocols/internal/infrastructure/clamav"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	"lambdamail/protocols/internal/infrastructure/rspamd"
 	httppresentation "lambdamail/protocols/internal/presentation/http"
 	smtppresentation "lambdamail/protocols/internal/presentation/smtp"
+
 	gosmtp "github.com/emersion/go-smtp"
 )
 
@@ -96,22 +96,7 @@ func TestPhase3CompleteEndToEnd(t *testing.T) {
 	defer pool.Close()
 
 	// Apply Database Migrations
-	root := repoRoot(t)
-	migrations := []string{
-		"0001_init_schema.up.sql",
-		"0002_add_is_system_to_aliases.up.sql",
-		"0003_create_report_tables.up.sql",
-	}
-
-	for _, m := range migrations {
-		sql, err := os.ReadFile(filepath.Join(root, "migrations", m))
-		if err != nil {
-			t.Fatalf("read migration %s: %v", m, err)
-		}
-		if _, err := pool.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("apply migration %s: %v", m, err)
-		}
-	}
+	applyMigrations(t, ctx, pool)
 
 	// -------------------------------------------------------------------
 	// 1. Sub-project 1: Cloudflare DNS Automation Engine & System Aliases
@@ -156,8 +141,14 @@ func TestPhase3CompleteEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync dns records: %v", err)
 	}
-	if dnsOut.CreatedCount != 13 {
-		t.Fatalf("expected 13 created DNS records, got %d", dnsOut.CreatedCount)
+	// The 13 numbered records of PLAN.md section 7.1 plus the three
+	// client-autoconfiguration records of section 7.2.
+	const expectedDnsRecords = 16
+	if dnsOut.CreatedCount != expectedDnsRecords {
+		t.Fatalf("expected %d created DNS records, got %d", expectedDnsRecords, dnsOut.CreatedCount)
+	}
+	if dnsOut.Status != appusecase.SyncStatusVerified {
+		t.Errorf("sync status = %s, want VERIFIED", dnsOut.Status)
 	}
 
 	// Verify system aliases created
@@ -174,13 +165,25 @@ func TestPhase3CompleteEndToEnd(t *testing.T) {
 	reportUC := appusecase.NewIngestReportsUseCase(reportRepo)
 	httpRouter := httppresentation.NewRouter(reportUC, func() error { return pool.Ping(ctx) })
 
-	// Test MTA-STS endpoint
+	// Test MTA-STS endpoint. The default is the safe end of the ramp
+	// (PLAN.md section 5): senders honour the policy but do not hard-fail on
+	// it until the operator promotes the domain to enforce.
 	reqSts := httptest.NewRequest("GET", "/.well-known/mta-sts.txt", nil)
 	reqSts.Host = "mta-sts.f3e2e.test"
 	recSts := httptest.NewRecorder()
 	httpRouter.ServeHTTP(recSts, reqSts)
-	if recSts.Code != http.StatusOK || !strings.Contains(recSts.Body.String(), "mode: enforce") {
+	if recSts.Code != http.StatusOK || !strings.Contains(recSts.Body.String(), "mode: testing") {
 		t.Errorf("MTA-STS endpoint error: code=%d body=%s", recSts.Code, recSts.Body.String())
+	}
+	if !strings.Contains(recSts.Body.String(), "mx: mail.f3e2e.test") {
+		t.Errorf("MTA-STS policy does not advertise the mail host: %s", recSts.Body.String())
+	}
+
+	httpRouter.SetMtaStsMode(valueobject.MtaStsModeEnforce)
+	recEnforced := httptest.NewRecorder()
+	httpRouter.ServeHTTP(recEnforced, httptest.NewRequest("GET", "/.well-known/mta-sts.txt", nil))
+	if !strings.Contains(recEnforced.Body.String(), "mode: enforce") {
+		t.Errorf("promoting the domain to enforce had no effect: %s", recEnforced.Body.String())
 	}
 
 	// Test Autoconfig endpoint

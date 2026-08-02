@@ -7,10 +7,10 @@ import (
 )
 
 var (
-	ErrEmptyScript       = errors.New("sieve script cannot be empty")
-	ErrUnmatchedBrace    = errors.New("unmatched curly brace in sieve script")
-	ErrUnmatchedBracket  = errors.New("unmatched square bracket in sieve script")
-	ErrUnterminatedQuote = errors.New("unterminated string literal in sieve script")
+	ErrEmptyScript         = errors.New("sieve script cannot be empty")
+	ErrUnmatchedBrace      = errors.New("unmatched curly brace in sieve script")
+	ErrUnmatchedBracket    = errors.New("unmatched square bracket in sieve script")
+	ErrUnterminatedQuote   = errors.New("unterminated string literal in sieve script")
 	ErrUnterminatedComment = errors.New("unterminated comment block in sieve script")
 )
 

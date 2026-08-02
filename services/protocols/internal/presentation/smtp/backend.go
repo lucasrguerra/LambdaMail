@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"strings"
 
 	gosmtp "github.com/emersion/go-smtp"
@@ -24,17 +25,42 @@ func NewBackend(uc *usecase.ProcessInboundEmailUseCase) *Backend {
 	return &Backend{useCase: uc}
 }
 
-func (b *Backend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
-	return &session{useCase: b.useCase}, nil
+func (b *Backend) NewSession(c *gosmtp.Conn) (gosmtp.Session, error) {
+	return &session{useCase: b.useCase, conn: c}, nil
 }
 
 // session holds one SMTP transaction's accumulated state (RFC 5321 section
 // 4.1.1: MAIL, then one or more RCPT, then DATA, then reset).
 type session struct {
 	useCase            *usecase.ProcessInboundEmailUseCase
+	conn               *gosmtp.Conn
 	from               string
 	recipients         []port.MailboxRecord
 	recipientAddresses []string
+}
+
+// clientIP is the peer address SPF is evaluated against. It returns nil when
+// the connection is not available, which downgrades SPF to "none" rather than
+// producing a wrong verdict.
+func (s *session) clientIP() net.IP {
+	if s.conn == nil || s.conn.Conn() == nil {
+		return nil
+	}
+	if addr, ok := s.conn.Conn().RemoteAddr().(*net.TCPAddr); ok {
+		return addr.IP
+	}
+	host, _, err := net.SplitHostPort(s.conn.Conn().RemoteAddr().String())
+	if err != nil {
+		return nil
+	}
+	return net.ParseIP(host)
+}
+
+func (s *session) heloDomain() string {
+	if s.conn == nil {
+		return ""
+	}
+	return s.conn.Hostname()
 }
 
 func (s *session) Reset() {
@@ -107,6 +133,8 @@ func (s *session) Data(r io.Reader) error {
 		Recipients:         s.recipients,
 		RecipientAddresses: s.recipientAddresses,
 		Body:               r,
+		ClientIP:           s.clientIP(),
+		HeloDomain:         s.heloDomain(),
 	})
 	if err != nil {
 		var smtpErr *gosmtp.SMTPError
@@ -114,6 +142,13 @@ func (s *session) Data(r io.Reader) error {
 			return smtpErr
 		}
 		errMsg := err.Error()
+		if strings.HasPrefix(errMsg, "550 ") {
+			return &gosmtp.SMTPError{
+				Code:         550,
+				EnhancedCode: gosmtp.EnhancedCode{5, 7, 1},
+				Message:      strings.TrimPrefix(errMsg, "550 5.7.1 "),
+			}
+		}
 		if strings.HasPrefix(errMsg, "554 ") {
 			return &gosmtp.SMTPError{
 				Code:         554,
