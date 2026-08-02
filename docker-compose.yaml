@@ -104,7 +104,10 @@ services:
 
   # ------------------------------------------------------------ CLAMAV
   clamav:
-    image: clamav/clamav:1.4
+    # The Debian variant, not the default Alpine one: Alpine is published for
+    # amd64 only, and the deploy target is arm64. Same upstream project, same
+    # clamdcheck.sh healthcheck.
+    image: clamav/clamav:1.5.3-debian
     restart: *restart
     logging: *default-logging
     volumes: [clamav_data:/var/lib/clamav]
