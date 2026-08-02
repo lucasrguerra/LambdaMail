@@ -19,6 +19,11 @@ const (
 	// TLSModeRelay records that the message left through a smarthost, which
 	// owns transport security from that point on (PLAN.md section 10.4).
 	TLSModeRelay = "relay"
+	// TLSModeLocal records a message that never crossed a network: the
+	// recipient is a mailbox on this same server, so there was no transport
+	// to secure. Distinct from opportunistic, which means a network hop was
+	// made without a policy to validate against.
+	TLSModeLocal = "local"
 )
 
 // TLSPolicy is the effective transport security policy for one outbound

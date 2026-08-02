@@ -139,7 +139,9 @@ func TestOutboundWorker_DsnToFanOutSenderDeliversToEveryTarget(t *testing.T) {
 	repo := &fakeOutboundRepo{}
 	repo.Enqueue(context.Background(), newTestJob())
 
-	mailboxes := &fakeAliasFanOutRepository{targets: []port.MailboxRecord{
+	// The sender is the local, aliased address; the recipient is remote, which
+	// is what makes this a delivery that goes out and then bounces back.
+	mailboxes := &fakeAliasFanOutRepository{localAddress: "user@domain.test", targets: []port.MailboxRecord{
 		{ID: uuid.New(), QuotaBytes: 1000},
 		{ID: uuid.New(), QuotaBytes: 1000},
 	}}

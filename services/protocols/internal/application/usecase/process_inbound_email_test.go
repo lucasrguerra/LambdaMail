@@ -83,15 +83,25 @@ func TestUseCase_ResolveRecipient_ReturnsErrMailboxQuotaExceededWhenAnyFanOutTar
 }
 
 // fakeAliasFanOutRepository simulates an alias resolving to multiple mailboxes.
+//
+// localAddress is the one address it hosts. It used to answer for any address
+// at all, which made every recipient look local - harmless while nothing
+// consulted it on the delivery path, and wrong the moment local delivery
+// started asking. The real repository only ever resolves addresses on an
+// active local domain.
 type fakeAliasFanOutRepository struct {
-	targets []port.MailboxRecord
+	localAddress string
+	targets      []port.MailboxRecord
 }
 
 func (f *fakeAliasFanOutRepository) FindActiveByAddress(_ context.Context, _ string) (*port.MailboxRecord, error) {
 	return nil, nil
 }
 
-func (f *fakeAliasFanOutRepository) ResolveDeliveryTargets(_ context.Context, _ string) ([]port.MailboxRecord, error) {
+func (f *fakeAliasFanOutRepository) ResolveDeliveryTargets(_ context.Context, address string) ([]port.MailboxRecord, error) {
+	if f.localAddress != "" && address != f.localAddress {
+		return []port.MailboxRecord{}, nil
+	}
 	return f.targets, nil
 }
 

@@ -98,6 +98,29 @@ func (w *OutboundWorkerUseCase) processSingleJob(ctx context.Context, job *entit
 		return
 	}
 
+	// Mail addressed to a mailbox on this server is delivered here, without
+	// going out to the internet and back.
+	//
+	// Nothing did this before: every message was resolved through MX and
+	// delivered over SMTP, including one user writing to another on the same
+	// host. That makes internal mail depend on outbound port 25 - so on a
+	// provider that blocks it, which is most of them, colleagues could not
+	// write to each other on their own server. It also fails ahead of the
+	// relay check on purpose: sending local mail out to a smarthost only to
+	// have it delivered back is a slower path with more ways to break.
+	if delivered, err := w.deliverLocally(ctx, job, payload); delivered {
+		if err != nil {
+			w.handleFailure(ctx, job, fmt.Sprintf("local delivery: %v", err), true)
+			return
+		}
+		job.Status = entity.OutboundJobStatusDelivered
+		job.LastError = ""
+		job.LastSmtpCode = ""
+		job.TlsPolicyUsed = entity.TLSModeLocal
+		_ = w.outboundRepo.UpdateJob(ctx, job)
+		return
+	}
+
 	// With a smarthost every message goes to the relay regardless of
 	// destination, and the relay owns transport security from there on.
 	if w.relay.Configured() {
@@ -378,4 +401,45 @@ func (w *OutboundWorkerUseCase) deliverToMX(ctx context.Context, mxHost string, 
 	}
 
 	return client.Quit()
+}
+
+// deliverLocally hands a message to a mailbox on this server.
+//
+// Returns (handled, err): handled is false when the recipient is not local, so
+// the caller falls through to relay or MX delivery. A local recipient whose
+// delivery then fails returns (true, err) and is retried like any other job -
+// the queue row stays the durable record either way.
+//
+// The message is still content-scanned. It arrives DKIM-signed by this server,
+// so it authenticates cleanly, and a virus mailed between two accounts on the
+// same host is no less a virus.
+func (w *OutboundWorkerUseCase) deliverLocally(
+	ctx context.Context, job *entity.OutboundJob, payload []byte,
+) (bool, error) {
+	if w.inboundUC == nil || w.mailboxes == nil {
+		return false, nil
+	}
+
+	targets, err := w.mailboxes.ResolveDeliveryTargets(ctx, job.EnvelopeTo)
+	if err != nil {
+		// Not knowing whether the address is local is not the same as knowing
+		// it is not: falling through to SMTP would deliver to the internet a
+		// message that may belong here. Retrying is the safe answer.
+		return true, err
+	}
+	if len(targets) == 0 {
+		return false, nil
+	}
+
+	addresses := make([]string, len(targets))
+	for i := range targets {
+		addresses[i] = job.EnvelopeTo
+	}
+
+	return true, w.inboundUC.Handle(ctx, ProcessInboundEmailInput{
+		Sender:             job.EnvelopeFrom,
+		Recipients:         targets,
+		RecipientAddresses: addresses,
+		Body:               bytes.NewReader(payload),
+	})
 }
