@@ -266,9 +266,12 @@ CREATE TABLE email_messages (
 ) PARTITION BY RANGE (received_at);
 
 -- Partitions are created by a monthly job (pg_partman or a custom routine).
--- Seed the current month so local dev / F0 has a writable partition out of the box.
+-- Seed partitions and a DEFAULT fallback so dev/test runs never fail on month boundaries.
 CREATE TABLE email_messages_2026_07 PARTITION OF email_messages
     FOR VALUES FROM ('2026-07-01') TO ('2026-08-01');
+CREATE TABLE email_messages_2026_08 PARTITION OF email_messages
+    FOR VALUES FROM ('2026-08-01') TO ('2026-09-01');
+CREATE TABLE email_messages_default PARTITION OF email_messages DEFAULT;
 
 -- Uniqueness index (folder_id, uid): on a partitioned table, every UNIQUE index
 -- must include the partition key - so this alone does NOT guarantee the invariant
