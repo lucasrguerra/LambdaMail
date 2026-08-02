@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	ErrScriptNotFound       = errors.New("script does not exist")
-	ErrActiveScriptDelete   = errors.New("cannot delete active script")
+	ErrScriptNotFound      = errors.New("script does not exist")
+	ErrActiveScriptDelete  = errors.New("cannot delete active script")
 	ErrScriptAlreadyExists = errors.New("script with new name already exists")
-	ErrScriptQuotaExceeded  = errors.New("script size exceeds storage limit")
+	ErrScriptQuotaExceeded = errors.New("script size exceeds storage limit")
 )
 
 const MaxScriptSizeBytes = 1024 * 1024 // 1 MB limit per Sieve script

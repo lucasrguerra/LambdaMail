@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	gosmtp "github.com/emersion/go-smtp"
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 
 	"lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"

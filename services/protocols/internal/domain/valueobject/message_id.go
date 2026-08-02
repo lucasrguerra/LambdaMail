@@ -11,7 +11,7 @@ type MessageID struct {
 }
 
 var (
-	ErrMessageIDEmpty       = errors.New("message id: must not be empty")
+	ErrMessageIDEmpty        = errors.New("message id: must not be empty")
 	ErrMessageIDNotBracketed = errors.New("message id: must be wrapped in angle brackets")
 )
 

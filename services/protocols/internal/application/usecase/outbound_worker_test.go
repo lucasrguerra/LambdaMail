@@ -30,6 +30,10 @@ func (f *fakeOutboundRepo) FetchNextReady(_ context.Context, _ string, _ int) ([
 	return ready, nil
 }
 
+func (f *fakeOutboundRepo) CountRecipientsSince(_ context.Context, _ uuid.UUID, _ time.Time) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeOutboundRepo) UpdateJob(_ context.Context, job *entity.OutboundJob) error {
 	for i, j := range f.jobs {
 		if j.ID == job.ID {

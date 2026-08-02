@@ -2,42 +2,62 @@ x-logging: &default-logging
   driver: json-file
   options: { max-size: "10m", max-file: "3" }
 
+x-restart: &restart unless-stopped
+
 services:
+  # ---------------------------------------------------------------- DB
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
+    restart: *restart
     logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?required}
       POSTGRES_USER: ${POSTGRES_USER:?required}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
-    ports: ["5432:5432"]
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}   # no default: fail fast
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres -c shared_buffers=256MB -c max_connections=200
+               -c wal_level=replica
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
+      start_period: 30s
+    mem_limit: 1g
+    cpus: 1.0
+    networks: [backend]
 
+  # ------------------------------------------------------------- REDIS
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
+    restart: *restart
     logging: *default-logging
     command: >
-      redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?required}
+      redis-server --appendonly yes --appendfsync everysec
+                   --requirepass ${REDIS_PASSWORD:?required}
+                   --maxmemory 384mb --maxmemory-policy noeviction
+    # REDIS_PASSWORD has to exist inside the container for the healthcheck:
+    # $${VAR} expands in the container shell, not in Compose.
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes: [redis_data:/data]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --no-auth-warning -a $${REDIS_PASSWORD} ping | grep -q PONG"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
+    mem_limit: 512m
+    cpus: 0.5
+    networks: [backend]
 
+  # ----------------------------------------------------------- MIGRATE
   migrate:
     image: migrate/migrate:v4.17.1
     restart: "no"
+    logging: *default-logging
     volumes: ["./migrations:/migrations"]
     depends_on:
       db: { condition: service_healthy }
@@ -47,91 +67,243 @@ services:
       - -database
       - postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       - up
+    networks: [backend]
 
+  # ------------------------------------------------------------ RSPAMD
+  rspamd:
+    image: ghcr.io/rspamd/rspamd:3.9
+    restart: *restart
+    logging: *default-logging
+    environment:
+      RSPAMD_REDIS_SERVERS: redis
+      RSPAMD_REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ./config/rspamd:/etc/rspamd/local.d:ro
+      - rspamd_data:/var/lib/rspamd
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "rspamadm control stat >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      retries: 3
+    mem_limit: 768m
+    networks: [backend, egress]    # egress: RBL/DNSBL lookups and fuzzy storage
+
+  # ------------------------------------------------------------ CLAMAV
+  clamav:
+    image: clamav/clamav:1.3
+    restart: *restart
+    logging: *default-logging
+    volumes: [clamav_data:/var/lib/clamav]
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 60s
+      retries: 5
+      start_period: 300s          # the initial signature load is slow
+    mem_limit: 2g                 # ClamAV genuinely needs this
+    networks: [backend, egress]   # egress: freshclam signature updates
+
+  # -------------------------------------------------------------- AUTH
   auth:
     build: { context: ./services/auth }
-    restart: unless-stopped
+    restart: *restart
     logging: *default-logging
     environment:
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       JWT_SECRET: ${JWT_SECRET:?required}
-      LAMBDAMAIL_MASTER_KEY: ${LAMBDAMAIL_MASTER_KEY:?required}
+      LAMBDAMAIL_MASTER_KEY: ${LAMBDAMAIL_MASTER_KEY:?required}   # KEK for sealed secrets
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      PRIMARY_MAIL_HOST: ${PRIMARY_MAIL_HOST:?required}
+      PUBLIC_IPV4: ${PUBLIC_IPV4:?required}
+      PUBLIC_IPV6: ${PUBLIC_IPV6:-}
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 3
+      start_period: 20s
+    mem_limit: 512m
+    networks: [backend, egress]   # egress: Cloudflare API. Without it DNS sync
+                                  # fails silently, since backend is internal.
 
+  # ----------------------------------------------------------- STORAGE
   storage:
     build: { context: ./services/storage }
-    restart: unless-stopped
+    restart: *restart
     logging: *default-logging
     environment:
       PORT: 3002
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      STORAGE_LOCAL_PATH: /var/lambdamail/mails
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+    volumes: [mail_storage:/var/lambdamail/mails]
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3002/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+      interval: 15s
+      retries: 3
+      start_period: 20s
+    mem_limit: 1g
+    cpus: 1.0
+    networks: [backend, egress]   # egress: external S3 when STORAGE_DRIVER=s3
 
+  # --------------------------------------------------------- PROTOCOLS
   protocols:
     build: { context: ./services/protocols }
-    restart: unless-stopped
+    restart: *restart
     logging: *default-logging
-    ports: ["8080:8080", "25:25", "143:143"]
+    ports:
+      - "25:25"         # SMTP MX
+      - "587:587"       # Submission (STARTTLS)
+      - "465:465"       # Submission (implicit TLS)
+      - "143:143"       # IMAP (STARTTLS)
+      - "993:993"       # IMAPS
+      - "110:110"       # POP3 (STARTTLS)
+      - "995:995"       # POP3S
+      - "4190:4190"     # ManageSieve
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
-      PRIMARY_MAIL_HOST: ${PRIMARY_MAIL_HOST:-mail.localhost}
-      PROTOCOLS_CERT_PATH: /etc/lambdamail/certs/cert.pem
-      PROTOCOLS_KEY_PATH: /etc/lambdamail/certs/key.pem
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      RSPAMD_URL: http://rspamd:11333
+      CLAMAV_ADDR: clamav:3310
+      PRIMARY_MAIL_HOST: ${PRIMARY_MAIL_HOST:?required}
+      MAIL_DOMAIN: ${MAIL_DOMAIN:?required}
+      LAMBDAMAIL_MASTER_KEY: ${LAMBDAMAIL_MASTER_KEY:?required}   # required for DKIM keys
+      # --- TLS ---
+      TLS_MODE: ${TLS_MODE:-traefik}                 # traefik | acme
+      TRAEFIK_ACME_DIR: /etc/traefik                 # the DIRECTORY, not the file (section 8.2)
+      TRAEFIK_ACME_FILENAME: acme.json
+      CERT_POLL_INTERVAL_SECONDS: "60"
+      # --- Policy ---
+      MTA_STS_MODE: ${MTA_STS_MODE:-testing}         # promote to enforce once TLS-RPT is clean
+      # DANE requires TLS_MODE=acme; the preflight refuses the combination
+      # with Traefik-managed certificates (section 5.1).
+      OUTBOUND_DANE_ENABLED: ${OUTBOUND_DANE_ENABLED:-false}
+      OUTBOUND_MTA_STS_ENABLED: "true"
+      DNSSEC_RESOLVER: ${DNSSEC_RESOLVER:-1.1.1.1:53}
+      # ARC only earns its keep on a host that forwards mail onward.
+      ARC_SEAL_ENABLED: ${ARC_SEAL_ENABLED:-false}
+      # Smarthost, for providers that block outbound port 25 (section 10.4).
+      # Setting RELAY_HOST also adds the relay to the published SPF record.
+      RELAY_HOST: ${RELAY_HOST:-}
+      RELAY_PORT: ${RELAY_PORT:-587}
+      RELAY_USER: ${RELAY_USER:-}
+      RELAY_PASS: ${RELAY_PASS:-}
+      MAX_MESSAGE_BYTES: "52428800"
+      # --- Self-managed ACME (mode B, section 8.3) ---
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_DIRECTORY_URL: ${ACME_DIRECTORY_URL:-}
+      # --- DNS automation ---
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      PUBLIC_IPV4: ${PUBLIC_IPV4:?required}
+      PUBLIC_IPV6: ${PUBLIC_IPV6:-}
+      DNS_SYNC_INTERVAL_SECONDS: "21600"             # 6 h drift detection
       PROTOCOLS_SPOOL_DIR: /var/lambdamail/spool
     volumes:
-      - ./local/certs:/etc/lambdamail/certs:ro
+      # Bind-mount the DIRECTORY: Traefik's atomic rename breaks a
+      # file-scoped mount and the watcher would go blind (section 8.2).
+      - ${COOLIFY_PROXY_DIR:-/data/coolify/proxy}:/etc/traefik:ro
       - protocols_spool:/var/lambdamail/spool
     depends_on:
       db: { condition: service_healthy }
+      redis: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
+      rspamd: { condition: service_started }
+      clamav: { condition: service_started }
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/ready || exit 1"]
-      interval: 10s
+      test: ["CMD", "/app/lambdamail-protocols", "healthcheck"]
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 3
+      start_period: 30s
+    mem_limit: 1g
+    cpus: 1.5
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    networks: [backend, egress]   # egress: port 25 delivery, DNSSEC, MTA-STS fetch
 
+  # -------------------------------------------------------------- WEB
   web:
     build: { context: ./services/webmail }
-    restart: unless-stopped
+    restart: *restart
     logging: *default-logging
-    ports: ["3000:3000"]
     environment:
       PORT: 3000
       AUTH_SERVICE_URL: http://auth:3001
       STORAGE_SERVICE_URL: http://storage:3002
+      NEXT_PUBLIC_APP_URL: https://${WEBMAIL_HOST:?required}
+      # Isolation of the two surfaces (section 14.1). With ADMIN_HOST set the
+      # console answers only on that host; otherwise it lives under
+      # ${WEBMAIL_HOST}/admin.
+      ADMIN_HOST: ${ADMIN_HOST:-}
+      TOTP_ISSUER: ${TOTP_ISSUER:-LambdaMail}
+      MFA_CHALLENGE_TTL_SECONDS: "300"
+      ADMIN_SESSION_TTL_SECONDS: "28800"      # 8 h
+      ADMIN_STEPUP_INTERVAL_SECONDS: "900"    # re-require TOTP every 15 min
+      USER_SESSION_TTL_SECONDS: "2592000"     # 30 d
+      TRUSTED_DEVICE_TTL_SECONDS: "2592000"
     depends_on:
       auth: { condition: service_healthy }
       storage: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
+    labels:
+      - traefik.enable=true
+      # With the service on two networks Traefik may route via the wrong one
+      # and return 504. This pins it to the proxy network.
+      - traefik.docker.network=${COOLIFY_PROXY_NETWORK:-coolify}
+      # Webmail (/user/*)
+      - traefik.http.routers.lm-web.rule=Host(`${WEBMAIL_HOST}`)
+      - traefik.http.routers.lm-web.tls.certresolver=letsencrypt
+      - traefik.http.services.lm-web.loadbalancer.server.port=3000
+      # Admin console. Nested fallback: with no ADMIN_HOST the console lives
+      # under the webmail host at /admin. Never use a fictitious host as the
+      # default - Traefik would loop on ACME for it and risk a rate limit.
+      - traefik.http.routers.lm-admin.rule=Host(`${ADMIN_HOST:-${WEBMAIL_HOST}}`) && PathPrefix(`/admin`)
+      - traefik.http.routers.lm-admin.priority=20
+      - traefik.http.routers.lm-admin.tls.certresolver=letsencrypt
+      # MTA-STS needs a valid certificate on mta-sts.<domain>
+      - traefik.http.routers.lm-mtasts.rule=Host(`mta-sts.${MAIL_DOMAIN}`)
+      - traefik.http.routers.lm-mtasts.tls.certresolver=letsencrypt
+      # Autoconfig (Thunderbird)
+      - traefik.http.routers.lm-autoconfig.rule=Host(`autoconfig.${MAIL_DOMAIN}`)
+      - traefik.http.routers.lm-autoconfig.tls.certresolver=letsencrypt
+      # CRITICAL: forces Traefik to issue a certificate for the mail host.
+      # Without this router mail.<domain> never appears in acme.json and every
+      # TLS listener comes up without a certificate (section 8.2, trap 2).
+      - traefik.http.routers.lm-mailhost.rule=Host(`${PRIMARY_MAIL_HOST}`)
+      - traefik.http.routers.lm-mailhost.tls.certresolver=letsencrypt
+    mem_limit: 512m
+    networks: [backend, proxy]
 
 volumes:
   postgres_data:
   redis_data:
+  mail_storage:
+  rspamd_data:
+  clamav_data:
   protocols_spool:
+
+networks:
+  backend:
+    internal: true          # no route to the internet: internal traffic only
+  # Controlled egress: only the services that must reach the internet join it
+  # (auth -> Cloudflare API; protocols -> remote MX, DNS, MTA-STS fetch;
+  #  rspamd -> RBLs; clamav -> freshclam; storage -> external S3).
+  egress:
+    driver: bridge
+  proxy:
+    external: true
+    name: ${COOLIFY_PROXY_NETWORK:-coolify}

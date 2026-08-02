@@ -36,15 +36,23 @@ type OutboundJob struct {
 	CreatedAt         time.Time
 }
 
-// CalculateNextBackoff computes the next retry time and DSN requirements based on attempt count.
-func CalculateNextBackoff(now time.Time, attempt int, expiresAt time.Time) (nextAttemptAt time.Time, sendDelayDsn bool, permanentFailure bool) {
+// CalculateNextBackoff computes the next retry time and DSN requirements from
+// the attempt that has just failed. The delays follow PLAN.md section 6.3,
+// which tabulates the wait *before* each attempt: attempt 2 runs 5 min after
+// attempt 1 failed, attempt 4 an hour later and also emits the delay DSN, and
+// from attempt 5 on the wait carries +/-20% jitter to avoid a thundering herd.
+func CalculateNextBackoff(now time.Time, failedAttempt int, expiresAt time.Time) (nextAttemptAt time.Time, sendDelayDsn bool, permanentFailure bool) {
 	if !expiresAt.IsZero() && (now.After(expiresAt) || now.Equal(expiresAt)) {
 		return now, false, true
 	}
 
+	// The delay to apply is the one the retry table associates with the
+	// attempt about to be scheduled, not with the one that just failed.
+	nextAttempt := failedAttempt + 1
+
 	var baseDelay time.Duration
 
-	switch attempt {
+	switch nextAttempt {
 	case 1:
 		baseDelay = 0
 	case 2:
@@ -64,8 +72,8 @@ func CalculateNextBackoff(now time.Time, attempt int, expiresAt time.Time) (next
 		baseDelay = 12 * time.Hour
 	}
 
-	if baseDelay > 0 && attempt >= 5 {
-		// Apply ±20% jitter
+	if baseDelay > 0 && nextAttempt >= 5 {
+		// Apply +/-20% jitter
 		jitterFactor := 0.8 + rand.Float64()*0.4
 		baseDelay = time.Duration(float64(baseDelay) * jitterFactor)
 	}

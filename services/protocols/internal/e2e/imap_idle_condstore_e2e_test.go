@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/alexedwards/argon2id"
-	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-imap/v2/imapserver"
+	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 
-	appusecase "lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/application/port"
+	appusecase "lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	imappresentation "lambdamail/protocols/internal/presentation/imap"

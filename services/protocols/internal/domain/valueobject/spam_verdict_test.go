@@ -12,7 +12,7 @@ func TestSpamVerdictFromScore_MatchesThresholds(t *testing.T) {
 		{3.9, SpamHam},
 		{4, SpamProbable},
 		{8.9, SpamProbable},
-		{9, SpamReject},   // section 10.1: 9-15 greylists/defers, modeled here as reject-eligible
+		{9, SpamReject}, // section 10.1: 9-15 greylists/defers, modeled here as reject-eligible
 		{15.1, SpamReject},
 	}
 	for _, c := range cases {

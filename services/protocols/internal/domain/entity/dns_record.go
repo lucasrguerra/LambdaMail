@@ -1,9 +1,10 @@
 package entity
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"strings"
-	"time"
 )
 
 type DnsRecord struct {
@@ -17,8 +18,34 @@ type DnsRecord struct {
 	Comment  string
 }
 
-// Build13DnsRecordSpecs generates the 13 mandatory DNS record specifications per PLAN.md section 7.
-func Build13DnsRecordSpecs(domainName, mailHost, serverIPv4, serverIPv6, rsaDkimPubKey, edDkimPubKey, tlsaHash string, daneEnabled bool) []DnsRecord {
+// DnsRecordSpec describes the zone the reconciler should converge on.
+type DnsRecordSpec struct {
+	DomainName    string
+	MailHost      string
+	ServerIPv4    string
+	ServerIPv6    string
+	RsaDkimPubKey string
+	EdDkimPubKey  string
+	// TlsaHashes are the DANE associations to publish. Two are normally
+	// present during a rollover: the current key and the next one
+	// (RFC 7671 section 8.1).
+	TlsaHashes  []string
+	DaneEnabled bool
+	// RelaySpfInclude is the mechanism authorising a smarthost to send for
+	// this domain. Without it every message the relay forwards fails SPF
+	// (PLAN.md section 10.4).
+	RelaySpfInclude string
+}
+
+// BuildDnsRecordSpecs generates the DNS records of PLAN.md section 7: the 13
+// numbered ones of section 7.1 plus the client-autoconfiguration records of
+// section 7.2.
+func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
+	domainName := spec.DomainName
+	mailHost := spec.MailHost
+	serverIPv4, serverIPv6 := spec.ServerIPv4, spec.ServerIPv6
+	rsaDkimPubKey, edDkimPubKey := spec.RsaDkimPubKey, spec.EdDkimPubKey
+
 	if mailHost == "" {
 		mailHost = fmt.Sprintf("mail.%s", domainName)
 	}
@@ -46,7 +73,7 @@ func Build13DnsRecordSpecs(domainName, mailHost, serverIPv4, serverIPv6, rsaDkim
 		{
 			Type:    "TXT",
 			Name:    domainName,
-			Value:   fmt.Sprintf("v=spf1 mx a:%s -all", mailHost),
+			Value:   buildSpfRecord(mailHost, spec.RelaySpfInclude),
 			TTL:     1,
 			Comment: "LambdaMail SPF Record",
 		},
@@ -78,7 +105,7 @@ func Build13DnsRecordSpecs(domainName, mailHost, serverIPv4, serverIPv6, rsaDkim
 		{
 			Type:    "TXT",
 			Name:    fmt.Sprintf("_mta-sts.%s", domainName),
-			Value:   fmt.Sprintf("v=STSv1; id=%d", time.Now().Unix()),
+			Value:   fmt.Sprintf("v=STSv1; id=%s", mtaStsPolicyID(domainName, mailHost)),
 			TTL:     1,
 			Comment: "LambdaMail MTA-STS Policy Version",
 		},
@@ -117,6 +144,33 @@ func Build13DnsRecordSpecs(domainName, mailHost, serverIPv4, serverIPv6, rsaDkim
 			Priority: intPtr(0),
 			Comment:  "LambdaMail Submissions Autoconfig",
 		},
+		// The remaining client-autoconfiguration records of PLAN.md section
+		// 7.2. They are unnumbered there because they are conveniences, but
+		// the HTTPS endpoints of section 7.3 are unreachable without them.
+		{
+			Type:     "SRV",
+			Name:     fmt.Sprintf("_pop3s._tcp.%s", domainName),
+			Value:    fmt.Sprintf("0 0 995 %s", mailHost),
+			TTL:      1,
+			Priority: intPtr(0),
+			Comment:  "LambdaMail POP3S Autoconfig",
+		},
+		{
+			Type:    "CNAME",
+			Name:    fmt.Sprintf("autoconfig.%s", domainName),
+			Value:   mailHost,
+			TTL:     1,
+			Proxied: true,
+			Comment: "LambdaMail Thunderbird Autoconfig Endpoint",
+		},
+		{
+			Type:     "SRV",
+			Name:     fmt.Sprintf("_autodiscover._tcp.%s", domainName),
+			Value:    fmt.Sprintf("0 0 443 %s", mailHost),
+			TTL:      1,
+			Priority: intPtr(0),
+			Comment:  "LambdaMail Outlook Autodiscover",
+		},
 	}
 
 	// 2. Conditional AAAA record if IPv6 is supplied
@@ -131,22 +185,51 @@ func Build13DnsRecordSpecs(domainName, mailHost, serverIPv4, serverIPv6, rsaDkim
 		})
 	}
 
-	// 11. Conditional TLSA record if DANE is enabled
-	if daneEnabled && tlsaHash != "" {
-		records = append(records, DnsRecord{
-			Type:    "TLSA",
-			Name:    fmt.Sprintf("_25._tcp.%s", mailHost),
-			Value:   fmt.Sprintf("3 1 1 %s", tlsaHash),
-			TTL:     1,
-			Comment: "LambdaMail DANE TLSA Record",
-		})
+	// 11. Conditional TLSA records if DANE is enabled. More than one is normal
+	// during a rollover: the current association and the next one are both
+	// published so the certificate can change without a gap (RFC 7671 8.1).
+	if spec.DaneEnabled {
+		for _, hash := range spec.TlsaHashes {
+			if hash == "" {
+				continue
+			}
+			records = append(records, DnsRecord{
+				Type:    "TLSA",
+				Name:    fmt.Sprintf("_25._tcp.%s", mailHost),
+				Value:   fmt.Sprintf("3 1 1 %s", hash),
+				TTL:     1,
+				Comment: "LambdaMail DANE TLSA Record",
+			})
+		}
 	}
 
 	return records
 }
 
+// buildSpfRecord assembles the sender policy. PLAN.md section 5 uses a hard
+// fail, which is only safe once every legitimate sending path is listed - so
+// the relay, when there is one, has to be included here.
+func buildSpfRecord(mailHost, relayInclude string) string {
+	mechanisms := []string{"v=spf1", "mx", "a:" + mailHost}
+	if relayInclude != "" {
+		mechanisms = append(mechanisms, relayInclude)
+	}
+	return strings.Join(append(mechanisms, "-all"), " ")
+}
+
 func intPtr(v int) *int {
 	return &v
+}
+
+// mtaStsPolicyID derives the MTA-STS policy id from the policy's own content
+// rather than from the wall clock. RFC 8461 section 3.1 requires the id to
+// change whenever the served policy changes; PLAN.md section 7.5 requires the
+// reconciler to be fully idempotent. A timestamp satisfies the first and
+// violates the second - every sync would rewrite the record and force every
+// sender to re-fetch. Hashing the inputs that define the policy satisfies both.
+func mtaStsPolicyID(domainName, mailHost string) string {
+	sum := sha256.Sum256([]byte(domainName + "\x00" + mailHost))
+	return fmt.Sprintf("%016x", binary.BigEndian.Uint64(sum[:8]))
 }
 
 // EqualsNormalized compares two DNS records ignoring subtle formatting whitespace/case differences.
@@ -161,6 +244,14 @@ func (r DnsRecord) EqualsNormalized(other DnsRecord) bool {
 		return false
 	}
 	if r.Proxied != other.Proxied {
+		return false
+	}
+	// MX and SRV priority drift routes mail to the wrong host, so it counts as
+	// a difference even though the record value itself matches.
+	if (r.Priority == nil) != (other.Priority == nil) {
+		return false
+	}
+	if r.Priority != nil && *r.Priority != *other.Priority {
 		return false
 	}
 	return true

@@ -6,7 +6,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log"
+	"net"
+	"sort"
 
 	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/domain/valueobject"
@@ -31,6 +35,11 @@ type ProcessInboundEmailInput struct {
 	Recipients         []port.MailboxRecord
 	RecipientAddresses []string
 	Body               io.Reader
+	// ClientIP and HeloDomain identify the peer. SPF is defined over them
+	// (RFC 7208 section 2.3), so a delivery without them can only ever
+	// produce a "none" verdict.
+	ClientIP   net.IP
+	HeloDomain string
 }
 
 // ProcessInboundEmailUseCase implements the inbound half of PLAN.md section
@@ -39,6 +48,8 @@ type ProcessInboundEmailInput struct {
 // later sub-projects).
 type ProcessInboundEmailUseCase struct {
 	scanner        port.ContentScanner
+	authenticator  port.MailAuthenticator
+	arcSealer      port.ArcSealer
 	mailboxes      port.MailboxRepository
 	blobs          port.BlobStorage
 	messages       port.InboundMessageRepository
@@ -54,9 +65,47 @@ func (uc *ProcessInboundEmailUseCase) SetScanner(scanner port.ContentScanner) {
 	uc.scanner = scanner
 }
 
+func (uc *ProcessInboundEmailUseCase) SetAuthenticator(authenticator port.MailAuthenticator) {
+	uc.authenticator = authenticator
+}
+
+// SetArcSealer enables ARC sealing of accepted messages. It is only worth
+// enabling on a host that forwards mail onward (PLAN.md section 5).
+func (uc *ProcessInboundEmailUseCase) SetArcSealer(sealer port.ArcSealer) {
+	uc.arcSealer = sealer
+}
+
 func (uc *ProcessInboundEmailUseCase) SetTrackerManager(tm *MailboxTrackerManager, folders port.ImapFolderRepository) {
 	uc.trackerManager = tm
 	uc.folders = folders
+}
+
+// prependHeaders inserts the scanner's verdict headers at the top of the
+// message. A receiving MTA adds its trace headers above the existing ones
+// (RFC 5321 section 4.4), which also keeps the original bytes - and therefore
+// any DKIM signature over them - untouched.
+func prependHeaders(payload []byte, headers map[string]string) []byte {
+	if len(headers) == 0 {
+		return payload
+	}
+
+	// Sorted so the delivered message is byte-for-byte reproducible instead of
+	// depending on Go's randomized map iteration order.
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var buf bytes.Buffer
+	for _, name := range names {
+		buf.WriteString(name)
+		buf.WriteString(": ")
+		buf.WriteString(headers[name])
+		buf.WriteString("\r\n")
+	}
+	buf.Write(payload)
+	return buf.Bytes()
 }
 
 // ResolveRecipient is called from the SMTP session's RCPT TO handler. It
@@ -84,12 +133,68 @@ func (uc *ProcessInboundEmailUseCase) ResolveRecipient(ctx context.Context, addr
 // the same blob (PLAN.md section 9's dedup design: 1 email to 50
 // recipients = 1 file).
 func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessInboundEmailInput) error {
+	// The two slices are indexed in lockstep below: one envelope address per
+	// resolved mailbox, repeated when an alias fans out. Refusing a mismatch
+	// turns a caller's bug into an error instead of an out-of-range panic that
+	// would take down the calling worker.
+	if len(input.Recipients) != len(input.RecipientAddresses) {
+		return fmt.Errorf(
+			"process inbound email: %d recipients but %d envelope addresses",
+			len(input.Recipients), len(input.RecipientAddresses),
+		)
+	}
+
 	payload, err := io.ReadAll(input.Body)
 	if err != nil {
 		return err
 	}
 
 	targetFolder := "INBOX"
+	authResult := port.InboundAuthResult{
+		SPF:   port.AuthResultNone,
+		DKIM:  port.AuthResultNone,
+		DMARC: port.AuthResultNone,
+	}
+
+	// Authentication runs before the content scanners so that the spam filter
+	// sees our Authentication-Results header and can score on it
+	// (PLAN.md section 6.1).
+	if uc.authenticator != nil {
+		authResult = uc.authenticator.Authenticate(ctx, port.InboundAuthInput{
+			ClientIP:     input.ClientIP,
+			HeloDomain:   input.HeloDomain,
+			EnvelopeFrom: input.Sender,
+			Message:      payload,
+		})
+
+		// Honouring a published "p=reject" is the whole point of the sender
+		// having published it. Quarantine is left to the spam filter, which
+		// files rather than refuses.
+		if authResult.DMARC == port.AuthResultFail && authResult.DmarcPolicy == "reject" {
+			return errors.New("550 5.7.1 DMARC policy rejects this message")
+		}
+
+		if authResult.AuthenticationResults != "" {
+			payload = prependHeaders(payload, map[string]string{
+				"Authentication-Results": authResult.AuthenticationResults,
+			})
+		}
+
+		// The ARC set has to be built over the message as it arrived, with
+		// this hop's verdict already known, so it is sealed here rather than
+		// after the content scanners rewrite headers.
+		if uc.arcSealer != nil {
+			sealed, err := uc.arcSealer.Seal(ctx, payload, authResult)
+			if err != nil {
+				// A sealing failure must not lose the message: it is delivered
+				// without the ARC set, which is exactly the state it would
+				// have been in had sealing not been enabled.
+				log.Printf("arc: could not seal message from %s: %v", input.Sender, err)
+			} else {
+				payload = sealed
+			}
+		}
+	}
 
 	if uc.scanner != nil {
 		recipientAddr := ""
@@ -115,6 +220,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			case valueobject.ScanVerdictSpamJunk:
 				targetFolder = "Junk"
 			}
+			payload = prependHeaders(payload, scanRes.HeadersToAdd)
 		}
 	}
 
@@ -130,9 +236,9 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			SenderAddress:    input.Sender,
 			RecipientAddress: input.RecipientAddresses[i],
 			TargetFolderName: targetFolder,
-			SPFResult:        "none",
-			DKIMResult:       "none",
-			DMARCResult:      "none",
+			SPFResult:        authResult.SPF,
+			DKIMResult:       authResult.DKIM,
+			DMARCResult:      authResult.DMARC,
 		})
 		if err != nil {
 			return err

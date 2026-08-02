@@ -7,8 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,21 +50,7 @@ func TestF2CompleteSuiteEndToEnd(t *testing.T) {
 	}
 	defer pool.Close()
 
-	root := repoRoot(t)
-	migrations := []string{
-		"0001_init_schema.up.sql",
-		"0002_add_is_system_to_aliases.up.sql",
-		"0003_create_report_tables.up.sql",
-	}
-	for _, m := range migrations {
-		sql, err := os.ReadFile(filepath.Join(root, "migrations", m))
-		if err != nil {
-			t.Fatalf("read migration %s: %v", m, err)
-		}
-		if _, err := pool.Exec(ctx, string(sql)); err != nil {
-			t.Fatalf("apply migration %s: %v", m, err)
-		}
-	}
+	applyMigrations(t, ctx, pool)
 
 	// 2. Seed domain, mailbox, INBOX, Archive
 	password := "correct horse battery staple"
@@ -443,7 +427,7 @@ func TestF2CompleteSuiteEndToEnd(t *testing.T) {
 		t.Fatalf("SETACTIVE = %q", activeResp)
 	}
 
-	// Verify RFC 5804 §2.7: DELETESCRIPT on active script MUST fail
+	// Verify RFC 5804 section 2.7: DELETESCRIPT on active script MUST fail
 	sendCmdSieve("DELETESCRIPT \"auto_rules\"")
 	if delActiveResp := readLineSieve(); !strings.HasPrefix(delActiveResp, "NO") {
 		t.Fatalf("expected NO for deleting active script, got %q", delActiveResp)

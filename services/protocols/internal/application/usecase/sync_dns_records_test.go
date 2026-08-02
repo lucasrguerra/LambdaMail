@@ -9,12 +9,35 @@ import (
 	"lambdamail/protocols/internal/domain/entity"
 )
 
+// fakeDnsProvider models a real zone: several records may share a type and
+// name (multiple TXT at the apex), so records are held in a list keyed by id.
 type fakeDnsProvider struct {
-	records map[string]entity.DnsRecord // key -> record
+	records []entity.DnsRecord
+	nextID  int
 }
 
 func newFakeDnsProvider() *fakeDnsProvider {
-	return &fakeDnsProvider{records: make(map[string]entity.DnsRecord)}
+	return &fakeDnsProvider{}
+}
+
+// seed publishes a pre-existing record that this reconciler did not create.
+func (f *fakeDnsProvider) seed(record entity.DnsRecord) {
+	if record.ID == "" {
+		f.nextID++
+		record.ID = fmt.Sprintf("seed_%d", f.nextID)
+	}
+	f.records = append(f.records, record)
+}
+
+// find returns the records published under a type and name.
+func (f *fakeDnsProvider) find(recType, name string) []entity.DnsRecord {
+	var out []entity.DnsRecord
+	for _, r := range f.records {
+		if strings.EqualFold(r.Type, recType) && strings.EqualFold(r.Name, name) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (f *fakeDnsProvider) GetZoneID(_ context.Context, domainName string) (string, error) {
@@ -22,31 +45,31 @@ func (f *fakeDnsProvider) GetZoneID(_ context.Context, domainName string) (strin
 }
 
 func (f *fakeDnsProvider) ListRecords(_ context.Context, _ string) ([]entity.DnsRecord, error) {
-	var out []entity.DnsRecord
-	for _, r := range f.records {
-		out = append(out, r)
-	}
-	return out, nil
+	return append([]entity.DnsRecord(nil), f.records...), nil
 }
 
 func (f *fakeDnsProvider) CreateRecord(_ context.Context, _ string, record entity.DnsRecord) error {
-	key := fmt.Sprintf("%s:%s", strings.ToUpper(record.Type), strings.ToLower(record.Name))
-	record.ID = fmt.Sprintf("id_%s", key)
-	f.records[key] = record
+	f.nextID++
+	record.ID = fmt.Sprintf("id_%d", f.nextID)
+	f.records = append(f.records, record)
 	return nil
 }
 
 func (f *fakeDnsProvider) UpdateRecord(_ context.Context, _ string, record entity.DnsRecord) error {
-	key := fmt.Sprintf("%s:%s", strings.ToUpper(record.Type), strings.ToLower(record.Name))
-	f.records[key] = record
-	return nil
+	for i, r := range f.records {
+		if r.ID == record.ID {
+			f.records[i] = record
+			return nil
+		}
+	}
+	return fmt.Errorf("record %s not found", record.ID)
 }
 
 func (f *fakeDnsProvider) DeleteRecord(_ context.Context, _ string, recordID string) error {
-	for k, r := range f.records {
+	for i, r := range f.records {
 		if r.ID == recordID {
-			delete(f.records, k)
-			break
+			f.records = append(f.records[:i], f.records[i+1:]...)
+			return nil
 		}
 	}
 	return nil
@@ -61,7 +84,11 @@ func (f *fakeSystemAliasRepository) EnsureSystemAliases(_ context.Context, _ str
 	return nil
 }
 
-func TestSyncDnsRecordsUseCase_Creates13RecordsAndAliases(t *testing.T) {
+// The full desired state is the 13 numbered records of PLAN.md section 7.1
+// plus the three client-autoconfiguration records of section 7.2.
+const expectedRecordCount = 16
+
+func TestSyncDnsRecordsUseCase_CreatesFullRecordSetAndAliases(t *testing.T) {
 	dns := newFakeDnsProvider()
 	alias := &fakeSystemAliasRepository{}
 	uc := NewSyncDnsRecordsUseCase(dns, alias)
@@ -85,8 +112,8 @@ func TestSyncDnsRecordsUseCase_Creates13RecordsAndAliases(t *testing.T) {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	if out.CreatedCount != 13 {
-		t.Errorf("CreatedCount = %d, want 13", out.CreatedCount)
+	if out.CreatedCount != expectedRecordCount {
+		t.Errorf("CreatedCount = %d, want %d", out.CreatedCount, expectedRecordCount)
 	}
 	if !alias.ensured {
 		t.Error("expected system aliases to be ensured")
@@ -98,7 +125,7 @@ func TestSyncDnsRecordsUseCase_Creates13RecordsAndAliases(t *testing.T) {
 		t.Fatalf("Execute 2 failed: %v", err)
 	}
 
-	if out2.UnchangedCount != 13 || out2.CreatedCount != 0 || out2.UpdatedCount != 0 {
-		t.Errorf("expected 13 unchanged, got created=%d, updated=%d, unchanged=%d", out2.CreatedCount, out2.UpdatedCount, out2.UnchangedCount)
+	if out2.UnchangedCount != expectedRecordCount || out2.CreatedCount != 0 || out2.UpdatedCount != 0 {
+		t.Errorf("expected %d unchanged, got created=%d, updated=%d, unchanged=%d", expectedRecordCount, out2.CreatedCount, out2.UpdatedCount, out2.UnchangedCount)
 	}
 }

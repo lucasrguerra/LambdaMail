@@ -14,8 +14,8 @@ import (
 	"github.com/alexedwards/argon2id"
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 
-	appusecase "lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/application/port"
+	appusecase "lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/infrastructure/diskstorage"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 	pop3presentation "lambdamail/protocols/internal/presentation/pop3"

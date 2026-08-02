@@ -7,15 +7,16 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/domain/valueobject"
 )
 
 type RspamdResponse struct {
-	Action        string                         `json:"action"`
-	Score         float64                        `json:"score"`
-	RequiredScore float64                        `json:"required_score"`
+	Action        string                            `json:"action"`
+	Score         float64                           `json:"score"`
+	RequiredScore float64                           `json:"required_score"`
 	Symbols       map[string]map[string]interface{} `json:"symbols"`
 }
 
@@ -29,8 +30,11 @@ func NewRspamdAdapter(baseURL string) *RspamdAdapter {
 		baseURL = "http://localhost:11333"
 	}
 	return &RspamdAdapter{
-		baseURL:    strings.TrimSuffix(baseURL, "/"),
-		httpClient: &http.Client{},
+		baseURL: strings.TrimSuffix(baseURL, "/"),
+		// A scan sits in the middle of an open SMTP transaction, so an
+		// unbounded request would pin the session (and the sender's socket)
+		// until the peer gives up.
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -86,7 +90,9 @@ func (a *RspamdAdapter) Scan(ctx context.Context, input port.ScanInput) (*valueo
 	switch parsed.Action {
 	case "reject":
 		res.Verdict = valueobject.ScanVerdictSpamReject
-	case "greylist":
+	// "soft reject" is Rspamd asking the sender to retry later (rate limit or
+	// transient policy); like a greylist it maps to a 4xx, never to acceptance.
+	case "greylist", "soft reject":
 		res.Verdict = valueobject.ScanVerdictGreylist
 	case "add header", "rewrite subject":
 		res.Verdict = valueobject.ScanVerdictSpamJunk

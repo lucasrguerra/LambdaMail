@@ -3,6 +3,7 @@ package httppresentation
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -11,10 +12,16 @@ import (
 	"lambdamail/protocols/internal/domain/valueobject"
 )
 
+// mtaStsMaxAge is the policy lifetime advertised to senders. RFC 8461
+// recommends a value in the order of weeks so that an attacker cannot strip
+// the policy by making the endpoint unreachable.
+const mtaStsMaxAge = 604800 // 7 days
+
 type Router struct {
 	mux           *http.ServeMux
 	reportUseCase *appusecase.IngestReportsUseCase
 	pingFunc      func() error
+	mtaStsMode    valueobject.MtaStsMode
 }
 
 func NewRouter(reportUseCase *appusecase.IngestReportsUseCase, pingFunc func() error) *Router {
@@ -22,9 +29,22 @@ func NewRouter(reportUseCase *appusecase.IngestReportsUseCase, pingFunc func() e
 		mux:           http.NewServeMux(),
 		reportUseCase: reportUseCase,
 		pingFunc:      pingFunc,
+		// PLAN.md section 5 ramps MTA-STS from testing to enforce. Starting at
+		// enforce means any TLS misconfiguration silently blackholes inbound
+		// mail from every sender that honours the policy, with no way to tell
+		// from this side - so the safe mode is the default and the operator
+		// promotes it once TLS-RPT reports come back clean.
+		mtaStsMode: valueobject.MtaStsModeTesting,
 	}
 	r.registerRoutes()
 	return r
+}
+
+// SetMtaStsMode selects the mode advertised in the served policy. Callers
+// should promote to enforce only after TLS-RPT confirms senders can negotiate
+// TLS against the published MX.
+func (r *Router) SetMtaStsMode(mode valueobject.MtaStsMode) {
+	r.mtaStsMode = mode
 }
 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -57,19 +77,23 @@ func (r *Router) handleMtaSts(w http.ResponseWriter, req *http.Request) {
 	host := extractHost(req.Host)
 	domainName := strings.TrimPrefix(host, "mta-sts.")
 
-	policy := valueobject.NewMtaStsPolicy(valueobject.MtaStsModeEnforce, []string{fmt.Sprintf("mail.%s", domainName)}, 604800)
+	policy := valueobject.NewMtaStsPolicy(r.mtaStsMode, []string{fmt.Sprintf("mail.%s", domainName)}, mtaStsMaxAge)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	// Kept in step with max_age so an HTTP cache cannot outlive the policy it
+	// is caching.
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", mtaStsMaxAge))
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(policy.Format()))
 }
 
 func (r *Router) handleSecurityTxt(w http.ResponseWriter, req *http.Request) {
-	host := extractHost(req.Host)
+	// The contact must be a real mailbox on the mail domain, not on whichever
+	// service hostname the request happened to arrive at.
+	domainName := baseDomain(extractHost(req.Host))
 	expires := time.Now().AddDate(1, 0, 0).Format(time.RFC3339)
 
-	content := fmt.Sprintf("Contact: mailto:security@%s\r\nExpires: %s\r\nPreferred-Languages: en, pt-BR, es\r\n", host, expires)
+	content := fmt.Sprintf("Contact: mailto:security@%s\r\nExpires: %s\r\nPreferred-Languages: en, pt-BR, es\r\n", domainName, expires)
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -144,12 +168,27 @@ func (r *Router) handleTlsRptIngest(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
+// extractHost strips the optional port from a Host header, handling the
+// bracketed IPv6 literal form as well.
 func extractHost(hostHeader string) string {
-	if h, _, err := strings.Cut(hostHeader, ":"); err && h != "" {
-		return h
-	}
 	if hostHeader == "" {
 		return "example.test"
 	}
-	return hostHeader
+	if host, _, err := net.SplitHostPort(hostHeader); err == nil && host != "" {
+		return host
+	}
+	return strings.Trim(hostHeader, "[]")
+}
+
+// serviceHostPrefixes are the per-service names published under a mail domain
+// (PLAN.md section 7.3); stripping one yields the mail domain itself.
+var serviceHostPrefixes = []string{"mta-sts.", "autoconfig.", "autodiscover.", "mail."}
+
+func baseDomain(host string) string {
+	for _, prefix := range serviceHostPrefixes {
+		if strings.HasPrefix(host, prefix) {
+			return strings.TrimPrefix(host, prefix)
+		}
+	}
+	return host
 }

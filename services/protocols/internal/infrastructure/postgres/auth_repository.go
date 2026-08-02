@@ -21,7 +21,7 @@ func NewAuthRepository(pool *pgxpool.Pool) *AuthRepository {
 
 func (r *AuthRepository) FindByAddress(ctx context.Context, address string) (*port.MailboxAuth, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT m.id, m.password_hash
+		SELECT m.id, m.password_hash, m.email_address, d.name, m.max_recipients_per_hour
 		FROM mailboxes m
 		JOIN domains d ON d.id = m.domain_id
 		WHERE m.email_address = $1
@@ -31,7 +31,7 @@ func (r *AuthRepository) FindByAddress(ctx context.Context, address string) (*po
 
 	var rec port.MailboxAuth
 	var id uuid.UUID
-	if err := row.Scan(&id, &rec.PasswordHash); err != nil {
+	if err := row.Scan(&id, &rec.PasswordHash, &rec.EmailAddress, &rec.DomainName, &rec.MaxRecipientsPerHour); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}

@@ -10,12 +10,12 @@ import (
 )
 
 type DmarcRecord struct {
-	SourceIP        string
-	Count           int
-	Disposition     string
-	DKIMResult      string
-	SPFResult       string
-	HeaderFrom      string
+	SourceIP    string
+	Count       int
+	Disposition string
+	DKIMResult  string
+	SPFResult   string
+	HeaderFrom  string
 }
 
 type DmarcReport struct {
@@ -41,8 +41,8 @@ type dmarcXmlReport struct {
 	} `xml:"policy_published"`
 	Record []struct {
 		Row struct {
-			SourceIP string `xml:"source_ip"`
-			Count    int    `xml:"count"`
+			SourceIP        string `xml:"source_ip"`
+			Count           int    `xml:"count"`
 			PolicyEvaluated struct {
 				Disposition string `xml:"disposition"`
 				DKIM        string `xml:"dkim"`

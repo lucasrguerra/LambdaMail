@@ -32,8 +32,8 @@ if size :over 1M {
 
 func TestValidateSieveScript_InvalidScripts(t *testing.T) {
 	tests := []struct {
-		name   string
-		script string
+		name    string
+		script  string
 		wantErr error
 	}{
 		{"empty", "", ErrEmptyScript},
