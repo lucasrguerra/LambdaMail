@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface Mailbox {
   id: string;
@@ -19,6 +20,7 @@ const INITIAL_MAILBOXES: Mailbox[] = [
 ];
 
 export default function AdminMailboxesPage() {
+  const t = useTranslations();
   const [mailboxes, setMailboxes] = useState<Mailbox[]>(INITIAL_MAILBOXES);
   const [mfaPolicy, setMfaPolicy] = useState<"optional" | "required_admins" | "required_all">("required_admins");
   const [newEmail, setNewEmail] = useState("");
@@ -44,7 +46,7 @@ export default function AdminMailboxesPage() {
     <div className="p-8 space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Mailboxes & Account Management</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">{t("admin.mailboxesTitle")}</h1>
           <p className="text-xs text-slate-400">Configure mailboxes, quota allocation, and domain MFA policy.</p>
         </div>
       </div>

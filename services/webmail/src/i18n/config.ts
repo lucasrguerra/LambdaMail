@@ -8,10 +8,13 @@ export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 export const LOCALE_COOKIE = "lm_locale";
 
-export const LOCALE_LABELS: Record<Locale, string> = {
-  en: "English",
-  "pt-BR": "Português (Brasil)",
-  es: "Español",
+// The display name of each language lives in the message bundles: PLAN.md R9
+// keeps non-ASCII out of the source, and a switcher should name each language
+// the way that language does.
+export const LOCALE_LABEL_KEYS: Record<Locale, string> = {
+  en: "settings.langEn",
+  "pt-BR": "settings.langPtBR",
+  es: "settings.langEs",
 };
 
 // Bundled at build time rather than fetched: these are small, needed on first

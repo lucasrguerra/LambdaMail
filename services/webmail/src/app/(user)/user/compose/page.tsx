@@ -1,34 +1,67 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useTranslations } from "../../../../i18n/provider";
+
+// The undo window holds the message in the browser before it is submitted.
+// Nothing is queued server-side until it elapses, so "undo" really does mean
+// the message was never sent, rather than trying to recall it afterwards.
+const UNDO_WINDOW_SECONDS = 10;
 
 export default function ComposePage() {
+  const t = useTranslations();
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [undoSeconds, setUndoSeconds] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const cancelled = useRef(false);
+
+  const submit = async () => {
+    try {
+      const res = await fetch("/api/v1/mail/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: [to], subject, body }),
+      });
+      if (res.status === 401) {
+        window.location.href = "/user/login";
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || t("errors.serverError"));
+      window.location.href = "/user/mail/sent";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("errors.serverError"));
+      setSending(false);
+    }
+  };
+
+  useEffect(() => {
+    if (undoSeconds === null) return;
+    if (undoSeconds <= 0) {
+      setUndoSeconds(null);
+      if (!cancelled.current) void submit();
+      return;
+    }
+    const handle = setTimeout(() => setUndoSeconds((prev) => (prev === null ? null : prev - 1)), 1000);
+    return () => clearTimeout(handle);
+    // submit closes over the current fields, which is what should be sent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoSeconds]);
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    cancelled.current = false;
     setSending(true);
-    setUndoSeconds(30);
-
-    const interval = setInterval(() => {
-      setUndoSeconds((prev) => {
-        if (prev === null || prev <= 1) {
-          clearInterval(interval);
-          setSending(false);
-          window.location.href = "/user/mail/sent";
-          return null;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    setUndoSeconds(UNDO_WINDOW_SECONDS);
   };
 
   const handleUndo = () => {
+    cancelled.current = true;
     setUndoSeconds(null);
     setSending(false);
   };
@@ -38,7 +71,7 @@ export default function ComposePage() {
       <div className="glass-panel p-6 rounded-2xl max-w-2xl w-full border border-slate-800 shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
           <h1 className="text-lg font-bold text-white flex items-center gap-2">
-            <span>&#128221;</span> Compose Email Message
+            <span>&#128221;</span> {t("mail.compose")}
           </h1>
           <span className="text-xs text-slate-400 font-mono">Auto-draft active (3s)</span>
         </div>
@@ -46,14 +79,20 @@ export default function ComposePage() {
         {undoSeconds !== null && (
           <div className="mb-6 p-4 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-between text-indigo-300">
             <span className="text-sm font-medium">
-              Email queued! Sending in <strong>{undoSeconds}s</strong>...
+              {t("mail.undoSend").replace("{seconds}", String(undoSeconds))}
             </span>
             <button
               onClick={handleUndo}
               className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors"
             >
-              Undo Send
+              {t("common.cancel")}
             </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+            {error}
           </div>
         )}
 

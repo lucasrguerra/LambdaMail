@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface DnsRecord {
   type: string;
@@ -27,6 +28,7 @@ const DNS_RECORDS_13: DnsRecord[] = [
 ];
 
 export default function AdminDomainsPage() {
+  const t = useTranslations();
   const [reconciling, setReconciling] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
@@ -43,7 +45,7 @@ export default function AdminDomainsPage() {
     <div className="p-8 space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Domain & 13-DNS Records Automation</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">{t("admin.domainsTitle")}</h1>
           <p className="text-xs text-slate-400">Live DNS diff reconciliation against Cloudflare API (PLAN.md Section 16 F3/F4 requirement).</p>
         </div>
 

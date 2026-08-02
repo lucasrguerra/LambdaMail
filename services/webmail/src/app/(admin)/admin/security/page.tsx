@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface AuditEntry {
   id: string;
@@ -23,6 +24,7 @@ const MOCK_AUDIT_LOGS: AuditEntry[] = [
 ];
 
 export default function AdminSecurityPage() {
+  const t = useTranslations();
   const [preflightChecks, setPreflightChecks] = useState<PreflightCheck[]>([]);
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export default function AdminSecurityPage() {
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Security, Audit Log & Preflight</h1>
+        <h1 className="text-2xl font-bold text-white mb-1">{t("admin.securityTitle")}</h1>
         <p className="text-xs text-slate-400">Immutable security event logging and mail server preflight diagnostics.</p>
       </div>
 

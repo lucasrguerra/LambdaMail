@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface QueueJob {
   id: string;
@@ -18,6 +19,7 @@ const INITIAL_JOBS: QueueJob[] = [
 ];
 
 export default function AdminQueuePage() {
+  const t = useTranslations();
   const [jobs, setJobs] = useState<QueueJob[]>(INITIAL_JOBS);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -34,7 +36,7 @@ export default function AdminQueuePage() {
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Outbound Delivery Queue Control</h1>
+        <h1 className="text-2xl font-bold text-white mb-1">{t("admin.queueTitle")}</h1>
         <p className="text-xs text-slate-400">Inspect outbound queue, retry retriable jobs, or freeze problematic destinations.</p>
       </div>
 

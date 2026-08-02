@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface DashboardMetrics {
   inbound_24h: number;
@@ -15,6 +16,7 @@ interface DashboardMetrics {
 }
 
 export default function AdminDashboardPage() {
+  const t = useTranslations();
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export default function AdminDashboardPage() {
     <div className="p-8 space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">System Overview & Performance</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">{t("admin.dashboardTitle")}</h1>
           <p className="text-xs text-slate-400">Live operational metrics for LambdaMail mail node.</p>
         </div>
         <span className="badge-verified px-3 py-1 rounded-full text-xs font-bold font-mono">

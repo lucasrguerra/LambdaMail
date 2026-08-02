@@ -53,7 +53,10 @@
     "recoveryCodesTitle": "Códigos de Recuperación",
     "saveRecoveryCodes": "Guarde estos códigos de recuperación en un lugar seguro. No se volverán a mostrar.",
     "language": "Idioma",
-    "signOut": "Cerrar sesión"
+    "signOut": "Cerrar sesión",
+    "langEn": "Inglés",
+    "langPtBR": "Portugués (Brasil)",
+    "langEs": "Español"
   },
   "admin": {
     "dashboardTitle": "Panel del Sistema",

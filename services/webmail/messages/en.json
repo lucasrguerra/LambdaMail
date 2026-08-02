@@ -53,7 +53,10 @@
     "recoveryCodesTitle": "Recovery Codes",
     "saveRecoveryCodes": "Save these recovery codes in a safe place. They will not be shown again.",
     "language": "Language",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "langEn": "English",
+    "langPtBR": "Portuguese (Brazil)",
+    "langEs": "Spanish"
   },
   "admin": {
     "dashboardTitle": "System Dashboard",

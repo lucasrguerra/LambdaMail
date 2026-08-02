@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface DmarcSource {
   ip: string;
@@ -19,6 +20,7 @@ interface DmarcData {
 }
 
 export default function AdminDmarcPage() {
+  const t = useTranslations();
   const [data, setData] = useState<DmarcData | null>(null);
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export default function AdminDmarcPage() {
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">DMARC Aggregate Reports Analytics</h1>
+        <h1 className="text-2xl font-bold text-white mb-1">{t("admin.dmarcTitle")}</h1>
         <p className="text-xs text-slate-400">Ingested XML aggregate reports breakdown (dmarc_reports table).</p>
       </div>
 

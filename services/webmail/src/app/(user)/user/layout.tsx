@@ -1,12 +1,31 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 
+interface FolderCount {
+  special_use: string;
+  name: string;
+  unread_count: number;
+}
+
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations();
+  const [folders, setFolders] = useState<FolderCount[]>([]);
+
+  useEffect(() => {
+    // The badge counts used to be literals in the markup, so an empty inbox
+    // still advertised unread mail.
+    void fetch("/api/v1/mail/folders")
+      .then((res) => (res.ok ? res.json() : []))
+      .then(setFolders)
+      .catch(() => undefined);
+  }, []);
+
+  const unreadFor = (role: string) =>
+    folders.find((f) => f.special_use === role || f.name.toLowerCase() === role)?.unread_count ?? 0;
   return (
     <div className="flex h-screen overflow-hidden bg-slate-950 text-slate-100">
       {/* Sidebar Navigation */}
@@ -39,7 +58,11 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
               <div className="flex items-center gap-2.5">
                 <span>&#128236;</span> {t("mail.inbox")}
               </div>
-              <span className="text-xs bg-indigo-500/30 px-2 py-0.5 rounded-full font-bold">3</span>
+              {unreadFor("inbox") > 0 && (
+                <span className="text-xs bg-indigo-500/30 px-2 py-0.5 rounded-full font-bold">
+                  {unreadFor("inbox")}
+                </span>
+              )}
             </Link>
 
             <Link
@@ -58,7 +81,9 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
               <div className="flex items-center gap-2.5">
                 <span>&#128221;</span> {t("mail.drafts")}
               </div>
-              <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full">1</span>
+              {unreadFor("drafts") > 0 && (
+                <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full">{unreadFor("drafts")}</span>
+              )}
             </Link>
 
             <Link

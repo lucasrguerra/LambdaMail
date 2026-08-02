@@ -53,7 +53,10 @@
     "recoveryCodesTitle": "Códigos de Recuperação",
     "saveRecoveryCodes": "Guarde estes códigos de recuperação em local seguro. Eles não serão exibidos novamente.",
     "language": "Idioma",
-    "signOut": "Sair"
+    "signOut": "Sair",
+    "langEn": "Inglês",
+    "langPtBR": "Português (Brasil)",
+    "langEs": "Espanhol"
   },
   "admin": {
     "dashboardTitle": "Painel do Sistema",

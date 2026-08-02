@@ -1,6 +1,6 @@
 "use client";
 
-import { LOCALES, LOCALE_LABELS, type Locale } from "./config";
+import { LOCALES, LOCALE_LABEL_KEYS, type Locale } from "./config";
 import { useI18n } from "./provider";
 
 /** Language selector, rendered in both surface layouts (PLAN.md section 21.2). */
@@ -18,7 +18,7 @@ export function LanguageSwitcher({ className = "" }: { className?: string }) {
       >
         {LOCALES.map((l) => (
           <option key={l} value={l}>
-            {LOCALE_LABELS[l]}
+            {t(LOCALE_LABEL_KEYS[l])}
           </option>
         ))}
       </select>

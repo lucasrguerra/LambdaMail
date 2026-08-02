@@ -11,6 +11,14 @@ import { NextRequest, NextResponse } from "next/server";
  */
 
 const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL ?? "http://auth:3001";
+// The mail screens are served by the protocols service, which owns the folder,
+// UID, flag and blob logic. Both verify the same session token, so the browser
+// sees one origin and one cookie either way.
+const PROTOCOLS_SERVICE_URL = process.env.PROTOCOLS_SERVICE_URL ?? "http://protocols:8080";
+
+function upstreamFor(path: string[]): string {
+  return path[0] === "mail" ? PROTOCOLS_SERVICE_URL : AUTH_SERVICE_URL;
+}
 
 // Hop-by-hop headers must not be forwarded (RFC 9110 section 7.6.1), and the
 // upstream sets its own content-length.
@@ -36,7 +44,7 @@ function filterHeaders(source: Headers): Headers {
 }
 
 async function forward(req: NextRequest, path: string[]): Promise<Response> {
-  const target = `${AUTH_SERVICE_URL}/api/v1/${path.join("/")}${req.nextUrl.search}`;
+  const target = `${upstreamFor(path)}/api/v1/${path.join("/")}${req.nextUrl.search}`;
   const headers = filterHeaders(req.headers);
 
   // The client's address is what the auth service records on sessions and
@@ -60,7 +68,7 @@ async function forward(req: NextRequest, path: string[]): Promise<Response> {
     // A dead upstream is a gateway problem, not a 404 - the difference decides
     // whether an operator looks at the auth service or at this route.
     return NextResponse.json(
-      { error: "UPSTREAM_UNAVAILABLE", message: "Authentication service is unreachable" },
+      { error: "UPSTREAM_UNAVAILABLE", message: "Upstream service is unreachable" },
       { status: 502 },
     );
   }
