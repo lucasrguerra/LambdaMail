@@ -54,6 +54,9 @@ export default function ComposePage({
   const [undoSeconds, setUndoSeconds] = useState<number | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>("");
   const [sendError, setSendError] = useState<string | null>(null);
+  // The UID of the draft already stored for this message. Sent back on each
+  // autosave so the server replaces it instead of leaving another copy.
+  const draftUidRef = useRef<number>(0);
 
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -81,8 +84,13 @@ export default function ComposePage({
           bcc: splitAddresses(bcc),
           subject,
           html,
+          replace_uid: draftUidRef.current,
         }),
       });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (typeof data.uid === "number") draftUidRef.current = data.uid;
+      }
       setDraftStatus(res.ok ? t("mail.draftSaved") : t("mail.draftSaveFailed"));
     } catch {
       setDraftStatus(t("mail.draftSaveFailed"));

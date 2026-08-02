@@ -200,3 +200,63 @@ func (r *WebmailRepository) MarkSeen(
 
 	return tx.Commit(ctx)
 }
+
+// Expunge marks one message deleted and keeps the folder counters in step.
+//
+// Soft delete, matching the expunged_at column the rest of the schema uses: the
+// blob stays referenced until the retention sweep, so a mistaken delete is
+// recoverable and IMAP clients holding the UID still resolve it.
+//
+// The message is located by mailbox as well as UID, so a caller cannot expunge
+// somebody else's mail by guessing a number.
+func (r *WebmailRepository) Expunge(
+	ctx context.Context, mailboxID, folderName string, uid uint32,
+) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var messageID uuid.UUID
+	var folderID string
+	var wasUnread bool
+	err = tx.QueryRow(ctx, `
+		SELECT e.id, f.id::text,
+		       NOT EXISTS (SELECT 1 FROM message_flags mf
+		                    WHERE mf.message_id = e.id AND mf.flag = '\Seen')
+		  FROM email_messages e
+		  JOIN folders f ON f.id = e.folder_id
+		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
+		   AND e.uid = $3 AND e.expunged_at IS NULL
+	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &folderID, &wasUnread)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrMessageNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE email_messages SET expunged_at = NOW() WHERE id = $1`, messageID); err != nil {
+		return err
+	}
+
+	// GREATEST guards the counters against ever going negative, which a
+	// double expunge of the same row would otherwise cause.
+	unreadDelta := 0
+	if wasUnread {
+		unreadDelta = -1
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE folders
+		   SET total_count = GREATEST(0, total_count - 1),
+		       unread_count = GREATEST(0, unread_count + $2),
+		       highest_modseq = highest_modseq + 1
+		 WHERE id = $1
+	`, folderID, unreadDelta); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}

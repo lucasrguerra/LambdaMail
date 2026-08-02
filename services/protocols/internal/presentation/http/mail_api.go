@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"strconv"
@@ -264,12 +265,13 @@ func (m *mailAPI) handleSaveDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	input, ok := m.decodeCompose(w, r, session.Email)
+	// The body is read once, so replace_uid has to come out of the same decode.
+	input, replaceUID, ok := m.decodeDraft(w, r, session.Email)
 	if !ok {
 		return
 	}
 
-	uid, err := m.useCase.SaveDraft(r.Context(), input)
+	uid, err := m.useCase.SaveDraft(r.Context(), input, replaceUID)
 	if err != nil {
 		m.fail(w, err)
 		return
@@ -338,4 +340,30 @@ func (m *mailAPI) fail(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Request could not be processed")
 	}
+}
+
+// decodeDraft reads a composed message plus the draft it supersedes.
+//
+// replace_uid carries the UID of the previous autosave so the new one takes
+// its place. Without it each keystroke pause would leave another copy behind
+// and the Drafts folder would fill with the same unfinished message.
+func (m *mailAPI) decodeDraft(
+	w http.ResponseWriter, r *http.Request, sender string,
+) (usecase.ComposeInput, uint32, bool) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxComposeBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Could not read the request")
+		return usecase.ComposeInput{}, 0, false
+	}
+
+	var meta struct {
+		ReplaceUID uint32 `json:"replace_uid"`
+	}
+	// A missing or malformed replace_uid is not fatal: the draft is still
+	// worth saving, it just will not supersede anything.
+	_ = json.Unmarshal(raw, &meta)
+
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	input, ok := m.decodeCompose(w, r, sender)
+	return input, meta.ReplaceUID, ok
 }

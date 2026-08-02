@@ -125,9 +125,9 @@ func (uc *WebmailUseCase) SetSeen(ctx context.Context, address, folder string, u
 
 // ComposeInput is one message written in the webmail.
 type ComposeInput struct {
-	From    string
-	To      []string
-	Cc      []string
+	From string
+	To   []string
+	Cc   []string
 	// Bcc reaches the envelope but never the headers - that is the whole
 	// point of it. It used not to exist here at all, so a blind copy typed
 	// into the webmail was silently dropped and nobody received it.
@@ -223,7 +223,11 @@ func (uc *WebmailUseCase) fileLocalCopy(
 // from a setTimeout, with no request behind it, and closing the tab lost the
 // message. Drafts are whole RFC 5322 messages like any other, so they are
 // readable over IMAP too.
-func (uc *WebmailUseCase) SaveDraft(ctx context.Context, input ComposeInput) (uint32, error) {
+// replaceUID is the draft this one supersedes, or 0 for the first save of a
+// message. Without it every autosave would append another copy and a few
+// minutes of typing would leave the Drafts folder full of the same half-written
+// message.
+func (uc *WebmailUseCase) SaveDraft(ctx context.Context, input ComposeInput, replaceUID uint32) (uint32, error) {
 	account, err := uc.auth.FindByAddress(ctx, input.From)
 	if err != nil {
 		return 0, err
@@ -261,6 +265,18 @@ func (uc *WebmailUseCase) SaveDraft(ctx context.Context, input ComposeInput) (ui
 	if err != nil {
 		return 0, err
 	}
+
+	// Only after the replacement is committed, so a failure here leaves the
+	// older draft in place rather than losing both.
+	if replaceUID != 0 {
+		mailboxID, idErr := uc.mailboxID(ctx, account.EmailAddress)
+		if idErr == nil {
+			if err := uc.repo.Expunge(ctx, mailboxID, "Drafts", replaceUID); err != nil {
+				log.Printf("webmail: could not remove the superseded draft %d: %v", replaceUID, err)
+			}
+		}
+	}
+
 	if len(uids) == 0 {
 		return 0, nil
 	}

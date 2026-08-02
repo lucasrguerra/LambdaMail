@@ -1,8 +1,13 @@
 package usecase
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"lambdamail/protocols/internal/application/port"
 )
 
 // Every one of these reproduces a way the composer's mail was being mangled or
@@ -110,5 +115,98 @@ func TestHtmlToPlainTextIsReadable(t *testing.T) {
 	}
 	if strings.Contains(got, "<") || strings.Contains(got, "&amp;") {
 		t.Errorf("markup survived into the plain-text part:\n%s", got)
+	}
+}
+
+// --- draft storage -------------------------------------------------------
+
+type stubWebmailRepo struct {
+	mailboxID  string
+	expunged   []uint32
+	expungeErr error
+}
+
+func (s *stubWebmailRepo) FindMailboxIDByAddress(context.Context, string) (string, error) {
+	return s.mailboxID, nil
+}
+func (s *stubWebmailRepo) ListFolders(context.Context, string) ([]port.WebmailFolder, error) {
+	return nil, nil
+}
+func (s *stubWebmailRepo) ListMessages(context.Context, string, string, string, int, int) ([]port.WebmailMessage, error) {
+	return nil, nil
+}
+func (s *stubWebmailRepo) GetMessageBlob(context.Context, string, string, uint32) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+func (s *stubWebmailRepo) MarkSeen(context.Context, string, string, uint32, bool) error { return nil }
+func (s *stubWebmailRepo) Expunge(_ context.Context, _, _ string, uid uint32) error {
+	s.expunged = append(s.expunged, uid)
+	return s.expungeErr
+}
+
+type stubAuthRepo struct{ account *port.MailboxAuth }
+
+func (s *stubAuthRepo) FindByAddress(context.Context, string) (*port.MailboxAuth, error) {
+	return s.account, nil
+}
+
+// Autosaving must replace the previous draft, not pile up another copy of the
+// same half-written message every time the typing pauses.
+func TestDraftAutosaveReplacesThePreviousOne(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	messages := &recordingMessageRepository{}
+	blobs := &stubBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "d", SizeBytes: 5}}
+
+	uc := (&WebmailUseCase{
+		repo:      repo,
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}).WithLocalFiling(blobs, messages)
+
+	first, err := uc.SaveDraft(context.Background(), ComposeInput{
+		From: "me@example.test", Subject: "Half", HTML: "<p>writ</p>",
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	if len(repo.expunged) != 0 {
+		t.Errorf("the first save has nothing to replace, expunged %v", repo.expunged)
+	}
+
+	if _, err := uc.SaveDraft(context.Background(), ComposeInput{
+		From: "me@example.test", Subject: "Half", HTML: "<p>written</p>",
+	}, first); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+
+	if len(repo.expunged) != 1 || repo.expunged[0] != first {
+		t.Errorf("the superseded draft was not removed: expunged %v, want [%d]", repo.expunged, first)
+	}
+	if len(messages.persisted) != 2 {
+		t.Fatalf("want 2 writes, got %d", len(messages.persisted))
+	}
+	if messages.persisted[0].TargetFolderName != "Drafts" {
+		t.Errorf("draft filed in %q, want Drafts", messages.persisted[0].TargetFolderName)
+	}
+}
+
+// A draft is a half-written message by definition; it must save with no
+// recipients, where Send would rightly refuse.
+func TestDraftSavesWithoutRecipients(t *testing.T) {
+	mailboxID := uuid.New()
+	uc := (&WebmailUseCase{
+		repo:      &stubWebmailRepo{mailboxID: mailboxID.String()},
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}).WithLocalFiling(
+		&stubBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "d", SizeBytes: 5}},
+		&recordingMessageRepository{},
+	)
+
+	if _, err := uc.SaveDraft(context.Background(), ComposeInput{
+		From: "me@example.test", Subject: "no recipients yet",
+	}, 0); err != nil {
+		t.Fatalf("a draft with no recipients must still save: %v", err)
 	}
 }
