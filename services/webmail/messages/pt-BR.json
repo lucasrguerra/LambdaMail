@@ -1,0 +1,78 @@
+{
+  "common": {
+    "appName": "LambdaMail",
+    "userPortal": "Webmail",
+    "adminPortal": "Console de Gestão",
+    "loading": "Carregando...",
+    "save": "Salvar Alterações",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "confirm": "Confirmar",
+    "search": "Buscar",
+    "status": "Status",
+    "actions": "Ações",
+    "refresh": "Atualizar",
+    "logout": "Sair"
+  },
+  "auth": {
+    "userLoginTitle": "Entrar no Webmail",
+    "adminLoginTitle": "Entrar no Console Admin",
+    "emailLabel": "Endereço de E-mail",
+    "passwordLabel": "Senha",
+    "signInButton": "Entrar",
+    "totpCodeLabel": "Código do Autenticador (6 dígitos)",
+    "verifyCodeButton": "Verificar Código",
+    "invalidCredentials": "E-mail ou senha inválidos",
+    "mfaRequired": "Código de autenticação em dois fatores obrigatório"
+  },
+  "mail": {
+    "inbox": "Caixa de Entrada",
+    "sent": "Enviados",
+    "drafts": "Rascunhos",
+    "trash": "Lixeira",
+    "junk": "Spam",
+    "archive": "Arquivo",
+    "compose": "Escrever E-mail",
+    "noMessages": "Nenhuma mensagem nesta pasta",
+    "unreadCount": "{count, plural, =0 {Nenhuma mensagem não lida} one {# mensagem não lida} other {# mensagens não lidas}}",
+    "loadImages": "Carregar Imagens Remotas",
+    "reply": "Responder",
+    "forward": "Encaminhar",
+    "undoSend": "Desfazer Envio ({seconds}s restantes)"
+  },
+  "settings": {
+    "title": "Configurações da Conta",
+    "security": "Segurança e 2FA",
+    "appPasswords": "Senhas de Aplicativo",
+    "sessions": "Sessões Ativas",
+    "mfaStatus": "Status da Autenticação em Dois Fatores",
+    "mfaEnabled": "2FA está Ativo",
+    "mfaDisabled": "2FA está Desativado",
+    "enableMfa": "Ativar 2FA",
+    "generateAppPassword": "Gerar Senha de Aplicativo",
+    "recoveryCodesTitle": "Códigos de Recuperação",
+    "saveRecoveryCodes": "Guarde estes códigos de recuperação em local seguro. Eles não serão exibidos novamente."
+  },
+  "admin": {
+    "dashboardTitle": "Painel do Sistema",
+    "domainsTitle": "Domínios e DNS (13 Registros)",
+    "mailboxesTitle": "Caixas Postais e Contas",
+    "aliasesTitle": "Aliases e Roteamento",
+    "queueTitle": "Fila de Entrega de Saída",
+    "dmarcTitle": "Análise DMARC",
+    "securityTitle": "Segurança e Log de Auditoria",
+    "preflightTitle": "Diagnóstico Preflight",
+    "reconcileDns": "Reconciliar Registros DNS",
+    "dnsStatusVerified": "VERIFICADO",
+    "dnsStatusDrift": "DESVIO DETECTADO",
+    "dnsStatusPartial": "PARCIAL",
+    "retryJob": "Tentar Entrega Novamente",
+    "cancelJob": "Cancelar Trabalho",
+    "freezeDomain": "Congelar Destino"
+  },
+  "errors": {
+    "unauthorized": "Sessão expirada ou não autorizada",
+    "forbidden": "Acesso proibido para esta superfície de conta",
+    "serverError": "Ocorreu um erro interno no servidor"
+  }
+}

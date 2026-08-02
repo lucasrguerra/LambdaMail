@@ -1,0 +1,78 @@
+{
+  "common": {
+    "appName": "LambdaMail",
+    "userPortal": "Webmail",
+    "adminPortal": "Consola de Gestión",
+    "loading": "Cargando...",
+    "save": "Guardar Cambios",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "confirm": "Confirmar",
+    "search": "Buscar",
+    "status": "Estado",
+    "actions": "Acciones",
+    "refresh": "Actualizar",
+    "logout": "Cerrar Sesión"
+  },
+  "auth": {
+    "userLoginTitle": "Iniciar Sesión en Webmail",
+    "adminLoginTitle": "Iniciar Sesión en Consola Admin",
+    "emailLabel": "Dirección de Correo",
+    "passwordLabel": "Contraseña",
+    "signInButton": "Iniciar Sesión",
+    "totpCodeLabel": "Código del Autenticador (6 dígitos)",
+    "verifyCodeButton": "Verificar Código",
+    "invalidCredentials": "Correo o contraseña no válidos",
+    "mfaRequired": "Código de autenticación de dos factores requerido"
+  },
+  "mail": {
+    "inbox": "Bandeja de Entrada",
+    "sent": "Enviados",
+    "drafts": "Borradores",
+    "trash": "Papelera",
+    "junk": "Spam",
+    "archive": "Archivo",
+    "compose": "Redactar Correo",
+    "noMessages": "No hay mensajes en esta carpeta",
+    "unreadCount": "{count, plural, =0 {Sin mensajes no leídos} one {# mensaje no leído} other {# mensajes no leídos}}",
+    "loadImages": "Cargar Imágenes Remotas",
+    "reply": "Responder",
+    "forward": "Reenviar",
+    "undoSend": "Deshacer Envío ({seconds}s restantes)"
+  },
+  "settings": {
+    "title": "Configuración de la Cuenta",
+    "security": "Seguridad y 2FA",
+    "appPasswords": "Contraseñas de Aplicación",
+    "sessions": "Sesiones Activas",
+    "mfaStatus": "Estado de Autenticación de Dos Factores",
+    "mfaEnabled": "2FA está Activo",
+    "mfaDisabled": "2FA está Desactivado",
+    "enableMfa": "Activar 2FA",
+    "generateAppPassword": "Generar Contraseña de Aplicación",
+    "recoveryCodesTitle": "Códigos de Recuperación",
+    "saveRecoveryCodes": "Guarde estos códigos de recuperación en un lugar seguro. No se volverán a mostrar."
+  },
+  "admin": {
+    "dashboardTitle": "Panel del Sistema",
+    "domainsTitle": "Dominios y DNS (13 Registros)",
+    "mailboxesTitle": "Buzones y Cuentas",
+    "aliasesTitle": "Alias y Enrutamiento",
+    "queueTitle": "Cola de Entrega de Salida",
+    "dmarcTitle": "Análisis DMARC",
+    "securityTitle": "Seguridad y Registro de Auditoría",
+    "preflightTitle": "Diagnóstico Preflight",
+    "reconcileDns": "Reconciliar Registros DNS",
+    "dnsStatusVerified": "VERIFICADO",
+    "dnsStatusDrift": "DESVÍO DETECTADO",
+    "dnsStatusPartial": "PARCIAL",
+    "retryJob": "Reintentar Entrega",
+    "cancelJob": "Cancelar Trabajo",
+    "freezeDomain": "Congelar Destino"
+  },
+  "errors": {
+    "unauthorized": "Sesión expirada o no autorizada",
+    "forbidden": "Acceso prohibido para esta superficie de cuenta",
+    "serverError": "Ocurrió un error interno en el servidor"
+  }
+}
