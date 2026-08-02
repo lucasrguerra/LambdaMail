@@ -165,9 +165,12 @@ func run(cfg config) {
 	// The webmail reads and sends through this service because the folder,
 	// UID, flag and blob logic already lives here; duplicating it in another
 	// service would mean two implementations of the same IMAP semantics.
+	// WithLocalFiling is what puts a copy of every sent message in Sent and
+	// lets drafts be stored at all. Without it the composer's mail left the
+	// building with no trace in the sender's own mailbox.
 	webmailUC := usecase.NewWebmailUseCase(
 		postgres.NewWebmailRepository(pool), blobReader, submissionUC, authRepo, cfg.PrimaryMailHost,
-	)
+	).WithLocalFiling(blobs, messages)
 
 	router := httppresentation.NewRouter(usecase.NewIngestReportsUseCase(reportRepo), func() error { return pool.Ping(ctx) })
 	if cfg.JwtSecret == "" {

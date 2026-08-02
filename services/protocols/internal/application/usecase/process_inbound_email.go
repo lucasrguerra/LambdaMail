@@ -40,6 +40,16 @@ type ProcessInboundEmailInput struct {
 	// produce a "none" verdict.
 	ClientIP   net.IP
 	HeloDomain string
+	// SystemGenerated marks a message this server produced itself - a delivery
+	// status notification, for instance - rather than one accepted from a peer.
+	//
+	// Such a message must not be spam-scanned. It is injected without a client
+	// IP, so SPF can only come back "none", and its bounce-shaped content then
+	// scores highly: the effect was that a "your mail to X was delayed" warning
+	// landed in the sender's own Junk folder, which is precisely where the one
+	// notification they need to read must never go. It also has no envelope
+	// sender to greylist and nothing to quarantine.
+	SystemGenerated bool
 }
 
 // ProcessInboundEmailUseCase implements the inbound half of PLAN.md section
@@ -196,7 +206,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		}
 	}
 
-	if uc.scanner != nil {
+	if uc.scanner != nil && !input.SystemGenerated {
 		recipientAddr := ""
 		if len(input.RecipientAddresses) > 0 {
 			recipientAddr = input.RecipientAddresses[0]

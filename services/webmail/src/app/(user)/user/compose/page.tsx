@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState, use } from "react";
+import React, { useCallback, useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
 import {
   Send,
@@ -20,6 +20,14 @@ import {
 import { useTranslations } from "../../../../i18n/provider";
 import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
 import { Button } from "../../../../components/ui/Button";
+
+/** Splits a comma or semicolon separated field, dropping empty entries. */
+function splitAddresses(value: string): string[] {
+  return value
+    .split(/[,;]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
 
 interface AttachedFile {
   id: string;
@@ -45,6 +53,7 @@ export default function ComposePage({
   const [sending, setSending] = useState(false);
   const [undoSeconds, setUndoSeconds] = useState<number | null>(null);
   const [draftStatus, setDraftStatus] = useState<string>("");
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -55,13 +64,39 @@ export default function ComposePage({
     }
   }, []);
 
+  // Saves the draft for real. This used to be a setTimeout that set the words
+  // "draft saved automatically" and nothing else - no request, no storage - so
+  // closing the tab lost the message while the screen had just said otherwise.
+  const saveDraft = useCallback(async () => {
+    const html = editorRef.current?.innerHTML ?? "";
+    if (!to && !subject && !html.trim()) return;
+    setDraftStatus(t("mail.draftSaving"));
+    try {
+      const res = await fetch("/api/v1/mail/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: splitAddresses(to),
+          cc: splitAddresses(cc),
+          bcc: splitAddresses(bcc),
+          subject,
+          html,
+        }),
+      });
+      setDraftStatus(res.ok ? t("mail.draftSaved") : t("mail.draftSaveFailed"));
+    } catch {
+      setDraftStatus(t("mail.draftSaveFailed"));
+    }
+  }, [to, cc, bcc, subject, t]);
+
+  // Debounced so a draft is written after a pause in typing rather than on
+  // every keystroke. Skipped once the message is on its way out.
   useEffect(() => {
+    if (sending) return;
     if (!to && !subject) return;
-    const timer = setTimeout(() => {
-      setDraftStatus(t("mail.draftSaved"));
-    }, 2500);
+    const timer = setTimeout(() => void saveDraft(), 2500);
     return () => clearTimeout(timer);
-  }, [to, subject]);
+  }, [to, subject, cc, bcc, sending, saveDraft]);
 
   const executeFormat = (command: string, value: string | undefined = undefined) => {
     document.execCommand(command, false, value);
@@ -104,20 +139,28 @@ export default function ComposePage({
 
   const sendActualMessage = async (htmlBody: string) => {
     try {
-      await fetch("/api/v1/mail/send", {
+      const res = await fetch("/api/v1/mail/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: to.split(",").map((s) => s.trim()),
-          cc: cc ? cc.split(",").map((s) => s.trim()) : [],
-          bcc: bcc ? bcc.split(",").map((s) => s.trim()) : [],
+          to: splitAddresses(to),
+          cc: splitAddresses(cc),
+          bcc: splitAddresses(bcc),
           subject,
           html: htmlBody,
-          attachments: attachments.map((a) => a.name),
         }),
       });
+      if (!res.ok) {
+        // Reporting success on a refused send is how a message silently
+        // disappears: the composer used to navigate away regardless.
+        const data = await res.json().catch(() => ({}));
+        setSendError(data.message ?? t("errors.serverError"));
+        setSending(false);
+        return;
+      }
       window.location.href = "/user/mail/sent";
     } catch {
+      setSendError(t("errors.serverError"));
       setSending(false);
     }
   };
@@ -142,6 +185,12 @@ export default function ComposePage({
             </span>
           )}
         </div>
+
+        {sendError && (
+          <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+            {sendError}
+          </div>
+        )}
 
         {undoSeconds !== null && (
           <div className="p-4 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-between text-indigo-300 text-xs">

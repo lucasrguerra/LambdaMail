@@ -58,7 +58,7 @@ func TestBuildDsnReport_UsesTheConfiguredMailHost(t *testing.T) {
 func TestBuildDsnReport_MarksItselfAutomatic(t *testing.T) {
 	payload, _ := BuildDsnReport(DsnActionDelayed, "mail.example.test", "sender@example.test", "recipient@remote.test", "job-1", "451 deferred")
 
-	if !strings.Contains(string(payload), "Auto-Submitted: auto-replied") {
+	if !strings.Contains(string(payload), "Auto-Submitted: auto-generated") {
 		t.Errorf("the report is not marked as automatic: %s", payload)
 	}
 }

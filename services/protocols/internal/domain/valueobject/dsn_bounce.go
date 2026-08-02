@@ -58,7 +58,12 @@ func BuildDsnReport(action DsnAction, reportingMTA string, envelopeFrom string, 
 	// RFC 3834 section 5: an automatic notification has to say so, or a
 	// vacation responder on the other side answers it and the two bounce back
 	// and forth forever.
-	sb.WriteString("Auto-Submitted: auto-replied\r\n")
+	//
+	// "auto-generated", not "auto-replied": the latter is for a message sent in
+	// response to a specific message (a vacation notice), while a DSN reports
+	// on a delivery attempt. Spam filters read this header, and the wrong value
+	// on a bounce-shaped message counts against it.
+	sb.WriteString("Auto-Submitted: auto-generated\r\n")
 	sb.WriteString(fmt.Sprintf("Content-Type: multipart/report; report-type=delivery-status; boundary=\"%s\"\r\n\r\n", boundary))
 
 	// Part 1: Human-readable narrative
