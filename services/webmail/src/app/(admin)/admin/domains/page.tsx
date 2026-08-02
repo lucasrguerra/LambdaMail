@@ -44,7 +44,7 @@ export default function AdminDomainsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white mb-1">Domain & 13-DNS Records Automation</h1>
-          <p className="text-xs text-slate-400">Live DNS diff reconciliation against Cloudflare API (PLAN.md §16 F3/F4 requirement).</p>
+          <p className="text-xs text-slate-400">Live DNS diff reconciliation against Cloudflare API (PLAN.md Section 16 F3/F4 requirement).</p>
         </div>
 
         <button

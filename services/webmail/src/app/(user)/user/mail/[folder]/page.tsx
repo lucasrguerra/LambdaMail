@@ -22,7 +22,7 @@ const MOCK_MESSAGES: SampleMessage[] = [
     id: "msg-1",
     sender: "Security Operations",
     senderEmail: "security@lambdamail.org",
-    subject: "Welcome to LambdaMail v2.0 — Account Provisioned",
+    subject: "Welcome to LambdaMail v2.0 - Account Provisioned",
     snippet: "Your LambdaMail account is active with strict SPF, DKIM, and DMARC verification.",
     date: "10:42 AM",
     unread: true,

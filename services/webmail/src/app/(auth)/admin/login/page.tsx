@@ -91,7 +91,7 @@ export default function AdminLoginPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
+                  placeholder="************"
                   required
                   className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
                 />
@@ -126,7 +126,7 @@ export default function AdminLoginPage() {
 
         <div className="mt-6 pt-4 border-t border-slate-800 text-center">
           <Link href="/" className="text-xs text-slate-400 hover:text-slate-200 transition-colors">
-            &larr; Back to Surface Selector
+            Back to Surface Selector
           </Link>
         </div>
       </div>

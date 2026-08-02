@@ -36,7 +36,7 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
 
   const sessionPayload = token ? verifyJwt(token) : null;
 
-  // STRICT SURFACE ISOLATION (PLAN.md ADR-008 & §14.1)
+  // STRICT SURFACE ISOLATION (PLAN.md ADR-008 & Section 14.1)
   // Token presented to /api/v1/admin/* MUST have aud: "lambdamail:admin"
   if (url.startsWith("/api/v1/admin/")) {
     if (!isSurfaceAuthorized(sessionPayload, "admin")) {
