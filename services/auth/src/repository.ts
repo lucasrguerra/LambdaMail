@@ -318,22 +318,39 @@ export async function dashboardStats(): Promise<Record<string, unknown>> {
   };
 }
 
-export async function listDomains(): Promise<unknown[]> {
+export interface AdminScope {
+  role: string;
+  domainId: string;
+}
+
+/** SUPER_ADMIN sees everything; a DOMAIN_ADMIN is confined to its own domain.
+ * PLAN.md section 14.3 requires this at the query level rather than in the UI,
+ * so calling the API directly does not widen the view. */
+function scopeClause(scope: AdminScope, column: string): { sql: string; params: unknown[] } {
+  if (scope.role === "SUPER_ADMIN") return { sql: "TRUE", params: [] };
+  return { sql: `${column} = $1`, params: [scope.domainId] };
+}
+
+export async function listDomains(scope: AdminScope): Promise<unknown[]> {
+  const { sql, params } = scopeClause(scope, "d.id");
   return query(
-    `SELECT id, name, dns_status, dmarc_policy, mta_sts_mode, dane_enabled,
-            is_active, dns_last_checked_at,
+    `SELECT d.id, d.name, d.dns_status, d.dmarc_policy, d.mta_sts_mode, d.dane_enabled,
+            d.is_active, d.dns_last_checked_at,
             (SELECT count(*) FROM mailboxes m WHERE m.domain_id = d.id)::int AS mailbox_count
-       FROM domains d ORDER BY name`,
+       FROM domains d WHERE ${sql} ORDER BY d.name`,
+    params,
   );
 }
 
-export async function listMailboxes(): Promise<unknown[]> {
+export async function listMailboxes(scope: AdminScope): Promise<unknown[]> {
+  const { sql, params } = scopeClause(scope, "m.domain_id");
   return query(
     `SELECT m.id, m.email_address, m.role, m.is_active, m.quota_bytes, m.used_bytes,
             m.locale, m.locked_until, d.name AS domain_name,
             EXISTS (SELECT 1 FROM mfa_totp t WHERE t.mailbox_id = m.id AND t.status = 'CONFIRMED') AS mfa_enrolled
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id
-      ORDER BY m.email_address LIMIT 200`,
+      WHERE ${sql} ORDER BY m.email_address LIMIT 200`,
+    params,
   );
 }
 
@@ -392,4 +409,155 @@ export async function preflightSummary(): Promise<Record<string, unknown>> {
     checks,
     note: "Socket-level checks (port 25 egress, PTR, RBL) are reported by the protocols service preflight",
   };
+}
+
+// -------------------------------------------------- account self-service
+
+export interface SessionSummary {
+  id: string;
+  surface: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: Date;
+  expires_at: Date;
+  current: boolean;
+}
+
+/** Lists the account's live sessions so a user can spot one they do not
+ * recognise (PLAN.md section 14.2). */
+export async function listSessions(mailboxId: string, currentTokenHash: string): Promise<SessionSummary[]> {
+  const rows = await query<Omit<SessionSummary, "current"> & { refresh_token_hash: string }>(
+    `SELECT id, surface, ip_address::text AS ip_address, user_agent, created_at, expires_at, refresh_token_hash
+       FROM web_sessions
+      WHERE mailbox_id = $1 AND revoked_at IS NULL AND expires_at > NOW()
+      ORDER BY created_at DESC`,
+    [mailboxId],
+  );
+  return rows.map(({ refresh_token_hash, ...rest }) => ({
+    ...rest,
+    current: refresh_token_hash === currentTokenHash,
+  }));
+}
+
+export async function revokeSession(mailboxId: string, sessionId: string): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    `UPDATE web_sessions SET revoked_at = NOW()
+      WHERE id = $1 AND mailbox_id = $2 AND revoked_at IS NULL RETURNING id`,
+    [sessionId, mailboxId],
+  );
+  return rows.length === 1;
+}
+
+/** Revokes every session except the caller's, which is what "sign out
+ * everywhere else" has to mean for it to be useful after a password leak. */
+export async function revokeOtherSessions(mailboxId: string, currentTokenHash: string): Promise<number> {
+  const rows = await query<{ id: string }>(
+    `UPDATE web_sessions SET revoked_at = NOW()
+      WHERE mailbox_id = $1 AND revoked_at IS NULL AND refresh_token_hash <> $2 RETURNING id`,
+    [mailboxId, currentTokenHash],
+  );
+  return rows.length;
+}
+
+export async function isSessionRevoked(tokenHash: string): Promise<boolean> {
+  const row = await queryOne<{ revoked: boolean }>(
+    `SELECT (revoked_at IS NOT NULL) AS revoked FROM web_sessions WHERE refresh_token_hash = $1`,
+    [tokenHash],
+  );
+  // An unknown hash is treated as live: tokens issued before this table was
+  // populated must not all stop working at once.
+  return row?.revoked ?? false;
+}
+
+/**
+ * Changes the password after proving the current one, then revokes every other
+ * session: a password change that leaves the attacker's session alive has not
+ * actually locked anyone out.
+ */
+export async function changePassword(
+  mailboxId: string,
+  currentPassword: string,
+  newPassword: string,
+  currentTokenHash: string,
+): Promise<"OK" | "WRONG_PASSWORD" | "NOT_FOUND"> {
+  const row = await queryOne<{ password_hash: string }>(
+    `SELECT password_hash FROM mailboxes WHERE id = $1`,
+    [mailboxId],
+  );
+  if (!row) return "NOT_FOUND";
+  if (!(await verifyPassword(currentPassword, row.password_hash))) return "WRONG_PASSWORD";
+
+  await query(
+    `UPDATE mailboxes SET password_hash = $2, password_updated_at = NOW(), updated_at = NOW() WHERE id = $1`,
+    [mailboxId, await hashPassword(newPassword)],
+  );
+  await revokeOtherSessions(mailboxId, currentTokenHash);
+  return "OK";
+}
+
+// ------------------------------------------------------------- audit log
+
+/** Records an administrative action. PLAN.md section 14.3 requires every
+ * mutation under /admin to leave a trace with actor, IP and what changed. */
+export async function recordAudit(
+  actorId: string | null,
+  actorIp: string | null,
+  action: string,
+  targetType: string | null,
+  targetId: string | null,
+  metadata: unknown,
+): Promise<void> {
+  await query(
+    `INSERT INTO audit_log (actor_id, actor_ip, action, target_type, target_id, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [actorId, actorIp, action, targetType, targetId, JSON.stringify(metadata ?? {})],
+  );
+}
+
+export async function listAudit(limit = 100): Promise<unknown[]> {
+  return query(
+    `SELECT a.id, a.action, a.target_type, a.target_id, a.actor_ip::text AS actor_ip,
+            a.metadata, a.created_at, m.email_address AS actor_email
+       FROM audit_log a LEFT JOIN mailboxes m ON m.id = a.actor_id
+      ORDER BY a.id DESC LIMIT $1`,
+    [limit],
+  );
+}
+
+/** Enables or disables a mailbox, refusing anything outside the caller's scope. */
+export async function setMailboxActive(scope: AdminScope, mailboxId: string, isActive: boolean): Promise<boolean> {
+  const rows =
+    scope.role === "SUPER_ADMIN"
+      ? await query<{ id: string }>(
+          `UPDATE mailboxes SET is_active = $2, updated_at = NOW() WHERE id = $1 RETURNING id`,
+          [mailboxId, isActive],
+        )
+      : await query<{ id: string }>(
+          `UPDATE mailboxes SET is_active = $2, updated_at = NOW()
+            WHERE id = $1 AND domain_id = $3 RETURNING id`,
+          [mailboxId, isActive, scope.domainId],
+        );
+  return rows.length === 1;
+}
+
+/**
+ * Retries or cancels one queued delivery.
+ *
+ * Retry only moves a job that is not already finished, and clears the next
+ * attempt time so the worker picks it up on its next pass rather than waiting
+ * out the backoff the operator is trying to skip.
+ */
+export async function updateQueueJob(scope: AdminScope, jobId: string, action: "retry" | "cancel"): Promise<boolean> {
+  const scoped = scope.role === "SUPER_ADMIN" ? "TRUE" : "o.mailbox_id IN (SELECT id FROM mailboxes WHERE domain_id = $2)";
+  const params: unknown[] = scope.role === "SUPER_ADMIN" ? [jobId] : [jobId, scope.domainId];
+
+  const sql =
+    action === "retry"
+      ? `UPDATE outbound_jobs o SET status = 'QUEUED', next_attempt_at = NOW(), last_error = NULL
+          WHERE o.id = $1 AND o.status IN ('DEFERRED','BOUNCED') AND ${scoped} RETURNING o.id`
+      : `UPDATE outbound_jobs o SET status = 'CANCELLED'
+          WHERE o.id = $1 AND o.status IN ('QUEUED','DEFERRED') AND ${scoped} RETURNING o.id`;
+
+  const rows = await query<{ id: string }>(sql, params);
+  return rows.length === 1;
 }

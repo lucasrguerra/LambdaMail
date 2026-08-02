@@ -75,6 +75,18 @@ async function post(path: string, body: unknown, token?: string) {
   return { status: res.status, body: await res.json().catch(() => ({})) as Record<string, never> };
 }
 
+async function put(path: string, body: unknown, token?: string) {
+  const res = await fetch(`${base}${path}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => ({})) as Record<string, never> };
+}
+
 async function get(path: string, token?: string) {
   const res = await fetch(`${base}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -256,6 +268,72 @@ describeDb("auth API against a real database", () => {
     const res = await post("/api/v1/user/mfa/totp/enroll", {});
     expect(res.status).toBe(401);
   });
+
+  // A JWT carries its own validity, so revoking a session must be enforced on
+  // every request or "sign out this device" would change nothing.
+  it("stops accepting a token once its session is revoked", async () => {
+    const email = `revoke@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash)
+       VALUES ($1, 'revoke', $2, $3)`,
+      [DOMAIN_ID, email, await hashPassword(PASSWORD)],
+    );
+
+    const login = await post("/api/v1/auth/user/login", { email, password: PASSWORD });
+    const token = login.body.token as unknown as string;
+
+    const before = await get("/api/v1/user/me", token);
+    expect(before.status).toBe(200);
+
+    const sessions = await get("/api/v1/user/sessions", token);
+    expect(sessions.status).toBe(200);
+    const list = sessions.body as unknown as Array<{ id: string; current: boolean }>;
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.some((s) => s.current)).toBe(true);
+
+    const revoked = await fetch(`${base}/api/v1/user/sessions/${list[0].id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(revoked.status).toBe(200);
+
+    const after = await get("/api/v1/user/me", token);
+    expect(after.status).toBe(401);
+    expect(after.body.error).toBe("SESSION_REVOKED");
+  }, 60000);
+
+  it("changes the password only with the current one, and revokes other sessions", async () => {
+    const email = `pw@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash)
+       VALUES ($1, 'pw', $2, $3)`,
+      [DOMAIN_ID, email, await hashPassword(PASSWORD)],
+    );
+
+    const first = await post("/api/v1/auth/user/login", { email, password: PASSWORD });
+    const second = await post("/api/v1/auth/user/login", { email, password: PASSWORD });
+
+    const wrong = await put("/api/v1/user/password",
+      { current_password: "not-it", new_password: "a-brand-new-password-1" }, first.body.token);
+    expect(wrong.status).toBe(401);
+
+    const tooShort = await put("/api/v1/user/password",
+      { current_password: PASSWORD, new_password: "short" }, first.body.token);
+    expect(tooShort.status).toBe(400);
+
+    const ok = await put("/api/v1/user/password",
+      { current_password: PASSWORD, new_password: "a-brand-new-password-1" }, first.body.token);
+    expect(ok.status).toBe(200);
+
+    // The other session is gone; the one that made the change still works.
+    const other = await get("/api/v1/user/me", second.body.token);
+    expect(other.status).toBe(401);
+    const mine = await get("/api/v1/user/me", first.body.token);
+    expect(mine.status).toBe(200);
+
+    const relogin = await post("/api/v1/auth/user/login", { email, password: "a-brand-new-password-1" });
+    expect(relogin.status).toBe(200);
+  }, 90000);
 });
 
 // Guards that need no database, so they still run in a bare checkout.

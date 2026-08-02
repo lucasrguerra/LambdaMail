@@ -98,6 +98,15 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
       return sendJson(res, 401, { error: "UNAUTHORIZED", message: "User session required" });
     }
 
+    // A JWT carries its own validity, so revoking a session in the database
+    // would otherwise change nothing until it expired. Checking here is what
+    // makes "sign out this device" mean anything.
+    if (session && (url.startsWith("/api/v1/admin/") || url.startsWith("/api/v1/user/"))) {
+      if (await repo.isSessionRevoked(crypto.createHash("sha256").update(token).digest("hex"))) {
+        return sendJson(res, 401, { error: "SESSION_REVOKED", message: "This session has been signed out" });
+      }
+    }
+
     if (url === "/api/v1/auth/user/login" && method === "POST") return login(req, res, "user");
     if (url === "/api/v1/auth/admin/login" && method === "POST") return login(req, res, "admin");
     if (url === "/api/v1/auth/mfa/verify" && method === "POST") return mfaVerify(req, res);
@@ -113,9 +122,27 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
       return appPasswordDelete(res, session!, url.substring("/api/v1/user/app-passwords/".length));
     }
 
+    if (url === "/api/v1/user/sessions" && method === "GET") return listSessions(req, res, session!);
+    if (url === "/api/v1/user/sessions/others" && method === "DELETE") return revokeOthers(req, res, session!);
+    if (url.startsWith("/api/v1/user/sessions/") && method === "DELETE") {
+      return revokeSession(res, session!, url.substring("/api/v1/user/sessions/".length));
+    }
+    if (url === "/api/v1/user/password" && method === "PUT") return changePassword(req, res, session!);
+
+    if (url === "/api/v1/admin/audit" && method === "GET") return adminAudit(res);
+    if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/active") && method === "PUT") {
+      const id = url.slice("/api/v1/admin/mailboxes/".length, -"/active".length);
+      return adminSetMailboxActive(req, res, session!, id);
+    }
+    if (url.startsWith("/api/v1/admin/queue/") && url.endsWith("/retry") && method === "POST") {
+      return adminQueueAction(req, res, session!, url.slice("/api/v1/admin/queue/".length, -"/retry".length), "retry");
+    }
+    if (url.startsWith("/api/v1/admin/queue/") && url.endsWith("/cancel") && method === "POST") {
+      return adminQueueAction(req, res, session!, url.slice("/api/v1/admin/queue/".length, -"/cancel".length), "cancel");
+    }
     if (url === "/api/v1/admin/dashboard" && method === "GET") return adminDashboard(res);
-    if (url === "/api/v1/admin/domains" && method === "GET") return adminDomains(res);
-    if (url === "/api/v1/admin/mailboxes" && method === "GET") return adminMailboxes(res);
+    if (url === "/api/v1/admin/domains" && method === "GET") return adminDomains(res, session!);
+    if (url === "/api/v1/admin/mailboxes" && method === "GET") return adminMailboxes(res, session!);
     if (url === "/api/v1/admin/dmarc" && method === "GET") return adminDmarc(res);
     if (url === "/api/v1/admin/queue" && method === "GET") return adminQueue(res);
     if (url === "/api/v1/admin/preflight" && method === "GET") return adminPreflight(res);
@@ -350,19 +377,100 @@ async function appPasswordDelete(res: ServerResponse, session: SessionTokenPaylo
   sendJson(res, 200, { ok: true });
 }
 
+// The session token is the credential, so its hash identifies the row in
+// web_sessions that belongs to this caller.
+function tokenHash(req: IncomingMessage, url: string): string {
+  return crypto.createHash("sha256").update(extractToken(req, url)).digest("hex");
+}
+
+async function listSessions(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.listSessions(session.sub, tokenHash(req, "/api/v1/user/")));
+}
+
+async function revokeSession(res: ServerResponse, session: SessionTokenPayload, id: string): Promise<void> {
+  if (!(await repo.revokeSession(session.sub, id))) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "Session not found" });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+async function revokeOthers(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const revoked = await repo.revokeOtherSessions(session.sub, tokenHash(req, "/api/v1/user/"));
+  sendJson(res, 200, { revoked });
+}
+
+async function changePassword(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const current = typeof body?.current_password === "string" ? body.current_password : "";
+  const next = typeof body?.new_password === "string" ? body.new_password : "";
+
+  // Twelve characters is the floor; length beats composition rules, which push
+  // people towards predictable substitutions.
+  if (next.length < 12) {
+    return sendJson(res, 400, { error: "WEAK_PASSWORD", message: "The new password must be at least 12 characters" });
+  }
+
+  const outcome = await repo.changePassword(session.sub, current, next, tokenHash(req, "/api/v1/user/"));
+  if (outcome === "WRONG_PASSWORD") {
+    return sendJson(res, 401, { error: "INVALID_CREDENTIALS", message: "Current password is incorrect" });
+  }
+  if (outcome === "NOT_FOUND") {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "Mailbox not found" });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
 // ------------------------------------------------------------- admin area
+
+async function adminAudit(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.listAudit());
+}
+
+async function adminSetMailboxActive(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  const isActive = body?.is_active === true;
+
+  const updated = await repo.setMailboxActive(scopeOf(session), id, isActive);
+  if (!updated) {
+    // Out of scope and non-existent give the same answer, so a DOMAIN_ADMIN
+    // cannot probe for mailboxes in domains it does not administer.
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "Mailbox not found" });
+  }
+
+  await repo.recordAudit(session.sub, clientIp(req), isActive ? "mailbox.enable" : "mailbox.disable",
+    "mailbox", id, { is_active: isActive });
+  sendJson(res, 200, { ok: true });
+}
+
+async function adminQueueAction(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string, action: "retry" | "cancel",
+): Promise<void> {
+  const updated = await repo.updateQueueJob(scopeOf(session), id, action);
+  if (!updated) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "Queue job not found" });
+  }
+  await repo.recordAudit(session.sub, clientIp(req), `queue.${action}`, "outbound_job", id, {});
+  sendJson(res, 200, { ok: true });
+}
 
 async function adminDashboard(res: ServerResponse): Promise<void> {
   const stats = await repo.dashboardStats();
   sendJson(res, 200, stats);
 }
 
-async function adminDomains(res: ServerResponse): Promise<void> {
-  sendJson(res, 200, await repo.listDomains());
+async function adminDomains(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.listDomains(scopeOf(session)));
 }
 
-async function adminMailboxes(res: ServerResponse): Promise<void> {
-  sendJson(res, 200, await repo.listMailboxes());
+async function adminMailboxes(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.listMailboxes(scopeOf(session)));
+}
+
+/** The scope travels from the verified session, never from the request. */
+function scopeOf(session: SessionTokenPayload): repo.AdminScope {
+  return { role: session.role, domainId: session.domainId };
 }
 
 async function adminDmarc(res: ServerResponse): Promise<void> {
