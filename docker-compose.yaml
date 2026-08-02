@@ -300,9 +300,18 @@ services:
       protocols: { condition: service_healthy }
     labels:
       - traefik.enable=true
-      # With the service on two networks Traefik may route via the wrong one
-      # and return 504. This pins it to the proxy network.
-      - traefik.docker.network=${COOLIFY_PROXY_NETWORK:-coolify}
+      # Pins Traefik to the proxy network. The container sits on three -
+      # backend, proxy, and the per-app network Coolify adds - and with no
+      # usable value here Traefik picks one arbitrarily. When it picks
+      # "backend" (internal: true, no route to the proxy) every request ends in
+      # a 504 while the container itself is perfectly healthy.
+      #
+      # The name is written out rather than taken from ${COOLIFY_PROXY_NETWORK}
+      # because Coolify escapes $ to $$ when it rewrites labels: the variable
+      # reached Traefik as the literal text "${COOLIFY_PROXY_NETWORK:-coolify}",
+      # which matches no network, so this label silently did nothing. Change it
+      # here if your proxy network is not called "coolify".
+      - traefik.docker.network=coolify
       # Webmail (/user/*)
       - traefik.http.routers.lm-web.rule=Host(`${WEBMAIL_HOST}`)
       - traefik.http.routers.lm-web.tls.certresolver=letsencrypt
