@@ -26,6 +26,9 @@ type Router struct {
 	// secret is configured, and the routes then answer 503 rather than
 	// pretending to be open.
 	mail *mailAPI
+	// events pushes new mail to the browser. Like mail, it stays nil without a
+	// session secret.
+	events *EventHub
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued
@@ -67,6 +70,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/.well-known/autoconfig/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/autodiscover/autodiscover.xml", r.handleOutlookAutodiscover)
+	r.mux.HandleFunc("/api/v1/events", r.handleEvents)
 	r.mux.HandleFunc("/api/v1/mail/folders", r.handleMailFolders)
 	r.mux.HandleFunc("/api/v1/mail/messages", r.handleMailMessages)
 	r.mux.HandleFunc("/api/v1/mail/message/", r.handleMailMessage)

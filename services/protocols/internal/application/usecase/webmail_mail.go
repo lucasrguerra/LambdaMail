@@ -46,6 +46,12 @@ func NewWebmailUseCase(
 	return &WebmailUseCase{repo: repo, blobs: blobs, submission: submission, auth: auth, localHost: localHost}
 }
 
+// MailboxIDFor resolves a session's address to its mailbox, which the event
+// stream needs so it can filter pushes per account.
+func (uc *WebmailUseCase) MailboxIDFor(ctx context.Context, address string) (string, error) {
+	return uc.mailboxID(ctx, address)
+}
+
 func (uc *WebmailUseCase) mailboxID(ctx context.Context, address string) (string, error) {
 	id, err := uc.repo.FindMailboxIDByAddress(ctx, address)
 	if err != nil || id == "" {

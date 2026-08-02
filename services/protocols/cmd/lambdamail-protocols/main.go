@@ -174,6 +174,16 @@ func run(cfg config) {
 		log.Printf("JWT_SECRET is not set: the webmail mail API stays disabled")
 	}
 	router.SetMailAPI(webmailUC, cfg.JwtSecret)
+
+	// Real-time updates: the outbox relay reads the events delivery wrote in
+	// its own transaction and hands them to the hub, which pushes them to the
+	// browser (PLAN.md sections 9.4 and 14.2).
+	if cfg.JwtSecret != "" {
+		hub := httppresentation.NewEventHub(httppresentation.NewWebSessionVerifier(cfg.JwtSecret), webmailUC)
+		router.SetEventHub(hub)
+		go usecase.NewOutboxRelay(postgres.NewOutboxRepository(pool), hub).Run(ctx)
+		log.Printf("lambdamail-protocols real-time event stream enabled on /api/v1/events")
+	}
 	router.SetDegradedCheck(certDegraded)
 	applyMtaStsMode(router, cfg)
 
