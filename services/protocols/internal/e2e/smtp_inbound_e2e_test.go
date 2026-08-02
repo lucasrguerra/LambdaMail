@@ -270,12 +270,17 @@ func repoRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The marker is the migrations directory, which is what every caller is
+	// ultimately after. It used to be PLAN.md - a file .gitignore excludes on
+	// purpose ("never published with the code"), so it does not exist in a
+	// fresh checkout and this helper could never succeed in CI. That failure
+	// took the entire E2E suite down on every run.
 	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "PLAN.md")); err == nil {
+		if info, err := os.Stat(filepath.Join(dir, "migrations")); err == nil && info.IsDir() {
 			return dir
 		}
 		dir = filepath.Dir(dir)
 	}
-	t.Fatal("could not locate repository root (PLAN.md)")
+	t.Fatal("could not locate repository root (no migrations directory in any parent)")
 	return ""
 }
