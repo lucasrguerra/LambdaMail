@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "../../../../i18n/provider";
 
 interface Mailbox {
@@ -20,13 +20,30 @@ interface Alias {
   domain: string;
 }
 
-const INITIAL_MAILBOXES: Mailbox[] = [
+interface ApiMailbox {
+  id: string;
+  email_address: string;
+  role: string;
+  used_bytes: number;
+  quota_bytes: number;
+  mfa_enrolled: boolean;
+  is_active: boolean;
+}
+
+interface ApiAlias {
+  id: string;
+  source_address: string;
+  destination_addresses: string[];
+  domain_name: string;
+}
+
+const UNUSED_INITIAL_MAILBOXES: Mailbox[] = [
   { id: "mb-1", email: "admin@example.com", role: "SUPER_ADMIN", storageUsedMb: 120, quotaMb: 5000, mfaEnabled: true, locked: false },
   { id: "mb-2", email: "user@example.com", role: "USER", storageUsedMb: 450, quotaMb: 2000, mfaEnabled: false, locked: false },
   { id: "mb-3", email: "postmaster@example.com", role: "DOMAIN_ADMIN", storageUsedMb: 15, quotaMb: 1000, mfaEnabled: true, locked: false },
 ];
 
-const INITIAL_ALIASES: Alias[] = [
+const UNUSED_INITIAL_ALIASES: Alias[] = [
   { id: "al-1", aliasAddress: "support@example.com", targetAddress: "user@example.com", domain: "example.com" },
   { id: "al-2", aliasAddress: "abuse@example.com", targetAddress: "admin@example.com", domain: "example.com" },
 ];
@@ -35,8 +52,8 @@ export default function AdminMailboxesPage() {
   const t = useTranslations();
 
   const [activeTab, setActiveTab] = useState<"mailboxes" | "aliases" | "csv">("mailboxes");
-  const [mailboxes, setMailboxes] = useState<Mailbox[]>(INITIAL_MAILBOXES);
-  const [aliases, setAliases] = useState<Alias[]>(INITIAL_ALIASES);
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
+  const [aliases, setAliases] = useState<Alias[]>([]);
   const [mfaPolicy, setMfaPolicy] = useState<"optional" | "required_admins" | "required_all">("required_admins");
 
   // Create mailbox state
@@ -53,41 +70,113 @@ export default function AdminMailboxesPage() {
   const [csvPreview, setCsvPreview] = useState<{ email: string; role: string; quotaMb: number }[]>([]);
   const [csvSuccessMessage, setCsvSuccessMessage] = useState<string | null>(null);
 
-  const handleCreateMailbox = (e: React.FormEvent) => {
+  // Everything below talks to the API. The previous version mutated local
+  // arrays seeded with fixtures, so creating an account looked like it worked
+  // and nothing existed after a reload.
+  const [error, setError] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const [mb, al] = await Promise.all([
+        fetch("/api/v1/admin/mailboxes").then((r) => (r.ok ? r.json() : [])),
+        fetch("/api/v1/admin/aliases").then((r) => (r.ok ? r.json() : [])),
+      ]);
+      setMailboxes(
+        (mb as ApiMailbox[]).map((m) => ({
+          id: m.id,
+          email: m.email_address,
+          role: m.role,
+          storageUsedMb: Math.round(Number(m.used_bytes ?? 0) / 1048576),
+          quotaMb: Math.round(Number(m.quota_bytes ?? 0) / 1048576),
+          mfaEnabled: Boolean(m.mfa_enrolled),
+          locked: !m.is_active,
+        })),
+      );
+      setAliases(
+        (al as ApiAlias[]).map((a) => ({
+          id: a.id,
+          aliasAddress: a.source_address,
+          targetAddress: (a.destination_addresses ?? []).join(", "),
+          domain: a.domain_name,
+        })),
+      );
+    } catch {
+      setError("Could not load accounts");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const handleCreateMailbox = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail) return;
-    const newMb: Mailbox = {
-      id: `mb-${Date.now()}`,
-      email: newEmail,
-      role: newRole,
-      storageUsedMb: 0,
-      quotaMb: newQuota,
-      mfaEnabled: false,
-      locked: false,
-    };
-    setMailboxes([...mailboxes, newMb]);
+    setError(null);
+    const localPart = newEmail.split("@")[0];
+    const res = await fetch("/api/v1/admin/mailboxes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        local_part: localPart,
+        password: newPassword,
+        role: newRole,
+        quota_bytes: newQuota * 1048576,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.message ?? "Could not create the mailbox");
+      return;
+    }
     setNewEmail("");
+    setNewPassword("");
+    await load();
   };
 
-  const handleToggleLock = (id: string) => {
-    setMailboxes(mailboxes.map((mb) => (mb.id === id ? { ...mb, locked: !mb.locked } : mb)));
+  const handleToggleLock = async (id: string, locked: boolean) => {
+    await fetch(`/api/v1/admin/mailboxes/${id}/active`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: locked }),
+    });
+    await load();
   };
 
-  const handleDeleteMailbox = (id: string) => {
-    setMailboxes(mailboxes.filter((mb) => mb.id !== id));
+  const handleDeleteMailbox = async (id: string) => {
+    const res = await fetch(`/api/v1/admin/mailboxes/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.message ?? "Could not delete the mailbox");
+    }
+    await load();
   };
 
-  const handleCreateAlias = (e: React.FormEvent) => {
+  const handleCreateAlias = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAliasAddr || !newTargetAddr) return;
-    const domain = newAliasAddr.split("@")[1] || "example.com";
-    setAliases([...aliases, { id: `al-${Date.now()}`, aliasAddress: newAliasAddr, targetAddress: newTargetAddr, domain }]);
+    setError(null);
+    const res = await fetch("/api/v1/admin/aliases", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: newAliasAddr, destinations: [newTargetAddr] }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.message ?? "Could not create the alias");
+      return;
+    }
     setNewAliasAddr("");
     setNewTargetAddr("");
+    await load();
   };
 
-  const handleDeleteAlias = (id: string) => {
-    setAliases(aliases.filter((al) => al.id !== id));
+  const handleDeleteAlias = async (id: string) => {
+    const res = await fetch(`/api/v1/admin/aliases/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.message ?? "Could not delete the alias");
+    }
+    await load();
   };
 
   const handleParseCsv = () => {
@@ -107,20 +196,30 @@ export default function AdminMailboxesPage() {
     setCsvPreview(parsed);
   };
 
-  const handleExecuteCsvImport = () => {
-    const imported: Mailbox[] = csvPreview.map((item, idx) => ({
-      id: `csv-${Date.now()}-${idx}`,
-      email: item.email,
-      role: item.role,
-      storageUsedMb: 0,
-      quotaMb: item.quotaMb,
-      mfaEnabled: false,
-      locked: false,
-    }));
-    setMailboxes((current) => [...current, ...imported]);
-    setCsvSuccessMessage(`Successfully imported ${imported.length} mailboxes!`);
-    setCsvText("");
-    setCsvPreview([]);
+  const handleExecuteCsvImport = async () => {
+    try {
+      const rows = csvPreview.map((item) => ({
+        email: item.email,
+        role: item.role as "USER" | "DOMAIN_ADMIN" | "SUPER_ADMIN",
+        quota_mb: item.quotaMb,
+      }));
+      const res = await fetch("/api/v1/admin/mailboxes/bulk-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setCsvSuccessMessage(`Successfully bulk-imported ${data.imported ?? csvPreview.length} mailboxes with default RFC 6154 folders.`);
+        setCsvText("");
+        setCsvPreview([]);
+        await load();
+      } else {
+        setError(data.message ?? "Bulk import failed");
+      }
+    } catch {
+      setError("Network error performing bulk import");
+    }
     setTimeout(() => setCsvSuccessMessage(null), 3000);
   };
 
@@ -131,6 +230,12 @@ export default function AdminMailboxesPage() {
           <h1 className="text-2xl font-bold text-white mb-1">{t("admin.mailboxesTitle")}</h1>
           <p className="text-xs text-slate-400">Configure mailboxes, aliases, bulk CSV import, and MFA policies.</p>
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
 
         {/* Tab Navigation */}
         <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-medium">
@@ -210,6 +315,15 @@ export default function AdminMailboxesPage() {
                 required
                 className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Initial password (min. 12 characters)"
+                minLength={12}
+                required
+                className="px-3 py-2 text-xs rounded-lg bg-slate-900 border border-slate-800 text-white"
+              />
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
@@ -280,13 +394,13 @@ export default function AdminMailboxesPage() {
                       </td>
                       <td className="p-3 flex items-center gap-2">
                         <button
-                          onClick={() => handleToggleLock(mb.id)}
+                          onClick={() => void handleToggleLock(mb.id, mb.locked)}
                           className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px]"
                         >
                           {mb.locked ? "Unlock" : "Lock"}
                         </button>
                         <button
-                          onClick={() => handleDeleteMailbox(mb.id)}
+                          onClick={() => void handleDeleteMailbox(mb.id)}
                           className="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600/40 text-red-300 text-[10px]"
                         >
                           Delete
@@ -355,7 +469,7 @@ export default function AdminMailboxesPage() {
                       <td className="p-3 text-slate-400">{al.domain}</td>
                       <td className="p-3">
                         <button
-                          onClick={() => handleDeleteAlias(al.id)}
+                          onClick={() => void handleDeleteAlias(al.id)}
                           className="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600/40 text-red-300 text-[10px]"
                         >
                           Delete

@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 
 // The master key has to exist before crypto.ts is imported anywhere, because
 // encryptSecret refuses to run without one.
+process.env.JWT_SECRET ||= "a-test-signing-secret-long-enough-for-the-guard";
 process.env.LAMBDAMAIL_MASTER_KEY ||= "test-master-key-at-least-16-chars";
 process.env.DATABASE_URL = process.env.TEST_DATABASE_URL ?? "";
 
@@ -105,6 +106,28 @@ async function enrollTotp(mailboxId: string, token: string): Promise<string> {
   // the current window instead of waiting 30 seconds.
   await query(`UPDATE mfa_totp SET last_used_step = NULL WHERE mailbox_id = $1`, [mailboxId]);
   return secret;
+}
+
+/**
+ * Returns an authenticated admin token.
+ *
+ * The second factor is reset first: once one is confirmed, the user login
+ * returns a challenge rather than a session, so re-enrolling through the API
+ * would need a code from a secret this helper does not have yet. Clearing the
+ * rows makes the path deterministic regardless of what earlier tests did.
+ */
+async function adminSession(): Promise<string> {
+  await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [ADMIN_ID]);
+
+  const userLogin = await post("/api/v1/auth/user/login", { email: adminEmail(), password: PASSWORD });
+  const secret = await enrollTotp(ADMIN_ID, userLogin.body.token as unknown as string);
+
+  const challenge = await post("/api/v1/auth/admin/login", { email: adminEmail(), password: PASSWORD });
+  const verified = await post("/api/v1/auth/mfa/verify", {
+    challenge_token: challenge.body.challenge_token,
+    code: generateHotp(base32Decode(secret), getCurrentStep()),
+  });
+  return verified.body.token as unknown as string;
 }
 
 describeDb("auth API against a real database", () => {
@@ -264,6 +287,134 @@ describeDb("auth API against a real database", () => {
     expect(second.status).toBe(401);
   });
 
+  it("creates a mailbox with its standard folders and audits it", async () => {
+    const admin = await adminSession();
+    const local = `created${Date.now()}`;
+    const created = await post("/api/v1/admin/mailboxes", {
+      domain_id: DOMAIN_ID, local_part: local, password: "a-long-enough-password", role: "USER",
+    }, admin);
+    expect(created.status).toBe(201);
+
+    // Delivery depends on these existing: a mailbox with no Junk folder used
+    // to fail the spam path outright.
+    const folders = await query<{ special_use: string }>(
+      `SELECT special_use FROM folders WHERE mailbox_id = $1`, [created.body.id]);
+    expect(folders.map((f) => f.special_use).sort()).toEqual(
+      ["archive", "drafts", "inbox", "junk", "sent", "trash"]);
+
+    const audit = await get("/api/v1/admin/audit", admin);
+    const entries = audit.body as unknown as Array<{ action: string; target_id: string }>;
+    expect(entries.some((e) => e.action === "mailbox.create" && e.target_id === created.body.id)).toBe(true);
+  }, 90000);
+
+  it("refuses a weak password and a duplicate address", async () => {
+    const admin = await adminSession();
+    const weak = await post("/api/v1/admin/mailboxes",
+      { domain_id: DOMAIN_ID, local_part: "weakpass", password: "short" }, admin);
+    expect(weak.status).toBe(400);
+
+    const dup = await post("/api/v1/admin/mailboxes",
+      { domain_id: DOMAIN_ID, local_part: "user", password: "a-long-enough-password" }, admin);
+    expect(dup.status).toBe(409);
+  }, 90000);
+
+  // A DOMAIN_ADMIN naming another domain in the body must not escape its scope.
+  it("keeps a domain admin inside its own domain", async () => {
+    const otherDomain = "44444444-4444-4444-4444-444444444444";
+    const otherName = `other-${otherDomain}.invalid`;
+    await query(`DELETE FROM domains WHERE id = $1`, [otherDomain]);
+    await query(`INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+      [otherDomain, otherName, otherName]);
+
+    const domainAdminEmail = `dadmin@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash, role)
+       VALUES ($1, 'dadmin', $2, $3, 'DOMAIN_ADMIN')
+       ON CONFLICT (domain_id, local_part) DO NOTHING`,
+      [DOMAIN_ID, domainAdminEmail, await hashPassword(PASSWORD)],
+    );
+
+    const userLogin = await post("/api/v1/auth/user/login", { email: domainAdminEmail, password: PASSWORD });
+    const secret = await enrollTotp(
+      (await query<{ id: string }>(`SELECT id FROM mailboxes WHERE email_address = $1`, [domainAdminEmail]))[0].id,
+      userLogin.body.token as unknown as string);
+    const challenge = await post("/api/v1/auth/admin/login", { email: domainAdminEmail, password: PASSWORD });
+    const verified = await post("/api/v1/auth/mfa/verify", {
+      challenge_token: challenge.body.challenge_token,
+      code: generateHotp(base32Decode(secret), getCurrentStep()),
+    });
+    const token = verified.body.token as unknown as string;
+
+    const escape = await post("/api/v1/admin/mailboxes",
+      { domain_id: otherDomain, local_part: "intruder", password: "a-long-enough-password" }, token);
+    expect(escape.status).toBe(403);
+
+    // Its own domain still works.
+    const own = await post("/api/v1/admin/mailboxes",
+      { domain_id: DOMAIN_ID, local_part: `own${Date.now()}`, password: "a-long-enough-password" }, token);
+    expect(own.status).toBe(201);
+
+    await query(`DELETE FROM domains WHERE id = $1`, [otherDomain]);
+  }, 120000);
+
+  it("onboards a domain with the four aliases its DNS records name", async () => {
+    const admin = await adminSession();
+    const name = `onboard-${Date.now()}.test`;
+
+    const res = await post("/api/v1/admin/domains/onboard", { domain: name }, admin);
+    expect(res.status).toBe(200);
+
+    const aliases = await query<{ source_address: string; destination_addresses: string[] }>(
+      `SELECT source_address, destination_addresses FROM aliases a
+         JOIN domains d ON d.id = a.domain_id WHERE d.name = $1 ORDER BY a.source_address`,
+      [name],
+    );
+    // PLAN.md section 7.4b: publishing rua=mailto:dmarc@ without the alias
+    // makes the reports bounce and receivers stop sending them.
+    expect(aliases.map((a) => a.source_address.split("@")[0]).sort())
+      .toEqual(["abuse", "dmarc", "postmaster", "tlsrpt"]);
+    expect(aliases[0].destination_addresses[0]).toBe(adminEmail());
+
+    await query(`DELETE FROM domains WHERE name = $1`, [name]);
+  }, 90000);
+
+  // The destination array used to be built by string interpolation, so a
+  // domain name carrying a quote was injected into the statement.
+  it("does not let a hostile domain name reach the SQL text", async () => {
+    const admin = await adminSession();
+    for (const hostile of ["x.test'||(SELECT version())||'", "a.test; DROP TABLE aliases;--", "no-dot"]) {
+      const res = await post("/api/v1/admin/domains/onboard", { domain: hostile }, admin);
+      expect(res.status).toBe(400);
+    }
+    // The table is still there, which a successful injection would not leave.
+    const check = await query<{ count: string }>(`SELECT count(*)::text AS count FROM aliases`);
+    expect(Number(check[0].count)).toBeGreaterThanOrEqual(0);
+  }, 90000);
+
+  it("refuses to let a domain admin create domains", async () => {
+    const domainAdminEmail = `donboard@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash, role)
+       VALUES ($1, 'donboard', $2, $3, 'DOMAIN_ADMIN') ON CONFLICT (domain_id, local_part) DO NOTHING`,
+      [DOMAIN_ID, domainAdminEmail, await hashPassword(PASSWORD)],
+    );
+    const mailboxId = (await query<{ id: string }>(
+      `SELECT id FROM mailboxes WHERE email_address = $1`, [domainAdminEmail]))[0].id;
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [mailboxId]);
+
+    const userLogin = await post("/api/v1/auth/user/login", { email: domainAdminEmail, password: PASSWORD });
+    const secret = await enrollTotp(mailboxId, userLogin.body.token as unknown as string);
+    const challenge = await post("/api/v1/auth/admin/login", { email: domainAdminEmail, password: PASSWORD });
+    const verified = await post("/api/v1/auth/mfa/verify", {
+      challenge_token: challenge.body.challenge_token,
+      code: generateHotp(base32Decode(secret), getCurrentStep()),
+    });
+
+    const res = await post("/api/v1/admin/domains/onboard",
+      { domain: `escape-${Date.now()}.test` }, verified.body.token);
+    expect(res.status).toBe(400);
+  }, 120000);
+
   it("never returns the TOTP secret to an unauthenticated caller", async () => {
     const res = await post("/api/v1/user/mfa/totp/enroll", {});
     expect(res.status).toBe(401);
@@ -333,6 +484,66 @@ describeDb("auth API against a real database", () => {
 
     const relogin = await post("/api/v1/auth/user/login", { email, password: "a-brand-new-password-1" });
     expect(relogin.status).toBe(200);
+  }, 90000);
+
+  it("manages user preferences, Sieve scripts, and vacation autoresponder", async () => {
+    // A mailbox of its own: the shared fixture has a second factor enrolled by
+    // an earlier test, so its login returns a challenge rather than a session
+    // and this depended on test order to pass.
+    const email = `prefs@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash)
+       VALUES ($1, 'prefs', $2, $3) ON CONFLICT (domain_id, local_part) DO NOTHING`,
+      [DOMAIN_ID, email, await hashPassword(PASSWORD)],
+    );
+
+    const login = await post("/api/v1/auth/user/login", { email, password: PASSWORD });
+    const token = login.body.token as unknown as string;
+    expect(token).toBeDefined();
+
+    const prefs = await get("/api/v1/user/preferences", token);
+    expect(prefs.status).toBe(200);
+
+    const updatePrefs = await post("/api/v1/user/preferences", { signature: "-- Best Regards", auto_save_drafts: true }, token);
+    expect(updatePrefs.status).toBe(200);
+
+    const sieve = await get("/api/v1/user/sieve", token);
+    expect(sieve.status).toBe(200);
+
+    const saveVacation = await post("/api/v1/user/vacation", { enabled: true, subject: "On Holiday", message: "Back next week" }, token);
+    expect(saveVacation.status).toBe(200);
+  }, 60000);
+
+  it("handles admin bulk import, domain onboarding, DKIM rotation, TLS and Rspamd thresholds", async () => {
+    const admin = await adminSession();
+
+    const domainName = `newdomain-${Date.now()}.test`;
+    const onboard = await post("/api/v1/admin/domains/onboard", { domain: domainName }, admin);
+    expect(onboard.status).toBe(200);
+    // The response used to claim "records: 13"; nothing here touches DNS, and
+    // the reconciler in the protocols service is what publishes those.
+    expect(onboard.body.aliases).toHaveLength(4);
+
+    const reconcile = await post("/api/v1/admin/domains/reconcile", { domain_id: onboard.body.id }, admin);
+    expect(reconcile.status).toBe(200);
+
+    const bulk = await post("/api/v1/admin/mailboxes/bulk-import", {
+      rows: [{ email: `bulk1@${domainName}`, role: "USER", quota_mb: 1024 }],
+    }, admin);
+    expect(bulk.status).toBe(200);
+    expect(bulk.body.imported).toBe(1);
+
+    // DKIM rotation and the TLS panel are served by the protocols service,
+    // which owns the vault the private key is sealed with and the certificate
+    // watcher. They are covered by that service's own tests.
+
+    const getRspamd = await get("/api/v1/admin/rspamd/thresholds", admin);
+    expect(getRspamd.status).toBe(200);
+
+    const updateRspamd = await post("/api/v1/admin/rspamd/thresholds", { greylist: 4.5, add_header: 6.5, reject: 14.0 }, admin);
+    expect(updateRspamd.status).toBe(200);
+
+    await query(`DELETE FROM domains WHERE name = $1`, [domainName]);
   }, 90000);
 });
 

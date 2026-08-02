@@ -17,7 +17,12 @@ const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL ?? "http://auth:3001";
 const PROTOCOLS_SERVICE_URL = process.env.PROTOCOLS_SERVICE_URL ?? "http://protocols:8080";
 
 function upstreamFor(path: string[]): string {
-  return path[0] === "mail" ? PROTOCOLS_SERVICE_URL : AUTH_SERVICE_URL;
+  // Mail reads and sends go to protocols, and so does DKIM: the private key
+  // has to be sealed with that service's vault, which derives its key
+  // differently from the auth service's.
+  if (path[0] === "mail") return PROTOCOLS_SERVICE_URL;
+  if (path[0] === "admin" && (path[1] === "dkim" || path[1] === "tls")) return PROTOCOLS_SERVICE_URL;
+  return AUTH_SERVICE_URL;
 }
 
 // Hop-by-hop headers must not be forwarded (RFC 9110 section 7.6.1), and the

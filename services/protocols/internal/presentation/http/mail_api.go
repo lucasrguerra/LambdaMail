@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -151,17 +152,67 @@ func (m *mailAPI) handleAttachmentDownload(w http.ResponseWriter, _ *http.Reques
 		return
 	}
 
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	// The sender chose this filename and this content type, so neither is
+	// trusted. Serving an attachment's own text/html back on the webmail's
+	// origin is stored XSS, and a quote in the name breaks out of the
+	// Content-Disposition parameter - both reachable by anyone who can send
+	// this mailbox a message.
+	w.Header().Set("Content-Type", safeAttachmentContentType(contentType))
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType("attachment", map[string]string{"filename": sanitiseFilename(filename)}))
+	// Without nosniff a browser may still sniff the bytes and render them as
+	// HTML regardless of the declared type.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
 
+// renderableTypes are the content types a browser will execute or render in a
+// document context. They are downgraded so an attachment can never become a
+// page on this origin.
+var renderableTypes = map[string]bool{
+	"text/html":                     true,
+	"application/xhtml+xml":         true,
+	"image/svg+xml":                 true,
+	"application/xml":               true,
+	"text/xml":                      true,
+	"application/javascript":        true,
+	"text/javascript":               true,
+	"application/x-javascript":      true,
+	"application/xhtml":             true,
+	"application/vnd.wap.xhtml+xml": true,
+}
+
+func safeAttachmentContentType(declared string) string {
+	declared = strings.ToLower(strings.TrimSpace(declared))
+	if declared == "" || renderableTypes[declared] {
+		return "application/octet-stream"
+	}
+	return declared
+}
+
+// sanitiseFilename keeps a name usable in a header and on a filesystem: no
+// path separators, no control characters, no quotes.
+func sanitiseFilename(name string) string {
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			return -1
+		case r == '"' || r == '\\' || r == '/' || r == ':':
+			return '_'
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "attachment"
+	}
+	if len(name) > 200 {
+		name = name[:200]
+	}
+	return name
+}
 
 func (m *mailAPI) handleSeen(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.authenticate(w, r)

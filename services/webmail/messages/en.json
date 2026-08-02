@@ -137,6 +137,11 @@
     "toRecipients": "To (Recipients)",
     "totalEvaluated": "Total Evaluated Messages",
     "twoFactorSection": "Two-Factor Authentication (TOTP RFC 6238)",
-    "watching": "WATCHING"
+    "watching": "WATCHING",
+    "passwordChanged": "Password changed",
+    "signOutOthers": "Sign out other sessions",
+    "changePassword": "Change password",
+    "currentPassword": "Current password",
+    "newPassword": "New password (min. 12 characters)"
   }
 }

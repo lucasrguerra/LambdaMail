@@ -142,4 +142,3 @@ func ExtractAttachment(entity *message.Entity, targetName string) ([]byte, strin
 	}
 	return nil, ""
 }
-

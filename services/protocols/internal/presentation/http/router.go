@@ -29,6 +29,11 @@ type Router struct {
 	// events pushes new mail to the browser. Like mail, it stays nil without a
 	// session secret.
 	events *EventHub
+	// dkim manages signing keys. It lives here because the private key must be
+	// sealed with this process's vault.
+	dkim *adminDkimAPI
+	// tls reports what the certificate watcher sees, rather than a constant.
+	tls *adminTlsAPI
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued
@@ -71,6 +76,9 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/.well-known/autoconfig/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/autodiscover/autodiscover.xml", r.handleOutlookAutodiscover)
 	r.mux.HandleFunc("/api/v1/events", r.handleEvents)
+	r.mux.HandleFunc("/api/v1/admin/tls", r.handleAdminTls)
+	r.mux.HandleFunc("/api/v1/admin/dkim/keys", r.handleAdminDkimKeys)
+	r.mux.HandleFunc("/api/v1/admin/dkim/rotate", r.handleAdminDkimRotate)
 	r.mux.HandleFunc("/api/v1/mail/folders", r.handleMailFolders)
 	r.mux.HandleFunc("/api/v1/mail/messages", r.handleMailMessages)
 	r.mux.HandleFunc("/api/v1/mail/message/", r.handleMailMessage)

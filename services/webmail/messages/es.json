@@ -137,6 +137,11 @@
     "toRecipients": "Para (destinatarios)",
     "totalEvaluated": "Total de mensajes evaluados",
     "twoFactorSection": "Autenticacion en dos pasos (TOTP RFC 6238)",
-    "watching": "OBSERVANDO"
+    "watching": "OBSERVANDO",
+    "passwordChanged": "Contrasena cambiada",
+    "signOutOthers": "Cerrar las otras sesiones",
+    "changePassword": "Cambiar contrasena",
+    "currentPassword": "Contrasena actual",
+    "newPassword": "Nueva contrasena (min. 12 caracteres)"
   }
 }

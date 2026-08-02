@@ -561,3 +561,297 @@ export async function updateQueueJob(scope: AdminScope, jobId: string, action: "
   const rows = await query<{ id: string }>(sql, params);
   return rows.length === 1;
 }
+
+// ------------------------------------------------- mailbox and alias CRUD
+
+/** Confirms the domain is one the caller may administer, so a DOMAIN_ADMIN
+ * cannot create accounts in someone else's domain by passing its id. */
+async function domainInScope(scope: AdminScope, domainId: string): Promise<boolean> {
+  if (scope.role === "SUPER_ADMIN") {
+    const row = await queryOne<{ id: string }>(`SELECT id FROM domains WHERE id = $1`, [domainId]);
+    return row !== null;
+  }
+  return scope.domainId === domainId;
+}
+
+export interface CreateMailboxInput {
+  domainId: string;
+  localPart: string;
+  password: string;
+  role: "USER" | "DOMAIN_ADMIN" | "SUPER_ADMIN";
+  quotaBytes: number;
+}
+
+export type CreateMailboxResult =
+  | { status: "OK"; id: string; email: string }
+  | { status: "FORBIDDEN" }
+  | { status: "DUPLICATE" }
+  | { status: "INVALID" };
+
+/**
+ * Creates a mailbox with the standard folder set.
+ *
+ * The folders are created in the same transaction because delivery needs them:
+ * a mailbox without a Junk folder used to make the spam path fail, and one
+ * without an INBOX cannot receive at all.
+ */
+export async function createMailbox(scope: AdminScope, input: CreateMailboxInput): Promise<CreateMailboxResult> {
+  const localPart = input.localPart.trim().toLowerCase();
+  // RFC 5322 allows more than this, but a conservative local part avoids
+  // addresses that later confuse the SMTP and IMAP paths.
+  if (!/^[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9])?$/.test(localPart)) return { status: "INVALID" };
+  if (input.password.length < 12) return { status: "INVALID" };
+  if (!(await domainInScope(scope, input.domainId))) return { status: "FORBIDDEN" };
+
+  const domain = await queryOne<{ name: string }>(`SELECT name FROM domains WHERE id = $1`, [input.domainId]);
+  if (!domain) return { status: "FORBIDDEN" };
+
+  const email = `${localPart}@${domain.name}`;
+  const existing = await queryOne<{ id: string }>(`SELECT id FROM mailboxes WHERE email_address = $1`, [email]);
+  if (existing) return { status: "DUPLICATE" };
+
+  const hash = await hashPassword(input.password);
+  const created = await queryOne<{ id: string }>(
+    `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash, role, quota_bytes)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [input.domainId, localPart, email, hash, input.role, input.quotaBytes],
+  );
+
+  await query(
+    `INSERT INTO folders (mailbox_id, name, special_use)
+     SELECT $1, f.name, f.special_use
+       FROM (VALUES ('INBOX','inbox'), ('Sent','sent'), ('Drafts','drafts'),
+                    ('Trash','trash'), ('Junk','junk'), ('Archive','archive')) AS f(name, special_use)`,
+    [created!.id],
+  );
+
+  return { status: "OK", id: created!.id, email };
+}
+
+export async function deleteMailbox(scope: AdminScope, mailboxId: string): Promise<boolean> {
+  const rows =
+    scope.role === "SUPER_ADMIN"
+      ? await query<{ id: string }>(`DELETE FROM mailboxes WHERE id = $1 RETURNING id`, [mailboxId])
+      : await query<{ id: string }>(
+          `DELETE FROM mailboxes WHERE id = $1 AND domain_id = $2 RETURNING id`,
+          [mailboxId, scope.domainId],
+        );
+  return rows.length === 1;
+}
+
+export async function listAliases(scope: AdminScope): Promise<unknown[]> {
+  const { sql, params } = scopeClause(scope, "a.domain_id");
+  return query(
+    `SELECT a.id, a.source_address, a.destination_addresses, a.is_catch_all, a.is_active, d.name AS domain_name
+       FROM aliases a JOIN domains d ON d.id = a.domain_id
+      WHERE ${sql} ORDER BY a.source_address LIMIT 500`,
+    params,
+  );
+}
+
+export type AliasResult = { status: "OK"; id: string } | { status: "FORBIDDEN" } | { status: "DUPLICATE" } | { status: "INVALID" };
+
+export async function createAlias(
+  scope: AdminScope, domainId: string, source: string, destinations: string[],
+): Promise<AliasResult> {
+  const clean = destinations.map((d) => d.trim().toLowerCase()).filter(Boolean);
+  if (clean.length === 0 || !source.trim()) return { status: "INVALID" };
+  if (!(await domainInScope(scope, domainId))) return { status: "FORBIDDEN" };
+
+  const existing = await queryOne<{ id: string }>(
+    `SELECT id FROM aliases WHERE domain_id = $1 AND source_address = $2`, [domainId, source.trim().toLowerCase()]);
+  if (existing) return { status: "DUPLICATE" };
+
+  const row = await queryOne<{ id: string }>(
+    `INSERT INTO aliases (domain_id, source_address, destination_addresses, is_catch_all)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [domainId, source.trim().toLowerCase(), clean, source.trim().startsWith("*@")],
+  );
+  return { status: "OK", id: row!.id };
+}
+
+export async function deleteAlias(scope: AdminScope, aliasId: string): Promise<boolean> {
+  // System aliases (postmaster, abuse, dmarc, tlsrpt) are referenced by the
+  // published DNS records, so removing them silently breaks reporting.
+  const rows =
+    scope.role === "SUPER_ADMIN"
+      ? await query<{ id: string }>(
+          `DELETE FROM aliases WHERE id = $1 AND NOT COALESCE(is_system, false) RETURNING id`, [aliasId])
+      : await query<{ id: string }>(
+          `DELETE FROM aliases WHERE id = $1 AND domain_id = $2 AND NOT COALESCE(is_system, false) RETURNING id`,
+          [aliasId, scope.domainId]);
+  return rows.length === 1;
+}
+
+// ------------------------------------------------ user preferences & sieve
+
+export async function getUserPreferences(mailboxId: string): Promise<{ signature: string; auto_save_drafts: boolean }> {
+  const row = await queryOne<{ signature: string | null; auto_save_drafts: boolean | null }>(
+    `SELECT signature, auto_save_drafts FROM mailboxes WHERE id = $1`,
+    [mailboxId],
+  );
+  return {
+    signature: row?.signature ?? "",
+    auto_save_drafts: row?.auto_save_drafts ?? true,
+  };
+}
+
+export async function updateUserPreferences(mailboxId: string, signature: string, autoSaveDrafts: boolean): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    `UPDATE mailboxes SET signature = $2, auto_save_drafts = $3, updated_at = NOW() WHERE id = $1 RETURNING id`,
+    [mailboxId, signature, autoSaveDrafts],
+  );
+  return rows.length === 1;
+}
+
+export async function getSieveScript(mailboxId: string): Promise<{ name: string; script: string; is_active: boolean } | null> {
+  return queryOne<{ name: string; script: string; is_active: boolean }>(
+    `SELECT name, script, is_active FROM sieve_scripts WHERE mailbox_id = $1 ORDER BY is_active DESC LIMIT 1`,
+    [mailboxId],
+  );
+}
+
+export async function saveSieveScript(mailboxId: string, name: string, script: string, isActive: boolean): Promise<void> {
+  if (isActive) {
+    await query(`UPDATE sieve_scripts SET is_active = false WHERE mailbox_id = $1`, [mailboxId]);
+  }
+  await query(
+    `INSERT INTO sieve_scripts (mailbox_id, name, script, is_active)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (mailbox_id, name) DO UPDATE SET script = EXCLUDED.script, is_active = EXCLUDED.is_active`,
+    [mailboxId, name, script, isActive],
+  );
+}
+
+// --------------------------------------------- admin extended features
+
+export async function bulkImportMailboxes(
+  scope: AdminScope,
+  rows: Array<{ email: string; role: "USER" | "DOMAIN_ADMIN" | "SUPER_ADMIN"; quota_mb: number; password?: string }>,
+): Promise<{ imported: number; failed: number; errors: string[] }> {
+  let imported = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const item of rows) {
+    const parts = item.email.trim().toLowerCase().split("@");
+    if (parts.length !== 2) {
+      failed++;
+      errors.push(`Invalid email format: ${item.email}`);
+      continue;
+    }
+    const [localPart, domainName] = parts;
+    const domain = await queryOne<{ id: string }>(`SELECT id FROM domains WHERE name = $1`, [domainName]);
+    if (!domain) {
+      failed++;
+      errors.push(`Domain not found: ${domainName}`);
+      continue;
+    }
+
+    const res = await createMailbox(scope, {
+      domainId: domain.id,
+      localPart,
+      password: item.password || "TempPassword123!",
+      role: item.role || "USER",
+      quotaBytes: (item.quota_mb || 1024) * 1024 * 1024,
+    });
+
+    if (res.status === "OK") {
+      imported++;
+    } else {
+      failed++;
+      errors.push(`Failed to import ${item.email}: ${res.status}`);
+    }
+  }
+
+  return { imported, failed, errors };
+}
+
+/**
+ * Creates a domain and the aliases its published DNS records point at.
+ *
+ * Only a SUPER_ADMIN may do this: a DOMAIN_ADMIN is scoped to the domain it
+ * already administers, and creating new ones is how that scope would be
+ * escaped. The previous version ignored the scope argument entirely.
+ */
+export async function onboardDomain(
+  scope: AdminScope,
+  name: string,
+  adminAddress: string,
+): Promise<{ id: string; name: string; aliases: string[] } | null> {
+  if (scope.role !== "SUPER_ADMIN") return null;
+
+  const cleanName = name.trim().toLowerCase();
+  // A domain name goes into DNS and into every address on it, so it is
+  // validated rather than merely checked for a dot.
+  if (!/^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/.test(cleanName)) {
+    return null;
+  }
+
+  const existing = await queryOne<{ id: string }>(`SELECT id FROM domains WHERE name = $1`, [cleanName]);
+  let domainId = existing?.id;
+
+  if (!domainId) {
+    // name is CITEXT and punycode_name is VARCHAR, so the value is bound
+    // twice: one placeholder for both makes Postgres refuse to deduce a type.
+    const row = await queryOne<{ id: string }>(
+      `INSERT INTO domains (name, punycode_name, dns_status, dmarc_policy, mta_sts_mode)
+       VALUES ($1, $2, 'PENDING', 'quarantine', 'testing') RETURNING id`,
+      [cleanName, cleanName],
+    );
+    domainId = row!.id;
+  }
+
+  // PLAN.md section 7.4b: these four exist because the published records name
+  // them. Publishing rua=mailto:dmarc@ without the alias makes the reports
+  // bounce, and receivers then stop sending them.
+  const created: string[] = [];
+  for (const local of ["postmaster", "abuse", "dmarc", "tlsrpt"]) {
+    const source = `${local}@${cleanName}`;
+    // The destination is a bound parameter, not interpolated. Building the
+    // array in the SQL text let a domain name containing a quote inject.
+    await query(
+      `INSERT INTO aliases (domain_id, source_address, destination_addresses, is_system)
+       VALUES ($1, $2, $3, true)
+       ON CONFLICT (domain_id, source_address) DO NOTHING`,
+      [domainId, source, [adminAddress]],
+    );
+    created.push(source);
+  }
+
+  return { id: domainId, name: cleanName, aliases: created };
+}
+
+export async function getRspamdThresholds(): Promise<{ greylist: number; add_header: number; reject: number }> {
+  const row = await queryOne<{ value: { greylist: number; add_header: number; reject: number } }>(
+    `SELECT value FROM system_config WHERE key = 'rspamd_thresholds'`,
+  );
+  return row?.value ?? { greylist: 4.0, add_header: 6.0, reject: 15.0 };
+}
+
+export async function updateRspamdThresholds(
+  greylist: number,
+  addHeader: number,
+  reject: number,
+): Promise<void> {
+  const payload = { greylist, add_header: addHeader, reject };
+  await query(
+    `INSERT INTO system_config (key, value, updated_at) VALUES ('rspamd_thresholds', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(payload)],
+  );
+}
+
+export async function traceLogsByQueueId(queueId: string): Promise<unknown[]> {
+  if (!queueId.trim()) return [];
+  const term = `%${queueId.trim()}%`;
+  return query(
+    `SELECT a.id, a.action, a.target_type, a.target_id, a.actor_ip::text AS actor_ip,
+            a.metadata, a.created_at
+       FROM audit_log a
+      WHERE a.metadata::text LIKE $1 OR a.target_id::text LIKE $1
+      ORDER BY a.id DESC LIMIT 50`,
+    [term],
+  );
+}
+

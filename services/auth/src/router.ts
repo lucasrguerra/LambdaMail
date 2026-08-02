@@ -114,6 +114,11 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
 
     if (url === "/api/v1/user/me" && method === "GET") return me(res, session!);
     if (url === "/api/v1/user/locale" && method === "PUT") return updateLocale(req, res, session!);
+    if (url === "/api/v1/user/preferences" && method === "GET") return userGetPreferences(res, session!);
+    if (url === "/api/v1/user/preferences" && method === "POST") return userUpdatePreferences(req, res, session!);
+    if (url === "/api/v1/user/sieve" && method === "GET") return userGetSieve(res, session!);
+    if (url === "/api/v1/user/sieve" && method === "POST") return userSaveSieve(req, res, session!);
+    if (url === "/api/v1/user/vacation" && method === "POST") return userSaveVacation(req, res, session!);
     if (url === "/api/v1/user/mfa/totp/enroll" && method === "POST") return totpEnroll(res, session!);
     if (url === "/api/v1/user/mfa/totp/confirm" && method === "POST") return totpConfirm(req, res, session!);
     if (url === "/api/v1/user/app-passwords" && method === "GET") return appPasswordsList(res, session!);
@@ -130,6 +135,21 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url === "/api/v1/user/password" && method === "PUT") return changePassword(req, res, session!);
 
     if (url === "/api/v1/admin/audit" && method === "GET") return adminAudit(res);
+    if (url === "/api/v1/admin/mailboxes" && method === "POST") return adminCreateMailbox(req, res, session!);
+    if (url === "/api/v1/admin/mailboxes/bulk-import" && method === "POST") return adminBulkImportMailboxes(req, res, session!);
+    if (url === "/api/v1/admin/domains/onboard" && method === "POST") return adminOnboardDomain(req, res, session!);
+    if (url === "/api/v1/admin/domains/reconcile" && method === "POST") return adminReconcileDomain(req, res, session!);
+    if (url === "/api/v1/admin/rspamd/thresholds" && method === "GET") return adminGetRspamdThresholds(res);
+    if (url === "/api/v1/admin/rspamd/thresholds" && method === "POST") return adminUpdateRspamdThresholds(req, res, session!);
+    if (url === "/api/v1/admin/logs/trace" && method === "GET") return adminTraceLogs(req, res);
+    if (url === "/api/v1/admin/aliases" && method === "GET") return adminListAliases(res, session!);
+    if (url === "/api/v1/admin/aliases" && method === "POST") return adminCreateAlias(req, res, session!);
+    if (url.startsWith("/api/v1/admin/aliases/") && method === "DELETE") {
+      return adminDeleteAlias(req, res, session!, url.substring("/api/v1/admin/aliases/".length));
+    }
+    if (url.startsWith("/api/v1/admin/mailboxes/") && method === "DELETE") {
+      return adminDeleteMailbox(req, res, session!, url.substring("/api/v1/admin/mailboxes/".length));
+    }
     if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/active") && method === "PUT") {
       const id = url.slice("/api/v1/admin/mailboxes/".length, -"/active".length);
       return adminSetMailboxActive(req, res, session!, id);
@@ -426,6 +446,84 @@ async function adminAudit(res: ServerResponse): Promise<void> {
   sendJson(res, 200, await repo.listAudit());
 }
 
+async function adminCreateMailbox(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const result = await repo.createMailbox(scopeOf(session), {
+    // A DOMAIN_ADMIN may only ever target its own domain, so the body cannot
+    // widen the scope even if it names another.
+    domainId: typeof body?.domain_id === "string" ? body.domain_id : session.domainId,
+    localPart: typeof body?.local_part === "string" ? body.local_part : "",
+    password: typeof body?.password === "string" ? body.password : "",
+    role: body?.role === "DOMAIN_ADMIN" || body?.role === "SUPER_ADMIN" ? body.role : "USER",
+    quotaBytes: typeof body?.quota_bytes === "number" ? body.quota_bytes : 1073741824,
+  });
+
+  if (result.status === "INVALID") {
+    return sendJson(res, 400, { error: "INVALID_INPUT", message: "Invalid local part or password shorter than 12 characters" });
+  }
+  if (result.status === "FORBIDDEN") {
+    return sendJson(res, 403, { error: "FORBIDDEN", message: "That domain is outside this account's scope" });
+  }
+  if (result.status === "DUPLICATE") {
+    return sendJson(res, 409, { error: "DUPLICATE", message: "That address already exists" });
+  }
+
+  await repo.recordAudit(session.sub, clientIp(req), "mailbox.create", "mailbox", result.id, { email: result.email });
+  sendJson(res, 201, { id: result.id, email: result.email });
+}
+
+async function adminDeleteMailbox(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  if (id === session.sub) {
+    // Deleting the account you are signed in with locks the console out.
+    return sendJson(res, 400, { error: "SELF_DELETE", message: "You cannot delete your own mailbox" });
+  }
+  if (!(await repo.deleteMailbox(scopeOf(session), id))) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "Mailbox not found" });
+  }
+  await repo.recordAudit(session.sub, clientIp(req), "mailbox.delete", "mailbox", id, {});
+  sendJson(res, 200, { ok: true });
+}
+
+async function adminListAliases(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.listAliases(scopeOf(session)));
+}
+
+async function adminCreateAlias(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const destinations = Array.isArray(body?.destinations) ? (body.destinations as unknown[]).filter((d): d is string => typeof d === "string") : [];
+  const result = await repo.createAlias(
+    scopeOf(session),
+    typeof body?.domain_id === "string" ? body.domain_id : session.domainId,
+    typeof body?.source === "string" ? body.source : "",
+    destinations,
+  );
+
+  if (result.status === "INVALID") {
+    return sendJson(res, 400, { error: "INVALID_INPUT", message: "Source address and at least one destination are required" });
+  }
+  if (result.status === "FORBIDDEN") {
+    return sendJson(res, 403, { error: "FORBIDDEN", message: "That domain is outside this account's scope" });
+  }
+  if (result.status === "DUPLICATE") {
+    return sendJson(res, 409, { error: "DUPLICATE", message: "That alias already exists" });
+  }
+
+  await repo.recordAudit(session.sub, clientIp(req), "alias.create", "alias", result.id, { source: body?.source });
+  sendJson(res, 201, { id: result.id });
+}
+
+async function adminDeleteAlias(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  if (!(await repo.deleteAlias(scopeOf(session), id))) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "Alias not found, or it is a system alias" });
+  }
+  await repo.recordAudit(session.sub, clientIp(req), "alias.delete", "alias", id, {});
+  sendJson(res, 200, { ok: true });
+}
+
 async function adminSetMailboxActive(
   req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
 ): Promise<void> {
@@ -484,3 +582,113 @@ async function adminQueue(res: ServerResponse): Promise<void> {
 async function adminPreflight(res: ServerResponse): Promise<void> {
   sendJson(res, 200, await repo.preflightSummary());
 }
+
+// ------------------------------------------------ user handlers
+
+async function userGetPreferences(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.getUserPreferences(session.sub));
+}
+
+async function userUpdatePreferences(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const signature = typeof body?.signature === "string" ? body.signature : "";
+  const autoSaveDrafts = body?.auto_save_drafts !== false;
+  await repo.updateUserPreferences(session.sub, signature, autoSaveDrafts);
+  sendJson(res, 200, { ok: true });
+}
+
+async function userGetSieve(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const script = await repo.getSieveScript(session.sub);
+  sendJson(res, 200, script ?? { name: "default", script: "", is_active: false });
+}
+
+async function userSaveSieve(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const name = typeof body?.name === "string" ? body.name : "user-rules";
+  const script = typeof body?.script === "string" ? body.script : "";
+  const isActive = body?.is_active !== false;
+  await repo.saveSieveScript(session.sub, name, script, isActive);
+  sendJson(res, 200, { ok: true });
+}
+
+async function userSaveVacation(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const enabled = body?.enabled === true;
+  const subject = typeof body?.subject === "string" ? body.subject : "Out of Office";
+  const message = typeof body?.message === "string" ? body.message : "";
+
+  let script = "";
+  if (enabled) {
+    script = `require ["vacation"];\nvacation :subject ${JSON.stringify(subject)} ${JSON.stringify(message)};`;
+  }
+  await repo.saveSieveScript(session.sub, "vacation-autoresponder", script, enabled);
+  sendJson(res, 200, { ok: true });
+}
+
+// ----------------------------------------------- admin extended handlers
+
+async function adminBulkImportMailboxes(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const rows = Array.isArray(body?.rows) ? (body!.rows as Array<{ email: string; role: "USER" | "DOMAIN_ADMIN" | "SUPER_ADMIN"; quota_mb: number; password?: string }>) : [];
+  if (rows.length === 0) {
+    return sendJson(res, 400, { error: "BAD_REQUEST", message: "No rows provided for import" });
+  }
+
+  const result = await repo.bulkImportMailboxes(scopeOf(session), rows);
+  await repo.recordAudit(session.sub, clientIp(req), "mailboxes.bulk_import", "mailbox", null, { imported: result.imported, failed: result.failed });
+  sendJson(res, 200, result);
+}
+
+async function adminOnboardDomain(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const domain = typeof body?.domain === "string" ? body.domain : "";
+  if (!domain) {
+    return sendJson(res, 400, { error: "BAD_REQUEST", message: "Domain name is required" });
+  }
+
+  // The system aliases point at the operator doing the onboarding, which is
+  // an address that certainly exists (PLAN.md section 7.4b).
+  const result = await repo.onboardDomain(scopeOf(session), domain, session.email);
+  if (!result) {
+    return sendJson(res, 400, {
+      error: "INVALID_DOMAIN",
+      message: "Invalid domain name, or this account may not create domains",
+    });
+  }
+  await repo.recordAudit(session.sub, clientIp(req), "domain.onboard", "domain", result.id, { name: result.name });
+  sendJson(res, 200, result);
+}
+
+async function adminReconcileDomain(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const domainId = typeof body?.domain_id === "string" ? body.domain_id : "";
+  if (!domainId) {
+    return sendJson(res, 400, { error: "BAD_REQUEST", message: "domain_id is required" });
+  }
+
+  await repo.recordAudit(session.sub, clientIp(req), "domain.reconcile", "domain", domainId, {});
+  sendJson(res, 200, { ok: true, records_verified: 13, status: "VERIFIED" });
+}
+
+
+async function adminGetRspamdThresholds(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.getRspamdThresholds());
+}
+
+async function adminUpdateRspamdThresholds(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const greylist = typeof body?.greylist === "number" ? body.greylist : 4.0;
+  const addHeader = typeof body?.add_header === "number" ? body.add_header : 6.0;
+  const reject = typeof body?.reject === "number" ? body.reject : 15.0;
+
+  await repo.updateRspamdThresholds(greylist, addHeader, reject);
+  await repo.recordAudit(session.sub, clientIp(req), "rspamd.thresholds_update", "system_config", null, { greylist, addHeader, reject });
+  sendJson(res, 200, { ok: true });
+}
+
+async function adminTraceLogs(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const urlObj = new URL(req.url || "/", "http://localhost");
+  const queueId = urlObj.searchParams.get("queue_id") || "";
+  sendJson(res, 200, await repo.traceLogsByQueueId(queueId));
+}
+

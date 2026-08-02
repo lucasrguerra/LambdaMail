@@ -17,7 +17,22 @@ export interface SessionTokenPayload {
   exp: number;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || "lambdamail_jwt_secret_development_only";
+/**
+ * The signing secret. There is deliberately no default.
+ *
+ * A fallback constant here would be published in this repository, so any
+ * deployment that forgot the variable would accept tokens anyone could mint -
+ * including an admin session. Refusing to start is the only safe behaviour.
+ */
+const JWT_SECRET = (() => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "JWT_SECRET must be set to at least 32 characters; refusing to sign sessions with a guessable key",
+    );
+  }
+  return secret;
+})();
 
 function base64UrlEncode(str: string): string {
   return Buffer.from(str)

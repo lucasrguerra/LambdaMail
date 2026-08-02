@@ -174,6 +174,15 @@ func run(cfg config) {
 		log.Printf("JWT_SECRET is not set: the webmail mail API stays disabled")
 	}
 	router.SetMailAPI(webmailUC, cfg.JwtSecret)
+	if dkimRepo != nil {
+		router.SetAdminDkimAPI(dkimRepo, generateDkimKey, cfg.JwtSecret)
+	}
+	// The TLS panel reads the live watcher instead of the constants the admin
+	// service used to return, which reported a healthy certificate whatever
+	// the process actually held.
+	if source, ok := certProvider.(httppresentation.TlsStatusSource); ok {
+		router.SetAdminTlsAPI(source, cfg.PrimaryMailHost, cfg.TLSMode, cfg.JwtSecret, cfg.CertPollInterval)
+	}
 
 	// Real-time updates: the outbox relay reads the events delivery wrote in
 	// its own transaction and hands them to the hub, which pushes them to the

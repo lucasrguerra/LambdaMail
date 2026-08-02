@@ -1,45 +1,50 @@
 import DOMPurify from "dompurify";
 
 /**
- * Sanitizes HTML content using DOMPurify with email-safe configuration (Section 14.2).
- * Strips scripts, dangerous attributes, and executable elements while keeping layout.
+ * Sanitizes message HTML with DOMPurify (PLAN.md section 14.2).
+ *
+ * There is deliberately no hand-rolled regex pass in front of DOMPurify. The
+ * previous one turned "<scr<script>ipt>" into a working "<script>" by deleting
+ * the inner match and joining the halves - it manufactured the tag it was
+ * meant to remove. It also left javascript: URIs and <form> untouched, because
+ * a regex cannot parse HTML. DOMPurify parses, which is why it is the only
+ * thing here.
  */
 export function sanitizeEmailHtml(rawHtml: string): string {
   if (!rawHtml) return "";
 
-  // Base sanitization stripping dangerous tags and inline event handlers
-  let cleaned = rawHtml
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
-    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
-    .replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, "")
-    .replace(/\s*on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-
-  if (typeof window !== "undefined") {
-    cleaned = DOMPurify.sanitize(cleaned, {
-      ALLOWED_TAGS: [
-        "a", "b", "blockquote", "br", "caption", "code", "div", "em", "h1", "h2", "h3",
-        "h4", "h5", "h6", "hr", "i", "img", "li", "ol", "p", "pre", "span", "strong",
-        "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u", "ul", "style", "font",
-        "sub", "sup"
-      ],
-      ALLOWED_ATTR: [
-        "align", "alt", "bgcolor", "border", "cellpadding", "cellspacing", "cite",
-        "class", "color", "colspan", "dir", "height", "href", "id", "lang", "rowspan",
-        "src", "style", "title", "width", "target", "rel", "data-blocked-src"
-      ],
-      ALLOW_DATA_ATTR: true,
-      FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "button"],
-      FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus"],
-    });
+  // Without a DOM there is nothing to parse with, so nothing is returned.
+  // Failing closed matters: returning "best effort" markup would put
+  // unsanitized HTML on the page whenever this ran outside the browser.
+  if (typeof window === "undefined" || !DOMPurify.isSupported) {
+    return "";
   }
 
-  return cleaned;
+  return DOMPurify.sanitize(rawHtml, {
+    ALLOWED_TAGS: [
+      "a", "b", "blockquote", "br", "caption", "code", "div", "em", "h1", "h2", "h3",
+      "h4", "h5", "h6", "hr", "i", "img", "li", "ol", "p", "pre", "span", "strong",
+      "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u", "font", "sub", "sup",
+    ],
+    ALLOWED_ATTR: [
+      "align", "alt", "bgcolor", "border", "cellpadding", "cellspacing", "cite",
+      "class", "color", "colspan", "dir", "height", "href", "lang", "rowspan",
+      "src", "style", "title", "width", "target", "rel", "data-blocked-src",
+    ],
+    // style, link, meta and base are gone: a stylesheet in a message can cover
+    // the rest of the frame, and <base> rewrites every relative URL in it.
+    // id goes too, so a message cannot collide with the host document's ids.
+    FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "button", "style", "link", "meta", "base"],
+    FORBID_ATTR: ["srcset", "formaction", "ping", "id"],
+    ALLOW_DATA_ATTR: false,
+    // data: is how an anchor smuggles a document onto this origin.
+    ALLOWED_URI_REGEXP: /^(?:https?|mailto|cid|tel):/i,
+  });
 }
 
 /**
- * Replaces remote image sources (http/https) with data-blocked-src to protect user privacy
- * against tracking pixels until remote images are explicitly enabled.
+ * Replaces remote image sources with data-blocked-src so a tracking pixel
+ * cannot fire before the reader asks for images.
  */
 export function blockRemoteImages(html: string): string {
   if (!html) return "";
@@ -49,10 +54,8 @@ export function blockRemoteImages(html: string): string {
     .replace(/url\(\s*['"]?https?:[^)]*\)/gi, "none");
 }
 
-/**
- * Restores blocked remote image sources when user clicks "Load Remote Images".
- */
+/** Restores the blocked sources once the reader opts in. */
 export function unblockRemoteImages(html: string): string {
   if (!html) return "";
-  return html.replace(/(<img[^>]+)data-blocked-src\s*=\s*("|')([^"']+)\2/gi, '$1src="$3"');
+  return html.replace(/(<img[^>]+)data-blocked-src\s*=\s*("|')([^"']+)\2/gi, "$1src=$2$3$2");
 }

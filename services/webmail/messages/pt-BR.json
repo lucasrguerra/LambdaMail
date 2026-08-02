@@ -137,6 +137,11 @@
     "toRecipients": "Para (destinatarios)",
     "totalEvaluated": "Total de mensagens avaliadas",
     "twoFactorSection": "Autenticacao em dois fatores (TOTP RFC 6238)",
-    "watching": "OBSERVANDO"
+    "watching": "OBSERVANDO",
+    "passwordChanged": "Senha alterada",
+    "signOutOthers": "Encerrar as outras sessoes",
+    "changePassword": "Alterar senha",
+    "currentPassword": "Senha atual",
+    "newPassword": "Nova senha (min. 12 caracteres)"
   }
 }
