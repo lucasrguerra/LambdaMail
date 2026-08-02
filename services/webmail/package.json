@@ -10,14 +10,16 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "dompurify": "^3.4.12",
     "next": "15.5.21",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
+    "@types/dompurify": "^3.0.5",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
+    "typescript": "^5.5.4",
     "vitest": "^2.0.5"
   },
   "overrides": {

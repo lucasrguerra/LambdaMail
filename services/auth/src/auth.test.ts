@@ -38,6 +38,7 @@ describe("crypto module", () => {
   });
 
   it("encrypts and decrypts secrets using AES-256-GCM", () => {
+    process.env.LAMBDAMAIL_MASTER_KEY = "test-master-key-32-chars-long!!";
     const secret = "JBSWY3DPEHPK3PXP";
     const encrypted = encryptSecret(secret);
     const decrypted = decryptSecret(encrypted.encrypted, encrypted.nonce, encrypted.keyVersion);
