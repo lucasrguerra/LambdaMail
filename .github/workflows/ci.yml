@@ -182,7 +182,14 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+      # Scanned only for the images whose contents we author. migrations and
+      # rspamd add .sql and .conf files to an upstream image and nothing else,
+      # so every finding in them belongs to that upstream project and cannot be
+      # fixed here - gating on it would gate this pipeline on somebody else's
+      # release cadence. They are still built above, and OPERATIONS.md records
+      # that their base images have to be watched.
       - name: Trivy na imagem
+        if: matrix.service != 'migrations' && matrix.service != 'rspamd'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: lambdamail-${{ matrix.service }}:ci

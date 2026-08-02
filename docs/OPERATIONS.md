@@ -152,6 +152,18 @@ There is no automated path today. It requires decrypting every sealed secret
 with the old key and resealing with the new one, and getting it wrong destroys
 them. Plan a maintenance window and rehearse against a copy first.
 
+## Upstream images
+
+Two images in the stack are upstream projects with our files layered on top:
+`migrations` (golang-migrate plus the schema) and `rspamd` (Rspamd plus its
+configuration). Vulnerability scanning in CI covers the four images whose
+contents this project authors; findings inside those two belong to the upstream
+project and cannot be fixed here.
+
+That is a decision, not an oversight: watch their releases and bump the pinned
+tags when they publish. `docker run --rm aquasec/trivy image rspamd/rspamd:3.9`
+shows where they stand at any point.
+
 ## What is not automated
 
 Being explicit so nothing is assumed:

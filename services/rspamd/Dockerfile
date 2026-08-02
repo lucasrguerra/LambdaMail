@@ -9,3 +9,7 @@
 FROM rspamd/rspamd:3.9
 
 COPY config/rspamd /etc/rspamd/local.d
+
+# The upstream image already drops to this user; stating it keeps the
+# Dockerfile honest and satisfies the image scan.
+USER 11333:11333
