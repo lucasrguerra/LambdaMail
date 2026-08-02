@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -51,14 +54,10 @@ func (r *InboundMessageRepository) PersistAll(ctx context.Context, inputs []port
 	return uids, nil
 }
 
-// persistOne writes one recipient's copy inside the caller's transaction.
-func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessageInput) (int64, error) {
-	targetFolder := input.TargetFolderName
-	if targetFolder == "" {
-		targetFolder = "INBOX"
-	}
-
-	var folderID string
+// lockFolder resolves a folder by special-use role or name and locks the row,
+// which is what serialises UID allocation.
+func lockFolder(ctx context.Context, tx pgx.Tx, mailboxID any, folder string) (string, int64, error) {
+	var id string
 	var uid int64
 	err := tx.QueryRow(ctx, `
 		SELECT id, uid_next FROM folders
@@ -66,7 +65,36 @@ func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessage
 		ORDER BY special_use IS NOT NULL DESC
 		LIMIT 1
 		FOR UPDATE
-	`, input.MailboxID, targetFolder).Scan(&folderID, &uid)
+	`, mailboxID, folder).Scan(&id, &uid)
+	return id, uid, err
+}
+
+// nullIfEmpty keeps an absent header as SQL NULL rather than an empty string,
+// so "no subject" and "empty subject" stay distinguishable.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// persistOne writes one recipient's copy inside the caller's transaction.
+func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessageInput) (int64, error) {
+	targetFolder := input.TargetFolderName
+	if targetFolder == "" {
+		targetFolder = "INBOX"
+	}
+
+	// The target folder is resolved with INBOX as a fallback. A message the
+	// spam filter routes to Junk must not be refused outright because that
+	// folder was never created - the delivery is what matters, and refusing it
+	// makes the sender retry forever against a mailbox that will never grow a
+	// Junk folder on its own.
+	folderID, uid, err := lockFolder(ctx, tx, input.MailboxID, targetFolder)
+	if errors.Is(err, pgx.ErrNoRows) && !strings.EqualFold(targetFolder, "INBOX") {
+		log.Printf("delivery: mailbox %s has no %q folder, filing in INBOX instead", input.MailboxID, targetFolder)
+		folderID, uid, err = lockFolder(ctx, tx, input.MailboxID, "INBOX")
+	}
 	if err != nil {
 		return 0, fmt.Errorf("find folder %q for mailbox %s: %w", targetFolder, input.MailboxID, err)
 	}
@@ -85,10 +113,13 @@ func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessage
 		INSERT INTO email_messages (
 			mailbox_id, folder_id, uid, modseq, blob_id,
 			sender_address, recipient_addresses, size_bytes,
+			subject, snippet, from_display_name, message_id_header, has_attachments,
 			spf_result, dkim_result, dmarc_result
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`, input.MailboxID, folderID, uid, modseq, input.Blob.ID,
 		input.SenderAddress, []string{input.RecipientAddress}, input.Blob.SizeBytes,
+		nullIfEmpty(input.Subject), nullIfEmpty(input.Snippet), nullIfEmpty(input.FromDisplayName),
+		nullIfEmpty(input.MessageIDHeader), input.HasAttachments,
 		input.SPFResult, input.DKIMResult, input.DMARCResult)
 	if err != nil {
 		return 0, fmt.Errorf("insert email_messages: %w", err)

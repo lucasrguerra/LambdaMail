@@ -28,3 +28,14 @@ VALUES (
     NULL
 )
 ON CONFLICT (mailbox_id, name) WHERE (parent_id IS NULL) DO NOTHING;
+
+-- The standard folder set (RFC 6154). Without Junk in particular, a message
+-- the spam filter routes there used to fail delivery outright.
+INSERT INTO folders (mailbox_id, name, special_use, parent_id)
+SELECT '00000000-0000-0000-0000-000000000002', f.name, f.special_use, NULL
+  FROM (VALUES ('Sent','sent'), ('Drafts','drafts'), ('Trash','trash'),
+               ('Junk','junk'), ('Archive','archive')) AS f(name, special_use)
+ WHERE NOT EXISTS (
+   SELECT 1 FROM folders x
+    WHERE x.mailbox_id = '00000000-0000-0000-0000-000000000002'
+      AND lower(x.name) = lower(f.name));
