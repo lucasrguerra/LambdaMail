@@ -51,7 +51,9 @@
     "enableMfa": "Ativar 2FA",
     "generateAppPassword": "Gerar Senha de Aplicativo",
     "recoveryCodesTitle": "Códigos de Recuperação",
-    "saveRecoveryCodes": "Guarde estes códigos de recuperação em local seguro. Eles não serão exibidos novamente."
+    "saveRecoveryCodes": "Guarde estes códigos de recuperação em local seguro. Eles não serão exibidos novamente.",
+    "language": "Idioma",
+    "signOut": "Sair"
   },
   "admin": {
     "dashboardTitle": "Painel do Sistema",

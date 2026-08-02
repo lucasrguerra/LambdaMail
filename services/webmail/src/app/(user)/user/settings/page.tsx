@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 export default function UserSettingsPage() {
+  const t = useTranslations();
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [qrSecret, setQrSecret] = useState<string | null>(null);
   const [qrUri, setQrUri] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
-  const [appPasswords, setAppPasswords] = useState<{ id: string; label: string; created: string }[]>([]);
+  const [appPasswords, setAppPasswords] = useState<{ id: string; label: string; created_at?: string }[]>([]);
   const [newAppPassLabel, setNewAppPassLabel] = useState("");
   const [generatedAppPass, setGeneratedAppPass] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -30,7 +32,7 @@ export default function UserSettingsPage() {
       const res = await fetch("/api/v1/user/mfa/totp/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ secret: qrSecret, code: totpCode }),
+        body: JSON.stringify({ code: totpCode }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "TOTP verification failed");
@@ -44,20 +46,62 @@ export default function UserSettingsPage() {
     }
   };
 
-  const createNewAppPassword = (e: React.FormEvent) => {
+  const loadAppPasswords = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/user/app-passwords");
+      if (res.ok) setAppPasswords(await res.json());
+    } catch {
+      // Leaving the list as it is beats replacing it with an empty one.
+    }
+  }, []);
+
+  const loadProfile = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/user/me");
+      if (res.ok) {
+        const data = await res.json();
+        setMfaEnabled(Boolean(data.mfa_enrolled));
+      }
+    } catch {
+      // Non-fatal: the enrollment panel simply starts collapsed.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProfile();
+    void loadAppPasswords();
+  }, [loadProfile, loadAppPasswords]);
+
+  const createNewAppPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAppPassLabel) return;
-    const rawPass = `lmp_${Math.random().toString(36).substring(2, 10)}-${Math.random().toString(36).substring(2, 10)}`;
-    setAppPasswords([...appPasswords, { id: Date.now().toString(), label: newAppPassLabel, created: "Just now" }]);
-    setGeneratedAppPass(rawPass);
-    setNewAppPassLabel("");
+    try {
+      const res = await fetch("/api/v1/user/app-passwords", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: newAppPassLabel }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Could not create app password");
+      // Shown once; the server keeps only an Argon2id hash of it.
+      setGeneratedAppPass(data.password);
+      setNewAppPassLabel("");
+      await loadAppPasswords();
+    } catch (err: unknown) {
+      setMessage(err instanceof Error ? err.message : "Error creating app password");
+    }
+  };
+
+  const revokeAppPassword = async (id: string) => {
+    await fetch(`/api/v1/user/app-passwords/${id}`, { method: "DELETE" });
+    await loadAppPasswords();
   };
 
   return (
     <div className="flex-1 p-8 bg-slate-950 overflow-y-auto">
       <div className="max-w-4xl mx-auto space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Security & Account Settings</h1>
+          <h1 className="text-2xl font-bold text-white mb-1">{t("settings.title")}</h1>
           <p className="text-xs text-slate-400">Manage 2FA TOTP (RFC 6238), App Passwords, and active webmail sessions.</p>
         </div>
 
@@ -177,9 +221,17 @@ export default function UserSettingsPage() {
                 <div key={ap.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs">
                   <div>
                     <span className="font-bold text-slate-200">{ap.label}</span>
-                    <span className="text-[10px] text-slate-500 ml-2">Created: {ap.created}</span>
+                    <span className="text-[10px] text-slate-500 ml-2">
+                      {ap.created_at ? new Date(ap.created_at).toLocaleDateString() : ""}
+                    </span>
                   </div>
-                  <span className="text-red-400 hover:underline cursor-pointer">Revoke</span>
+                  <button
+                    type="button"
+                    onClick={() => void revokeAppPassword(ap.id)}
+                    className="text-red-400 hover:underline"
+                  >
+                    {t("common.delete")}
+                  </button>
                 </div>
               ))
             )}

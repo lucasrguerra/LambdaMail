@@ -51,7 +51,9 @@
     "enableMfa": "Enable 2FA",
     "generateAppPassword": "Generate App Password",
     "recoveryCodesTitle": "Recovery Codes",
-    "saveRecoveryCodes": "Save these recovery codes in a safe place. They will not be shown again."
+    "saveRecoveryCodes": "Save these recovery codes in a safe place. They will not be shown again.",
+    "language": "Language",
+    "signOut": "Sign out"
   },
   "admin": {
     "dashboardTitle": "System Dashboard",
