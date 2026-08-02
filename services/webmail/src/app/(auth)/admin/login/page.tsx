@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "../../../../i18n/provider";
+import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
 
 export default function AdminLoginPage() {
   const t = useTranslations();
@@ -33,7 +34,7 @@ export default function AdminLoginPage() {
           body: JSON.stringify({ code: mfaCode }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Verification failed");
+        if (!res.ok) throw new Error(data.message || t("auth.verificationFailed"));
         // Shown once. The operator signs in again with the factor they just
         // created, which is also the first proof that it works.
         setRecoveryCodes(data.recovery_codes ?? []);
@@ -51,7 +52,7 @@ export default function AdminLoginPage() {
           body: JSON.stringify({ challenge_token: challengeToken, code: mfaCode }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.message || "Admin verification failed");
+        if (!res.ok) throw new Error(data.message || t("auth.verificationFailed"));
         window.location.href = "/admin/dashboard";
         return;
       }
@@ -72,14 +73,14 @@ export default function AdminLoginPage() {
           headers: { Authorization: `Bearer ${data.enrollment_token}` },
         });
         const enrolData = await enroll.json();
-        if (!enroll.ok) throw new Error(enrolData.message || "Could not start enrolment");
+        if (!enroll.ok) throw new Error(enrolData.message || t("auth.enrolmentFailed"));
         setEnrolmentToken(data.enrollment_token);
         setEnrolSecret(enrolData.secret);
         setEnrolUri(enrolData.uri);
         return;
       }
 
-      if (!res.ok) throw new Error(data.message || "Admin authentication failed");
+      if (!res.ok) throw new Error(data.message || t("auth.authFailed"));
 
       if (data.mfa_required) {
         setChallengeToken(data.challenge_token);
@@ -87,7 +88,7 @@ export default function AdminLoginPage() {
         window.location.href = "/admin/dashboard";
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(err instanceof Error ? err.message : t("auth.genericError"));
     } finally {
       setLoading(false);
     }
@@ -102,7 +103,7 @@ export default function AdminLoginPage() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-white">{t("auth.adminLoginTitle")}</h1>
-            <p className="text-xs text-slate-400">Surface: /admin/* (Cookie: Path=/admin, MFA Mandatory)</p>
+            <p className="text-xs text-slate-400">{t("auth.adminStepUpNote")}</p>
           </div>
         </div>
 
@@ -112,45 +113,24 @@ export default function AdminLoginPage() {
           </div>
         )}
 
+        {/* The recovery-code step is terminal: it owns its own buttons, so the
+            form's submit button is not rendered underneath it. That overlap is
+            what previously put two identical "sign in" buttons on the screen
+            and left no way to copy the codes it insisted you save. */}
+        {recoveryCodes ? (
+          <RecoveryCodes
+            codes={recoveryCodes}
+            onContinue={() => setRecoveryCodes(null)}
+            continueLabel={t("auth.signInButton")}
+          />
+        ) : (
         <form onSubmit={handleLogin} className="space-y-4">
-          {recoveryCodes ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
-                <div className="mb-1 font-bold">{t("settings.recoveryCodesTitle")}</div>
-                <p className="mb-2">{t("settings.saveRecoveryCodes")}</p>
-                <div className="grid grid-cols-2 gap-1 font-mono text-[11px] text-white">
-                  {recoveryCodes.map((code) => (
-                    <span key={code}>{code}</span>
-                  ))}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRecoveryCodes(null)}
-                className="w-full rounded-xl bg-emerald-600 py-3 font-medium text-white transition-colors hover:bg-emerald-500"
-              >
-                {t("auth.signInButton")}
-              </button>
-            </div>
-          ) : enrolSecret ? (
-            <div className="space-y-3">
+          {enrolSecret ? (
+            <div className="space-y-4">
               <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-300">
-                {t("auth.mfaRequired")}
+                {t("auth.enrolmentIntro")}
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-300">{t("settings.enableMfa")}</label>
-                <code className="block break-all rounded-lg border border-slate-800 bg-slate-900 p-3 font-mono text-sm text-white">
-                  {enrolSecret}
-                </code>
-                {enrolUri && (
-                  <a
-                    href={enrolUri}
-                    className="mt-1 block truncate text-[11px] text-indigo-400 hover:underline"
-                  >
-                    {enrolUri}
-                  </a>
-                )}
-              </div>
+              <TotpEnrolment secret={enrolSecret} uri={enrolUri} />
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-300">{t("auth.totpCodeLabel")}</label>
                 <input
@@ -214,13 +194,18 @@ export default function AdminLoginPage() {
             disabled={loading}
             className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shadow-lg shadow-emerald-600/20 disabled:opacity-50"
           >
-            {loading ? t("common.loading") : challengeToken ? t("auth.verifyCodeButton") : t("auth.signInButton")}
+            {loading
+              ? t("common.loading")
+              : challengeToken || enrolSecret
+                ? t("auth.verifyCodeButton")
+                : t("auth.signInButton")}
           </button>
         </form>
+        )}
 
         <div className="mt-6 pt-4 border-t border-slate-800 text-center">
-          <Link href="/" className="text-xs text-slate-400 hover:text-slate-200 transition-colors">
-            Back to Surface Selector
+          <Link href="/user/mail/inbox" className="text-xs text-slate-400 hover:text-slate-200 transition-colors">
+            {t("admin.backToWebmail")}
           </Link>
         </div>
       </div>

@@ -16,11 +16,14 @@ import {
   LogOut,
   Mail,
   ShieldCheck,
+  ShieldAlert,
+  Sliders,
   Menu,
   X,
 } from "lucide-react";
 import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
+import { useAccount, isAdminRole } from "../../../lib/useAccount";
 
 interface FolderCount {
   special_use: string;
@@ -33,6 +36,7 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
   const pathname = usePathname();
   const [folders, setFolders] = useState<FolderCount[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const account = useAccount("user");
 
   useEffect(() => {
     void fetch("/api/v1/mail/folders")
@@ -48,9 +52,9 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
     { href: "/user/mail/inbox", label: t("mail.inbox"), icon: Inbox, role: "inbox" },
     { href: "/user/mail/sent", label: t("mail.sent"), icon: Send, role: "sent" },
     { href: "/user/mail/drafts", label: t("mail.drafts"), icon: FileText, role: "drafts" },
-    { href: "/user/mail/archive", label: "Archive", icon: Archive, role: "archive" },
-    { href: "/user/mail/junk", label: "Spam", icon: AlertTriangle, role: "junk" },
-    { href: "/user/mail/trash", label: "Trash", icon: Trash2, role: "trash" },
+    { href: "/user/mail/archive", label: t("mail.archive"), icon: Archive, role: "archive" },
+    { href: "/user/mail/junk", label: t("mail.junk"), icon: AlertTriangle, role: "junk" },
+    { href: "/user/mail/trash", label: t("mail.trash"), icon: Trash2, role: "trash" },
   ];
 
   const handleLogout = () => {
@@ -134,6 +138,21 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
           </button>
         </div>
 
+        {/* The console is reachable from inside the app for the accounts that
+            may open it, which is why there is no longer a surface chooser in
+            front of the sign-in. It is a plain link to the admin sign-in, not a
+            direct jump: the admin audience is a separate token, so crossing
+            over means proving the second factor again. */}
+        {isAdminRole(account?.role) && (
+          <Link
+            href="/admin/login"
+            className="flex items-center gap-2.5 p-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/15 transition-all"
+          >
+            <Sliders className="w-4 h-4 flex-shrink-0" />
+            <span className="text-xs font-semibold truncate">{t("admin.openAdmin")}</span>
+          </Link>
+        )}
+
         <Link
           href="/user/settings"
           className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
@@ -143,13 +162,27 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
           }`}
         >
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-sm">
-              U
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-sm uppercase">
+              {account?.email?.[0] ?? "?"}
             </div>
             <div className="truncate">
-              <div className="text-xs font-semibold text-slate-200 truncate">user@lambdamail.local</div>
+              <div className="text-xs font-semibold text-slate-200 truncate">
+                {account?.email ?? t("common.loading")}
+              </div>
+              {/* Reports what is actually configured. The old fixed "2FA
+                  active" reassured accounts that had no second factor at all. */}
               <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-400 inline" /> 2FA Ativo
+                {account?.mfa_enrolled ? (
+                  <>
+                    <ShieldCheck className="w-3 h-3 text-emerald-400 inline" />
+                    {t("settings.mfaEnabled")}
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert className="w-3 h-3 text-amber-400 inline" />
+                    {t("settings.mfaDisabled")}
+                  </>
+                )}
               </div>
             </div>
           </div>

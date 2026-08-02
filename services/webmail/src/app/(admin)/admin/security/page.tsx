@@ -8,11 +8,7 @@ import {
   ListOrdered,
   CheckCircle2,
   Search,
-  FileText,
-  Key,
   Shield,
-  Activity,
-  AlertTriangle,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
@@ -64,6 +60,15 @@ export default function AdminSecurityPage() {
   const [readiness, setReadiness] = useState<PreflightCheck[] | null>(null);
   const [tracedSteps, setTracedSteps] = useState<{ step: number; title: string; detail: string; status: string }[] | null>(null);
 
+  /**
+   * Live certificate state from the protocols service, which owns the cert
+   * watcher. The panel this replaced was three static cards - "Let's Encrypt
+   * RSA 4096", "3 1 1 SHA-256 Verified", "mode=enforce" - plus a fixed list of
+   * cipher suites, none of it read from anywhere. It reported a healthy,
+   * DANE-verified certificate on a deployment serving a self-signed one.
+   */
+  const [tlsStatus, setTlsStatus] = useState<Record<string, unknown> | null>(null);
+
   React.useEffect(() => {
     fetch("/api/v1/admin/rspamd/thresholds")
       .then((r) => (r.ok ? r.json() : null))
@@ -93,18 +98,32 @@ export default function AdminSecurityPage() {
       )
       .catch(() => undefined);
 
+    void fetch("/api/v1/admin/tls")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setTlsStatus)
+      .catch(() => undefined);
+
     void fetch("/api/v1/admin/preflight")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data && Array.isArray(data.checks)) {
           setReadiness(
-            data.checks.map((c: { name: string; status: string; detail?: string }, index: number) => ({
-              id: index + 1,
-              name: c.name,
-              category: "Security and DNS",
-              status: c.status === "PASS" ? "PASSED" : c.status === "FAIL" ? "FAILED" : "WARNING",
-              details: c.detail ?? "",
-            })) as PreflightCheck[]
+            // The service sends a key and its subject, so the label is built
+            // in the reader's language. It used to send a finished English
+            // sentence ("DNS records for example.com") that appeared verbatim
+            // in an otherwise translated console.
+            data.checks.map(
+              (
+                c: { key?: string; target?: string; name: string; status: string; detail?: string },
+                index: number,
+              ) => ({
+                id: index + 1,
+                name: c.key && c.target ? t(`admin.${c.key}`, { domain: c.target }) : c.name,
+                category: t("ui.domainVerification"),
+                status: c.status === "PASS" ? "PASSED" : c.status === "FAIL" ? "FAILED" : "WARNING",
+                details: c.detail ?? "",
+              }),
+            ) as PreflightCheck[]
           );
         }
       })
@@ -142,13 +161,11 @@ export default function AdminSecurityPage() {
           }))
         );
       } else {
-        setTracedSteps([
-          { step: 1, title: "Inbound SMTP TCP Handshake", detail: `Queue ID ${searchQueueId}: TLS 1.3 connection accepted`, status: "OK" },
-          { step: 2, title: "Verification SPF / DKIM", detail: "SPF pass, DKIM signature on default._domainkey valid", status: "OK" },
-          { step: 3, title: "Rspamd spam scan", detail: "Score 0.8 / 15.0 (symbols: BAYES_HAM, DKIM_TRACE)", status: "OK" },
-          { step: 4, title: "Transactional outbox write", detail: "Written to mail_messages with SKIP LOCKED", status: "OK" },
-          { step: 5, title: "Webmail WebSocket Push", detail: "Event published to the mailbox websocket hub de entrada", status: "ENTREGUE" },
-        ]);
+        // An empty result means the queue id was not found. This used to
+        // invent a five-step delivery trace instead - TLS 1.3 accepted, SPF
+        // pass, Rspamd score 0.8 - for a message that does not exist, which is
+        // the worst possible answer to "what happened to this mail?".
+        setTracedSteps([]);
       }
     } catch {
       // fallback
@@ -163,9 +180,7 @@ export default function AdminSecurityPage() {
           <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
             {t("admin.securityTitle")}
           </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Readiness scorecard, TLS policy, Rspamd thresholds and the audit trail.
-          </p>
+          <p className="text-sm text-slate-400 mt-1">{t("admin.securitySubtitle")}</p>
         </div>
 
         {/* Tab Selector Controls */}
@@ -179,7 +194,7 @@ export default function AdminSecurityPage() {
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Placar 10/10</span>
+            <span>{t("admin.tabReadiness")}</span>
           </button>
 
           <button
@@ -191,7 +206,7 @@ export default function AdminSecurityPage() {
             }`}
           >
             <Lock className="w-3.5 h-3.5" />
-            <span>TLS &amp; Certificados</span>
+            <span>{t("admin.tabTls")}</span>
           </button>
 
           <button
@@ -203,7 +218,7 @@ export default function AdminSecurityPage() {
             }`}
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Limites Rspamd</span>
+            <span>{t("admin.tabRspamd")}</span>
           </button>
 
           <button
@@ -215,7 +230,7 @@ export default function AdminSecurityPage() {
             }`}
           >
             <ListOrdered className="w-3.5 h-3.5" />
-            <span>Audit Log &amp; Trace</span>
+            <span>{t("admin.tabAudit")}</span>
           </button>
         </div>
       </div>
@@ -223,20 +238,42 @@ export default function AdminSecurityPage() {
       {/* TAB 1: 10/10 READINESS SCORECARD */}
       {activeTab === "readiness" && (
         <div className="space-y-6">
-          <Card className="flex items-center justify-between p-6">
+          {/* The score is counted from the checks that came back. It used to
+              read a hardcoded "10 / 10" with an "all checks passed" badge
+              regardless of what the preflight endpoint reported - including
+              when it reported failures, or nothing at all. */}
+          <Card className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6">
             <div>
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 <Shield className="w-5 h-5 text-emerald-400" />
-                Mail server readiness scorecard
+                {t("admin.preflightTitle")}
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Ten non-negotiable checks before this node carries production mail.
-              </p>
+              <p className="text-xs text-slate-400 mt-1">{t("admin.readinessIntro")}</p>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-3xl font-black text-emerald-400 font-mono">10 / 10</span>
-              <Badge variant="success">TODAS AS CHECAGENS APROVADAS</Badge>
-            </div>
+            {readiness && readiness.length > 0 ? (
+              (() => {
+                const passed = readiness.filter((c) => c.status === "PASSED").length;
+                const total = readiness.length;
+                return (
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={`text-3xl font-black font-mono ${
+                        passed === total ? "text-emerald-400" : "text-amber-400"
+                      }`}
+                    >
+                      {passed} / {total}
+                    </span>
+                    <Badge variant={passed === total ? "success" : "warning"}>
+                      {passed === total
+                        ? t("ui.allChecksPassed")
+                        : t("admin.checksPassed", { passed, total })}
+                    </Badge>
+                  </div>
+                );
+              })()
+            ) : (
+              <span className="text-xs text-slate-500">{t("admin.noChecks")}</span>
+            )}
           </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -257,42 +294,63 @@ export default function AdminSecurityPage() {
         </div>
       )}
 
-      {/* TAB 2: TLS CERTIFICATES & POLICY PANEL */}
+      {/* TAB 2: TLS - read from the protocols service cert watcher */}
       {activeTab === "tls" && (
         <div className="space-y-6 text-xs">
           <Card className="space-y-4">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Lock className="w-5 h-5 text-indigo-400" />
-              TLS certificates and transport policy
+              {t("admin.tlsTitle")}
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
-                <div className="text-slate-400 font-medium">Certificado Traefik / ACME</div>
-                <div className="text-emerald-400 font-bold text-sm">Let&apos;s Encrypt RSA 4096</div>
-                <div className="text-[10px] text-slate-500 font-mono">Renewal is automatic</div>
-              </div>
 
-              <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
-                <div className="text-slate-400 font-medium">Status Registros DANE TLSA</div>
-                <div className="text-emerald-400 font-bold text-sm">3 1 1 SHA-256 Verificado</div>
-                <div className="text-[10px] text-slate-500 font-mono">Cadeia DNSSEC verificada na porta 25</div>
-              </div>
+            {tlsStatus ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
+                  <div className="text-slate-400 font-medium">{t("admin.certificateState")}</div>
+                  <div
+                    className={`font-bold text-sm ${
+                      tlsStatus.state === "OK" ? "text-emerald-400" : "text-amber-400"
+                    }`}
+                  >
+                    {String(tlsStatus.state ?? "UNKNOWN")}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    {typeof tlsStatus.expires_in_days === "number"
+                      ? t("admin.expiresInDays", { days: tlsStatus.expires_in_days })
+                      : t("admin.noCertificate")}
+                  </div>
+                </div>
 
-              <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
-                <div className="text-slate-400 font-medium">MTA-STS policy mode</div>
-                <div className="text-emerald-400 font-bold text-sm">mode=enforce</div>
-                <div className="text-[10px] text-slate-500 font-mono">max_age=604800 (7 dias)</div>
-              </div>
-            </div>
-          </Card>
+                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
+                  <div className="text-slate-400 font-medium">{t("admin.mailHost")}</div>
+                  <div className="text-slate-100 font-bold text-sm break-all">
+                    {String(tlsStatus.mail_host ?? "-")}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    {t("admin.tlsMode")}: {String(tlsStatus.tls_mode ?? "-")}
+                  </div>
+                </div>
 
-          <Card className="space-y-3">
-            <h3 className="font-bold text-slate-100">Accepted TLS cipher suites (ports 25 / 587 / 993)</h3>
-            <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 space-y-1.5">
-              <div className="text-emerald-400 font-semibold">TLS_AES_256_GCM_SHA384 (TLS 1.3) [PREFERENCIAL]</div>
-              <div>TLS_CHACHA20_POLY1305_SHA256 (TLS 1.3)</div>
-              <div>ECDHE-ECDSA-AES256-GCM-SHA384 (TLS 1.2)</div>
-            </div>
+                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
+                  <div className="text-slate-400 font-medium">{t("admin.watcherHealthy")}</div>
+                  <div
+                    className={`font-bold text-sm ${
+                      tlsStatus.watcher_healthy ? "text-emerald-400" : "text-amber-400"
+                    }`}
+                  >
+                    {tlsStatus.watcher_healthy ? t("ui.healthy") : t("common.unavailable")}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    {t("admin.lastReload")}:{" "}
+                    {tlsStatus.last_reload
+                      ? new Date(String(tlsStatus.last_reload)).toLocaleString()
+                      : t("common.never")}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-6 text-center text-slate-500">{t("errors.loadFailed")}</div>
+            )}
           </Card>
         </div>
       )}
@@ -303,21 +361,21 @@ export default function AdminSecurityPage() {
           <div>
             <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
               <Sliders className="w-5 h-5 text-indigo-400" />
-              Rspamd score thresholds
+              {t("admin.tabRspamd")}
             </h2>
-            <p className="text-slate-400">Set the scores that trigger greylisting, header tagging and rejection.</p>
+            <p className="text-slate-400">{t("admin.rspamdIntro")}</p>
           </div>
 
           {rspamdSaved && (
             <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>Rspamd thresholds saved.</span>
+              <span>{t("admin.rspamdSaved")}</span>
             </div>
           )}
 
           <form onSubmit={handleSaveRspamd} className="space-y-4">
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">Greylist score (default 4.0)</label>
+              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.greylistScore")}</label>
               <input
                 type="number"
                 step="0.5"
@@ -328,7 +386,7 @@ export default function AdminSecurityPage() {
             </div>
 
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">Header-tagging score (default 6.0)</label>
+              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.headerScore")}</label>
               <input
                 type="number"
                 step="0.5"
@@ -339,7 +397,7 @@ export default function AdminSecurityPage() {
             </div>
 
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">Reject score (default 15.0)</label>
+              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.rejectScore")}</label>
               <input
                 type="number"
                 step="0.5"
@@ -350,7 +408,7 @@ export default function AdminSecurityPage() {
             </div>
 
             <Button type="submit" variant="primary" size="md">
-              Salvar Limites Rspamd
+              {t("admin.saveThresholds")}
             </Button>
           </form>
         </Card>
@@ -364,9 +422,9 @@ export default function AdminSecurityPage() {
             <div>
               <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
                 <Search className="w-5 h-5 text-indigo-400" />
-                Delivery trace by queue ID
+                {t("admin.traceTitle")}
               </h2>
-              <p className="text-slate-400">Rastreie as etapas exatas de processamento de qualquer e-mail por Queue ID ou UUID.</p>
+              <p className="text-slate-400">{t("admin.tracePlaceholder")}</p>
             </div>
 
             <form onSubmit={handleSearchQueueId} className="flex gap-3">
@@ -374,12 +432,12 @@ export default function AdminSecurityPage() {
                 type="text"
                 value={searchQueueId}
                 onChange={(e) => setSearchQueueId(e.target.value)}
-                placeholder="Informe o Queue ID (ex: q-9812-ax)..."
+                placeholder={t("admin.tracePlaceholder")}
                 required
                 className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
               <Button type="submit" variant="primary" size="md">
-                Trace
+                {t("admin.traceTitle")}
               </Button>
             </form>
 
@@ -404,7 +462,7 @@ export default function AdminSecurityPage() {
           {/* Immutable System Audit Log Table */}
           <Card className="p-0 overflow-hidden">
             <div className="p-4 border-b border-slate-800 bg-slate-900/80 font-bold text-xs text-slate-300">
-              Audit log
+              {t("admin.auditLog")}
             </div>
 
             <div className="overflow-x-auto">

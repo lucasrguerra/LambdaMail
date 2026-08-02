@@ -287,6 +287,24 @@ describeDb("auth API against a real database", () => {
     const dashboard = await get("/api/v1/admin/dashboard", verified.body.token);
     expect(dashboard.status).toBe(200);
     expect(dashboard.body).toHaveProperty("queue_depth");
+
+    // The console's sidebar reads its identity from here. It cannot use
+    // /api/v1/user/me, because extractToken picks the cookie from the URL
+    // prefix and an operator may reach /admin/login without ever having opened
+    // webmail. Until this route existed the sidebar printed a fixed
+    // "admin@lambdamail.local" with a hardcoded "SUPER_ADMIN (2FA)".
+    const identity = await get("/api/v1/admin/me", verified.body.token);
+    expect(identity.status).toBe(200);
+    expect(identity.body.email).toBe(adminEmail());
+    expect(identity.body.role).toBe("SUPER_ADMIN");
+    expect(identity.body.mfa_enrolled).toBe(true);
+  });
+
+  it("refuses /api/v1/admin/me to a user-surface token", async () => {
+    const login = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
+    const token = (login.body.token ?? login.body.challenge_token) as unknown as string;
+    const res = await get("/api/v1/admin/me", token);
+    expect(res.status).toBe(401);
   });
 
   it("locks the account after repeated failures", async () => {

@@ -12,7 +12,6 @@ import {
   List,
   ListOrdered,
   Link as LinkIcon,
-  Trash2,
   Undo2,
   X,
   Sparkles,
@@ -59,7 +58,7 @@ export default function ComposePage({
   useEffect(() => {
     if (!to && !subject) return;
     const timer = setTimeout(() => {
-      setDraftStatus("Rascunho salvo automaticamente");
+      setDraftStatus(t("mail.draftSaved"));
     }, 2500);
     return () => clearTimeout(timer);
   }, [to, subject]);
@@ -148,13 +147,16 @@ export default function ComposePage({
           <div className="p-4 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-between text-indigo-300 text-xs">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-indigo-400 animate-spin" />
-              <span>
-                {t("mail.undoSend")} ({undoSeconds}s restantes)
-              </span>
+              {/* The countdown is a placeholder inside the message, not text
+                  bolted on after it. It used to be both: the bundle's own
+                  "{seconds}" was never substituted and a second, hardcoded
+                  count was appended, so this read "Undo Send ({seconds}s
+                  remaining) (9s remaining)". */}
+              <span>{t("mail.undoSend", { seconds: undoSeconds })}</span>
             </div>
             <Button variant="primary" size="sm" onClick={handleUndo}>
               <Undo2 className="w-3.5 h-3.5" />
-              Desfazer Envio
+              {t("mail.undoSendAction")}
             </Button>
           </div>
         )}
@@ -168,7 +170,7 @@ export default function ComposePage({
                 onClick={() => setShowCcBcc(!showCcBcc)}
                 className="text-indigo-400 hover:text-indigo-300 font-medium hover:underline"
               >
-                {showCcBcc ? "- Ocultar Cc/Bcc" : "+ Adicionar Cc/Bcc"}
+                {showCcBcc ? t("mail.hideCcBcc") : t("mail.showCcBcc")}
               </button>
             </div>
             <input
@@ -231,7 +233,7 @@ export default function ComposePage({
                   type="button"
                   onClick={() => executeFormat("bold")}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title="Negrito"
+                  title={t("mail.bold")}
                 >
                   <Bold className="w-4 h-4" />
                 </button>
@@ -239,7 +241,7 @@ export default function ComposePage({
                   type="button"
                   onClick={() => executeFormat("italic")}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title="Italic"
+                  title={t("mail.italic")}
                 >
                   <Italic className="w-4 h-4" />
                 </button>
@@ -247,7 +249,7 @@ export default function ComposePage({
                   type="button"
                   onClick={() => executeFormat("underline")}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title="Sublinhado"
+                  title={t("mail.underline")}
                 >
                   <Underline className="w-4 h-4" />
                 </button>
@@ -255,7 +257,7 @@ export default function ComposePage({
                   type="button"
                   onClick={() => executeFormat("strikeThrough")}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title="Tachado"
+                  title={t("mail.strikethrough")}
                 >
                   <Strikethrough className="w-4 h-4" />
                 </button>
@@ -264,7 +266,7 @@ export default function ComposePage({
                   type="button"
                   onClick={() => executeFormat("insertUnorderedList")}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title="Lista"
+                  title={t("mail.bulletList")}
                 >
                   <List className="w-4 h-4" />
                 </button>
@@ -272,7 +274,7 @@ export default function ComposePage({
                   type="button"
                   onClick={() => executeFormat("insertOrderedList")}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title="Lista Numerada"
+                  title={t("mail.numberedList")}
                 >
                   <ListOrdered className="w-4 h-4" />
                 </button>
@@ -280,11 +282,11 @@ export default function ComposePage({
                 <button
                   type="button"
                   onClick={() => {
-                    const url = prompt("Insira a URL:");
+                    const url = prompt(t("mail.insertUrl"));
                     if (url) executeFormat("createLink", url);
                   }}
                   className="p-1.5 hover:bg-slate-800 rounded-lg text-indigo-400 hover:text-indigo-300"
-                  title="Inserir Link"
+                  title={t("mail.insertLink")}
                 >
                   <LinkIcon className="w-4 h-4" />
                 </button>
@@ -302,10 +304,10 @@ export default function ComposePage({
           {/* Attachment Selector & Display */}
           <div className="pt-2">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold text-slate-300">Anexos ({attachments.length})</span>
+              <span className="font-semibold text-slate-300">{t("mail.attachments", { count: attachments.length })}</span>
               <label className="cursor-pointer text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 font-medium">
                 <Paperclip className="w-3.5 h-3.5" />
-                <span>Adicionar Arquivos...</span>
+                <span>{t("mail.addFiles")}</span>
                 <input
                   type="file"
                   multiple
@@ -314,6 +316,16 @@ export default function ComposePage({
                 />
               </label>
             </div>
+
+            {/* Says so plainly rather than letting someone attach a contract
+                and watch it silently not arrive: /mail/send is handed the file
+                names only, because there is no upload endpoint behind this
+                picker yet. */}
+            {attachments.length > 0 && (
+              <div className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
+                {t("mail.attachmentsUnsupported")}
+              </div>
+            )}
 
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -343,13 +355,13 @@ export default function ComposePage({
           <div className="flex items-center justify-between pt-4 border-t border-slate-800">
             <Link href="/user/mail/inbox">
               <Button variant="ghost" size="md">
-                Descartar
+                {t("mail.discard")}
               </Button>
             </Link>
 
             <Button type="submit" variant="primary" size="md" disabled={sending}>
               <Send className="w-4 h-4" />
-              <span>{sending ? "Sending..." : "Send message"}</span>
+              <span>{sending ? t("mail.sending") : t("mail.sendMessage")}</span>
             </Button>
           </div>
         </form>

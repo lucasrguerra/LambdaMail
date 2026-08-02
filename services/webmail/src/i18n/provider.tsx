@@ -1,12 +1,21 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { LOCALE_COOKIE, MESSAGES, DEFAULT_LOCALE, translate, type Locale } from "./config";
+import {
+  LOCALE_COOKIE,
+  MESSAGES,
+  DEFAULT_LOCALE,
+  translate,
+  type Locale,
+  type TranslateParams,
+} from "./config";
+
+export type TranslateFn = (key: string, params?: TranslateParams) => string;
 
 interface I18nContextValue {
   locale: Locale;
   setLocale: (locale: Locale) => void;
-  t: (key: string) => string;
+  t: TranslateFn;
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
@@ -32,7 +41,7 @@ export function I18nProvider({ locale: initialLocale, children }: { locale: Loca
 
   const value = useMemo<I18nContextValue>(() => {
     const messages = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE];
-    return { locale, setLocale, t: (key: string) => translate(messages, key) };
+    return { locale, setLocale, t: (key, params) => translate(messages, key, params) };
   }, [locale, setLocale]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
@@ -47,6 +56,6 @@ export function useI18n(): I18nContextValue {
 }
 
 /** Shorthand for components that only need to translate. */
-export function useTranslations(): (key: string) => string {
+export function useTranslations(): TranslateFn {
   return useI18n().t;
 }

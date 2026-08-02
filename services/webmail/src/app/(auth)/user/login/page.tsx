@@ -2,7 +2,13 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { Mail, Lock, ShieldCheck, ArrowLeft, KeyRound, AlertCircle } from "lucide-react";
+import {
+  Mail,
+  Lock,
+  ShieldCheck,
+  KeyRound,
+  AlertCircle,
+} from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Card } from "../../../../components/ui/Card";
 import { Button } from "../../../../components/ui/Button";
@@ -146,12 +152,6 @@ export default function UserLoginPage() {
           </Button>
         </form>
 
-        <div className="mt-6 pt-4 border-t border-slate-800/80 text-center">
-          <Link href="/" className="text-xs text-slate-400 hover:text-slate-200 transition-colors inline-flex items-center gap-1.5">
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to surface selection</span>
-          </Link>
-        </div>
       </Card>
     </div>
   );

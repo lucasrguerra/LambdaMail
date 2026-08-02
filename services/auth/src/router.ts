@@ -149,6 +149,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     }
     if (url === "/api/v1/user/password" && method === "PUT") return changePassword(req, res, session!);
 
+    if (url === "/api/v1/admin/me" && method === "GET") return me(res, session!);
     if (url === "/api/v1/admin/audit" && method === "GET") return adminAudit(res);
     if (url === "/api/v1/admin/mailboxes" && method === "POST") return adminCreateMailbox(req, res, session!);
     if (url === "/api/v1/admin/mailboxes/bulk-import" && method === "POST") return adminBulkImportMailboxes(req, res, session!);
@@ -361,6 +362,16 @@ function logout(res: ServerResponse): void {
 
 // -------------------------------------------------------------- user area
 
+/**
+ * The signed-in identity, served on both /user/me and /admin/me.
+ *
+ * Two paths rather than one because extractToken picks the cookie from the URL
+ * prefix: an /api/v1/user/* call reads lm_user_session. The admin console has
+ * only lm_admin_session - an operator can reach /admin/login directly without
+ * ever opening webmail - so it needs a path that reads the admin cookie. Both
+ * end up here, and the session they resolve from decides whose details come
+ * back, so neither can be used to look up somebody else.
+ */
 async function me(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
   const mailbox = await repo.findMailboxByEmail(session.email);
   if (!mailbox) return sendJson(res, 404, { error: "NOT_FOUND", message: "Mailbox not found" });
@@ -696,7 +707,17 @@ async function adminReconcileDomain(req: IncomingMessage, res: ServerResponse, s
   }
 
   await repo.recordAudit(session.sub, clientIp(req), "domain.reconcile", "domain", domainId, {});
-  sendJson(res, 200, { ok: true, records_verified: 13, status: "VERIFIED" });
+
+  // Reports what this actually did, which is record the request. It used to
+  // answer {records_verified: 13, status: "VERIFIED"} unconditionally - for any
+  // domain id, including one that does not exist - and the console printed that
+  // as "all 13 DNS records verified". Nothing here resolves a name, so nothing
+  // here may claim a record was checked.
+  sendJson(res, 200, {
+    ok: true,
+    status: "REQUESTED",
+    message: "Reconciliation was recorded. DNS records are not verified by this endpoint yet.",
+  });
 }
 
 

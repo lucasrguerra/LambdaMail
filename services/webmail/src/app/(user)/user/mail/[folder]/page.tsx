@@ -8,10 +8,8 @@ import {
   Paperclip,
   Reply,
   Forward,
-  ShieldAlert,
   Inbox,
   Filter,
-  CheckCircle2,
   Image as ImageIcon,
   Mail,
   Clock,
@@ -158,7 +156,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                   : "bg-slate-800/60 text-slate-400 hover:text-slate-200"
               }`}
             >
-              Todos ({messages.length})
+              {t("mail.allMessages")} ({messages.length})
             </button>
             <button
               onClick={() => setActiveFilter("unread")}
@@ -168,7 +166,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                   : "bg-slate-800/60 text-slate-400 hover:text-slate-200"
               }`}
             >
-              Unread
+              {t("mail.unreadFilter")}
             </button>
             <button
               onClick={() => setActiveFilter("attachment")}
@@ -178,7 +176,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                   : "bg-slate-800/60 text-slate-400 hover:text-slate-200"
               }`}
             >
-              Anexos
+              {t("mail.attachmentsFilter")}
             </button>
           </div>
         </div>
@@ -366,7 +364,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
               {bodyHtml ? (
                 <div className="bg-white rounded-2xl overflow-hidden shadow-2xl border border-slate-800 min-h-[350px]">
                   <iframe
-                    title="Message body"
+                    title={t("ui.messageBody")}
                     srcDoc={bodyHtml}
                     sandbox=""
                     className="w-full h-[500px] border-0"

@@ -58,17 +58,35 @@ export function negotiateLocale(acceptLanguage: string | null): Locale {
   return DEFAULT_LOCALE;
 }
 
+/** Values substituted into a message's {placeholders}. */
+export type TranslateParams = Record<string, string | number>;
+
 /**
- * Resolves a dotted key such as "auth.signInButton".
+ * Fills {name} placeholders from params.
+ *
+ * A placeholder with no matching param is left alone rather than blanked, so a
+ * missing value reads as "{seconds}" - visibly wrong - instead of silently
+ * producing a sentence with a hole in it.
+ */
+function interpolate(template: string, params?: TranslateParams): string {
+  if (!params) return template;
+  return template.replace(/\{(\w+)\}/g, (whole, name: string) =>
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : whole,
+  );
+}
+
+/**
+ * Resolves a dotted key such as "auth.signInButton", substituting any
+ * {placeholders} from params.
  *
  * A missing key falls back to English and, failing that, returns the key
  * itself: a screen showing "settings.title" is a visible bug report, whereas
  * throwing would blank the page over a typo in a label.
  */
-export function translate(messages: Messages, key: string): string {
+export function translate(messages: Messages, key: string, params?: TranslateParams): string {
   const [namespace, name] = key.split(".");
   const value = messages?.[namespace]?.[name];
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return interpolate(value, params);
   const fallback = MESSAGES[DEFAULT_LOCALE]?.[namespace]?.[name];
-  return typeof fallback === "string" ? fallback : key;
+  return typeof fallback === "string" ? interpolate(fallback, params) : key;
 }

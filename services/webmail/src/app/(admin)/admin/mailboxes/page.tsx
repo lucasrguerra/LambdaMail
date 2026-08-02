@@ -10,7 +10,6 @@ import {
   Unlock,
   Trash2,
   ShieldCheck,
-  ShieldAlert,
   ArrowRight,
   Upload,
   AlertCircle,
@@ -106,7 +105,7 @@ export default function AdminMailboxesPage() {
         }))
       );
     } catch {
-      setError("Could not load the accounts.");
+      setError(t("errors.loadFailed"));
     }
   }, []);
 
@@ -222,7 +221,7 @@ export default function AdminMailboxesPage() {
         setError(data.message ?? "Falha ao importar CSV");
       }
     } catch {
-      setError("Network error during the bulk import.");
+      setError(t("errors.serverError"));
     }
     setTimeout(() => setCsvSuccessMessage(null), 4000);
   };
@@ -236,7 +235,7 @@ export default function AdminMailboxesPage() {
             {t("admin.mailboxesTitle")}
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Accounts, aliases, CSV import and authentication policy.
+            {t("admin.mailboxesSubtitle")}
           </p>
         </div>
 
@@ -275,7 +274,7 @@ export default function AdminMailboxesPage() {
             }`}
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>CSV import</span>
+            <span>CSV</span>
           </button>
         </div>
       </div>
@@ -293,10 +292,10 @@ export default function AdminMailboxesPage() {
           <div>
             <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Two-factor requirement policy
+              {t("admin.mfaPolicyTitle")}
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Choose how strictly this domain requires a second factor.
+              {t("admin.mfaPolicyIntro")}
             </p>
           </div>
 
@@ -309,7 +308,7 @@ export default function AdminMailboxesPage() {
                   : "border-slate-800 text-slate-400 hover:text-slate-200"
               }`}
             >
-              Opcional
+              {t("admin.mfaOptional")}
             </button>
             <button
               onClick={() => setMfaPolicy("required_admins")}
@@ -319,7 +318,7 @@ export default function AdminMailboxesPage() {
                   : "border-slate-800 text-slate-400 hover:text-slate-200"
               }`}
             >
-              Required for admins
+              {t("admin.mfaAdmins")}
             </button>
             <button
               onClick={() => setMfaPolicy("required_all")}
@@ -329,7 +328,7 @@ export default function AdminMailboxesPage() {
                   : "border-slate-800 text-slate-400 hover:text-slate-200"
               }`}
             >
-              Required for everyone
+              {t("admin.mfaEveryone")}
             </button>
           </div>
         </div>
@@ -358,7 +357,7 @@ export default function AdminMailboxesPage() {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Initial password (at least 12 characters)"
+                placeholder={t("ui.newPassword")}
                 minLength={12}
                 required
                 className="px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
@@ -376,11 +375,11 @@ export default function AdminMailboxesPage() {
                 type="number"
                 value={newQuota}
                 onChange={(e) => setNewQuota(parseInt(e.target.value, 10))}
-                placeholder="Cota (MB)"
+                placeholder={t("ui.storageQuota")}
                 className="px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
               />
               <Button type="submit" variant="primary" size="md">
-                Criar Conta
+                {t("admin.createAccount")}
               </Button>
             </form>
           </Card>
@@ -395,11 +394,11 @@ export default function AdminMailboxesPage() {
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
                     <th className="p-3.5">{t("ui.emailAddress")}</th>
-                    <th className="p-3.5">Role</th>
-                    <th className="p-3.5">{t("ui.storageQuota")}</th>
-                    <th className="p-3.5">Status 2FA</th>
                     <th className="p-3.5">{t("ui.accountStatus")}</th>
-                    <th className="p-3.5">Actions</th>
+                    <th className="p-3.5">{t("ui.storageQuota")}</th>
+                    <th className="p-3.5">{t("ui.twoFactorSection")}</th>
+                    <th className="p-3.5">{t("ui.accountStatus")}</th>
+                    <th className="p-3.5">{t("ui.actions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -465,7 +464,7 @@ export default function AdminMailboxesPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-sm">
                 <Plus className="w-4 h-4 text-emerald-400" />
-                Criar Alias de Roteamento
+                {t("admin.createAlias")}
               </CardTitle>
             </CardHeader>
             <form onSubmit={handleCreateAlias} className="flex flex-col sm:flex-row gap-3 text-xs">
@@ -486,7 +485,7 @@ export default function AdminMailboxesPage() {
                 className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
               <Button type="submit" variant="primary" size="md">
-                Adicionar Alias
+                {t("admin.addAlias")}
               </Button>
             </form>
           </Card>
@@ -500,10 +499,10 @@ export default function AdminMailboxesPage() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                    <th className="p-3.5">Alias address</th>
-                    <th className="p-3.5">Destino Final</th>
-                    <th className="p-3.5">Domain</th>
-                    <th className="p-3.5">Actions</th>
+                    <th className="p-3.5">{t("ui.emailAddress")}</th>
+                    <th className="p-3.5">{t("ui.destination")}</th>
+                    <th className="p-3.5">{t("admin.domainsTitle")}</th>
+                    <th className="p-3.5">{t("ui.actions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -563,7 +562,7 @@ export default function AdminMailboxesPage() {
 
           <div className="flex gap-3">
             <Button variant="secondary" size="md" onClick={handleParseCsv}>
-              Preview CSV
+              {t("admin.csvPreview")}
             </Button>
 
             {csvPreview.length > 0 && (

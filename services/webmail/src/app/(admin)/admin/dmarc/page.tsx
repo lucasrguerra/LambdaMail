@@ -25,7 +25,7 @@ export default function AdminDmarcPage() {
 
   useEffect(() => {
     fetch("/api/v1/admin/dmarc")
-      .then((res) => res.json())
+      .then((res) => (res.ok ? res.json() : null))
       .then((d) => setData(d))
       .catch(() => {});
   }, []);
@@ -34,27 +34,27 @@ export default function AdminDmarcPage() {
     <div className="p-8 space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-white mb-1">{t("admin.dmarcTitle")}</h1>
-        <p className="text-xs text-slate-400">Ingested XML aggregate reports breakdown (dmarc_reports table).</p>
+        <p className="text-xs text-slate-400">{t("admin.dmarcSubtitle")}</p>
       </div>
 
       {/* DMARC Stats Summary Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
           <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.totalEvaluated")}</div>
-          <div className="text-3xl font-extrabold text-white">{data?.total_messages ?? 1250}</div>
+          <div className="text-3xl font-extrabold text-white">{data ? data.total_messages : t("ui.noData")}</div>
         </div>
 
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
           <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.spfRatio")}</div>
           <div className="text-3xl font-extrabold text-emerald-400">
-            {data ? Math.round((data.spf_pass_count / data.total_messages) * 100) : 98}%
+            {data && data.total_messages > 0 ? `${Math.round((data.spf_pass_count / data.total_messages) * 100)}%` : t("ui.noData")}
           </div>
         </div>
 
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
           <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.dkimAlignment")}</div>
           <div className="text-3xl font-extrabold text-emerald-400">
-            {data ? Math.round((data.dkim_pass_count / data.total_messages) * 100) : 97}%
+            {data && data.total_messages > 0 ? `${Math.round((data.dkim_pass_count / data.total_messages) * 100)}%` : t("ui.noData")}
           </div>
         </div>
 
@@ -67,7 +67,7 @@ export default function AdminDmarcPage() {
       {/* Sending Sources Table */}
       <div className="glass-panel rounded-2xl border border-slate-800 overflow-hidden">
         <div className="p-4 border-b border-slate-800 bg-slate-900/60 font-bold text-xs text-slate-300">
-          Inbound Aggregate Reporting Sending IP Sources
+          {t("ui.sourceIp")}
         </div>
 
         <div className="overflow-x-auto">
