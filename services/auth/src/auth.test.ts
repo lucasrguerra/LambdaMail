@@ -5,14 +5,40 @@ import { generateRecoveryCodes, generateAppPassword, hashAppPassword, verifyAppP
 import { createJwt, verifyJwt, isSurfaceAuthorized, isStepUpMfaRequired } from "./session.js";
 
 describe("crypto module", () => {
-  it("hashes and verifies passwords correctly", () => {
+  it("hashes and verifies passwords correctly", async () => {
     const password = "SecretPassword123!";
-    const hash = hashPassword(password);
-    expect(verifyPassword(password, hash)).toBe(true);
-    expect(verifyPassword("WrongPassword", hash)).toBe(false);
+    const hash = await hashPassword(password);
+    expect(hash.startsWith("$argon2id$")).toBe(true);
+    expect(await verifyPassword(password, hash)).toBe(true);
+    expect(await verifyPassword("WrongPassword", hash)).toBe(false);
+  });
+
+  // The Go service (alexedwards/argon2id) writes the hashes this service has
+  // to accept, and vice versa. A mismatch means a password set through the
+  // mail stack cannot be used to log into the webmail.
+  it("verifies an Argon2id hash produced by the Go service", async () => {
+    const goHash = "$argon2id$v=19$m=65536,t=1,p=16$lw9+BftyPYW4ILsZu9ZAPw$ueO26QNhturq/vuNMlEgVZhXTZwQi+tPYeUFjaeRdIs";
+    expect(await verifyPassword("dev-password-only", goHash)).toBe(true);
+    expect(await verifyPassword("wrong", goHash)).toBe(false);
+  });
+
+  // Regression: verifyPassword used to fall back to comparing the password
+  // against the stored hash, so anyone holding a database dump could
+  // authenticate by sending the hash back as the password.
+  it("refuses to accept the stored hash itself as the password", async () => {
+    const hash = await hashPassword("RealPassword123!");
+    expect(await verifyPassword(hash, hash)).toBe(false);
+  });
+
+  it("rejects any hash that is not argon2id, instead of guessing a scheme", async () => {
+    const sha256OfPassword = "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8";
+    expect(await verifyPassword("password", sha256OfPassword)).toBe(false);
+    expect(await verifyPassword("password", "pbkdf2$sha512$100000$abc$def")).toBe(false);
+    expect(await verifyPassword("password", "")).toBe(false);
   });
 
   it("encrypts and decrypts secrets using AES-256-GCM", () => {
+    process.env.LAMBDAMAIL_MASTER_KEY = "test-master-key-32-chars-long!!";
     const secret = "JBSWY3DPEHPK3PXP";
     const encrypted = encryptSecret(secret);
     const decrypted = decryptSecret(encrypted.encrypted, encrypted.nonce, encrypted.keyVersion);
@@ -51,18 +77,19 @@ describe("totp module", () => {
 });
 
 describe("mfaHelpers module", () => {
-  it("generates 10 recovery codes and hashes them", () => {
-    const { rawCodes, hashedCodes } = generateRecoveryCodes(10);
+  it("generates 10 recovery codes and hashes them", async () => {
+    const { rawCodes, hashedCodes } = await generateRecoveryCodes(10);
     expect(rawCodes.length).toBe(10);
     expect(hashedCodes.length).toBe(10);
-    expect(verifyPassword(rawCodes[0], hashedCodes[0])).toBe(true);
+    expect(await verifyPassword(rawCodes[0], hashedCodes[0])).toBe(true);
+    expect(hashedCodes.every((h) => h.startsWith("$argon2id$"))).toBe(true);
   });
 
-  it("generates app passwords with prefix", () => {
+  it("generates app passwords with prefix", async () => {
     const appPass = generateAppPassword();
     expect(appPass.startsWith("lmp_")).toBe(true);
-    const hash = hashAppPassword(appPass);
-    expect(verifyAppPassword(appPass, hash)).toBe(true);
+    const hash = await hashAppPassword(appPass);
+    expect(await verifyAppPassword(appPass, hash)).toBe(true);
   });
 });
 
@@ -76,6 +103,7 @@ describe("surface isolation and session module", () => {
       surface: "user",
       aud: "lambdamail:user",
       mfaSatisfied: false,
+      purpose: "session",
     });
 
     const parsed = verifyJwt(userToken);
@@ -95,6 +123,7 @@ describe("surface isolation and session module", () => {
       aud: "lambdamail:admin",
       mfaSatisfied: true,
       mfaSatisfiedAt: Date.now(),
+      purpose: "session",
     });
 
     const parsed = verifyJwt(adminToken);
@@ -114,9 +143,33 @@ describe("surface isolation and session module", () => {
       aud: "lambdamail:admin",
       mfaSatisfied: true,
       mfaSatisfiedAt: oldTimestamp,
+      purpose: "session",
     });
 
     const parsed = verifyJwt(adminToken)!;
     expect(isStepUpMfaRequired(parsed, 15)).toBe(true);
+  });
+});
+
+// A challenge token is issued after the password but before the second
+// factor. Treating it as a session would skip MFA entirely.
+describe("challenge tokens are not sessions", () => {
+  it("refuses a challenge token wherever a session is required", () => {
+    const challenge = createJwt({
+      sub: "mailbox-123",
+      email: "admin@domain.com",
+      role: "SUPER_ADMIN",
+      domainId: "domain-123",
+      surface: "admin",
+      aud: "lambdamail:admin",
+      mfaSatisfied: true,
+      mfaSatisfiedAt: Date.now(),
+      purpose: "mfa_challenge",
+    });
+
+    const parsed = verifyJwt(challenge);
+    expect(parsed).not.toBeNull();
+    expect(isSurfaceAuthorized(parsed, "admin")).toBe(false);
+    expect(isSurfaceAuthorized(parsed, "user")).toBe(false);
   });
 });

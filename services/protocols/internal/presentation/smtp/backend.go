@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net"
 
 	gosmtp "github.com/emersion/go-smtp"
@@ -157,6 +158,10 @@ func (s *session) Data(r io.Reader) error {
 		// Anything else is an internal failure. It is reported as temporary so
 		// the sender retries: the message was not stored, and telling the peer
 		// it failed permanently would discard mail over a bug on this side.
+		//
+		// Logged because the peer only ever sees "temporary error"; without
+		// this line an operator has a bounced delivery and no cause.
+		log.Printf("smtp: could not store message from %s: %v", s.from, err)
 		return &gosmtp.SMTPError{
 			Code:         451,
 			EnhancedCode: gosmtp.EnhancedCode{4, 3, 0},

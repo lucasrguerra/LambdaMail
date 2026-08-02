@@ -2,8 +2,10 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useTranslations } from "../../../../i18n/provider";
 
 export default function AdminLoginPage() {
+  const t = useTranslations();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
@@ -59,7 +61,7 @@ export default function AdminLoginPage() {
             &#9881;
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">Management Console</h1>
+            <h1 className="text-xl font-bold text-white">{t("auth.adminLoginTitle")}</h1>
             <p className="text-xs text-slate-400">Surface: /admin/* (Cookie: Path=/admin, MFA Mandatory)</p>
           </div>
         </div>
@@ -74,7 +76,7 @@ export default function AdminLoginPage() {
           {!challengeToken ? (
             <>
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Administrator Email</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.emailLabel")}</label>
                 <input
                   type="email"
                   value={email}
@@ -86,7 +88,7 @@ export default function AdminLoginPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Password</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.passwordLabel")}</label>
                 <input
                   type="password"
                   value={password}
@@ -100,9 +102,9 @@ export default function AdminLoginPage() {
           ) : (
             <div>
               <div className="p-3 mb-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
-                Mandatory Admin 2FA Requirement (PLAN.md ADR-008). Enter your 6-digit TOTP code.
+                {t("auth.mfaRequired")}
               </div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Admin 2FA Code (6 Digits)</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.totpCodeLabel")}</label>
               <input
                 type="text"
                 value={mfaCode}
@@ -120,7 +122,7 @@ export default function AdminLoginPage() {
             disabled={loading}
             className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shadow-lg shadow-emerald-600/20 disabled:opacity-50"
           >
-            {loading ? "Verifying Admin Credentials..." : challengeToken ? "Verify Admin 2FA" : "Sign In to Admin Console"}
+            {loading ? t("common.loading") : challengeToken ? t("auth.verifyCodeButton") : t("auth.signInButton")}
           </button>
         </form>
 

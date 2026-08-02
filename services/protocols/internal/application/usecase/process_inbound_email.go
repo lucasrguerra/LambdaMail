@@ -234,6 +234,10 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 	// would mean a failure halfway through leaves the earlier recipients with
 	// a copy while the sender is told to retry - and the retry delivers to
 	// them a second time.
+	// Parsed once for the whole delivery: every recipient's row carries the
+	// same headers, and the list view reads them instead of the blob.
+	headers := ExtractMessageHeaders(payload)
+
 	persistInputs := make([]port.PersistInboundMessageInput, len(input.Recipients))
 	for i, recipient := range input.Recipients {
 		persistInputs[i] = port.PersistInboundMessageInput{
@@ -242,6 +246,11 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			SenderAddress:    input.Sender,
 			RecipientAddress: input.RecipientAddresses[i],
 			TargetFolderName: targetFolder,
+			Subject:          headers.Subject,
+			Snippet:          headers.Snippet,
+			FromDisplayName:  headers.FromDisplayName,
+			MessageIDHeader:  headers.MessageID,
+			HasAttachments:   headers.HasAttachments,
 			SPFResult:        authResult.SPF,
 			DKIMResult:       authResult.DKIM,
 			DMARCResult:      authResult.DMARC,

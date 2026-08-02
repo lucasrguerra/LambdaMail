@@ -204,3 +204,62 @@ func TestInboundMessageRepository_PersistAll_RollsBackEveryRecipientOnFailure(t 
 		t.Errorf("ref_count = %d after a rolled-back delivery, want 0", refCount)
 	}
 }
+
+// A message the spam filter routes to Junk must still be delivered when the
+// mailbox has no Junk folder. Refusing it made the sender retry forever
+// against a mailbox that would never grow one on its own.
+func TestInboundMessageRepository_FallsBackToInboxWhenFolderMissing(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "fallback-test-" + domainID.String() + ".invalid"
+	if _, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName); err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	mailboxID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash)
+		VALUES ($1, $2, 'nojunk', $3, 'x')`, mailboxID, domainID, "nojunk@"+domainName); err != nil {
+		t.Fatalf("seed mailbox: %v", err)
+	}
+
+	// Only an INBOX exists - deliberately no Junk folder.
+	inboxID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO folders (id, mailbox_id, name, special_use) VALUES ($1, $2, 'INBOX', 'inbox')`,
+		inboxID, mailboxID); err != nil {
+		t.Fatalf("seed folder: %v", err)
+	}
+
+	blobID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes) VALUES ($1, $2, 'local', '/tmp/x', 10)`,
+		blobID, testBlobDigest()); err != nil {
+		t.Fatalf("seed blob: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM message_blobs WHERE id = $1`, blobID)
+
+	repo := NewInboundMessageRepository(pool)
+	uids, err := repo.PersistAll(ctx, []port.PersistInboundMessageInput{{
+		MailboxID: mailboxID, Blob: port.BlobRef{ID: blobID, SizeBytes: 10},
+		SenderAddress: "spammer@remote.test", RecipientAddress: "nojunk@" + domainName,
+		TargetFolderName: "Junk",
+		SPFResult:        "none", DKIMResult: "none", DMARCResult: "none",
+	}})
+	if err != nil {
+		t.Fatalf("delivery to a missing folder failed instead of falling back: %v", err)
+	}
+	if len(uids) != 1 {
+		t.Fatalf("got %d uids, want 1", len(uids))
+	}
+
+	var folderID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT folder_id FROM email_messages WHERE mailbox_id = $1`, mailboxID).Scan(&folderID); err != nil {
+		t.Fatalf("query message: %v", err)
+	}
+	if folderID != inboxID {
+		t.Errorf("message landed in folder %s, want the INBOX %s", folderID, inboxID)
+	}
+}

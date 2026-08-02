@@ -9,11 +9,30 @@ export interface SessionTokenPayload {
   aud: "lambdamail:user" | "lambdamail:admin";
   mfaSatisfied: boolean;
   mfaSatisfiedAt?: number;
+  // Separates the short-lived token handed out between password and second
+  // factor from a real session. Without it, a challenge token - issued before
+  // any second factor was proven - would be accepted anywhere a session is.
+  purpose: "mfa_challenge" | "session";
   iat: number;
   exp: number;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || "lambdamail_jwt_secret_development_only";
+/**
+ * The signing secret. There is deliberately no default.
+ *
+ * A fallback constant here would be published in this repository, so any
+ * deployment that forgot the variable would accept tokens anyone could mint -
+ * including an admin session. Refusing to start is the only safe behaviour.
+ */
+const JWT_SECRET = (() => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "JWT_SECRET must be set to at least 32 characters; refusing to sign sessions with a guessable key",
+    );
+  }
+  return secret;
+})();
 
 function base64UrlEncode(str: string): string {
   return Buffer.from(str)
@@ -87,6 +106,9 @@ export function isSurfaceAuthorized(
   requiredSurface: "user" | "admin",
 ): boolean {
   if (!payload) return false;
+  // A challenge token proves only that a password was right. Treating it as a
+  // session would let the whole second factor be skipped by presenting it.
+  if (payload.purpose !== "session") return false;
   const expectedAud = requiredSurface === "admin" ? "lambdamail:admin" : "lambdamail:user";
   if (payload.aud !== expectedAud || payload.surface !== requiredSurface) {
     return false;

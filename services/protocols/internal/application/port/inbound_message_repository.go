@@ -14,9 +14,17 @@ type PersistInboundMessageInput struct {
 	SenderAddress    string
 	RecipientAddress string
 	TargetFolderName string // "INBOX", "Junk", etc. (defaults to "INBOX" if empty)
-	SPFResult        string
-	DKIMResult       string
-	DMARCResult      string
+	// Header-derived fields. The columns for these have existed since the
+	// first migration but nothing filled them, so every message listed in the
+	// webmail had a blank subject and sender name.
+	Subject         string
+	Snippet         string
+	FromDisplayName string
+	MessageIDHeader string
+	HasAttachments  bool
+	SPFResult       string
+	DKIMResult      string
+	DMARCResult     string
 }
 
 // InboundMessageRepository durably records an accepted inbound message: for

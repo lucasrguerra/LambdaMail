@@ -123,6 +123,10 @@ services:
     restart: *restart
     logging: *default-logging
     environment:
+      # Drives the Secure attribute on session cookies. Without it the cookies
+      # are issued unsecured, which behind a TLS terminator is a downgrade
+      # waiting to happen.
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3001
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -153,6 +157,7 @@ services:
     restart: *restart
     logging: *default-logging
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3002
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -194,6 +199,9 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # Shared with the auth service: it mints the webmail sessions and this
+      # service verifies them on /api/v1/mail/*.
+      JWT_SECRET: ${JWT_SECRET:?required}
       RSPAMD_URL: http://rspamd:11333
       CLAMAV_ADDR: clamav:3310
       PRIMARY_MAIL_HOST: ${PRIMARY_MAIL_HOST:?required}
@@ -259,9 +267,13 @@ services:
     restart: *restart
     logging: *default-logging
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
       AUTH_SERVICE_URL: http://auth:3001
       STORAGE_SERVICE_URL: http://storage:3002
+      # The mail screens read and send through the protocols service, which
+      # owns the folder, UID, flag and blob logic.
+      PROTOCOLS_SERVICE_URL: http://protocols:8080
       NEXT_PUBLIC_APP_URL: https://${WEBMAIL_HOST:?required}
       # Isolation of the two surfaces (section 14.1). With ADMIN_HOST set the
       # console answers only on that host; otherwise it lives under
@@ -276,6 +288,7 @@ services:
     depends_on:
       auth: { condition: service_healthy }
       storage: { condition: service_healthy }
+      protocols: { condition: service_healthy }
     labels:
       - traefik.enable=true
       # With the service on two networks Traefik may route via the wrong one

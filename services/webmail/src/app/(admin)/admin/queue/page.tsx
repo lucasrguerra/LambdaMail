@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useTranslations } from "../../../../i18n/provider";
 
 interface QueueJob {
   id: string;
@@ -18,6 +19,7 @@ const INITIAL_JOBS: QueueJob[] = [
 ];
 
 export default function AdminQueuePage() {
+  const t = useTranslations();
   const [jobs, setJobs] = useState<QueueJob[]>(INITIAL_JOBS);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -34,7 +36,7 @@ export default function AdminQueuePage() {
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Outbound Delivery Queue Control</h1>
+        <h1 className="text-2xl font-bold text-white mb-1">{t("admin.queueTitle")}</h1>
         <p className="text-xs text-slate-400">Inspect outbound queue, retry retriable jobs, or freeze problematic destinations.</p>
       </div>
 
@@ -54,14 +56,14 @@ export default function AdminQueuePage() {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                <th className="p-3">Job ID</th>
-                <th className="p-3">Sender</th>
-                <th className="p-3">Recipient</th>
-                <th className="p-3">Destination</th>
-                <th className="p-3">Attempts</th>
-                <th className="p-3">Last Error</th>
+                <th className="p-3">{t("ui.jobId")}</th>
+                <th className="p-3">{t("ui.sender")}</th>
+                <th className="p-3">{t("ui.recipient")}</th>
+                <th className="p-3">{t("ui.destination")}</th>
+                <th className="p-3">{t("ui.attempts")}</th>
+                <th className="p-3">{t("ui.lastError")}</th>
                 <th className="p-3">Status</th>
-                <th className="p-3">Actions</th>
+                <th className="p-3">{t("ui.actions")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">

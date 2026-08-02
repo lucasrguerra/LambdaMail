@@ -2,8 +2,10 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useTranslations } from "../../../../i18n/provider";
 
 export default function UserLoginPage() {
+  const t = useTranslations();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
@@ -59,8 +61,8 @@ export default function UserLoginPage() {
             @
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">LambdaMail Webmail</h1>
-            <p className="text-xs text-slate-400">Surface: /user/* (Cookie: Path=/user)</p>
+            <h1 className="text-xl font-bold text-white">{t("auth.userLoginTitle")}</h1>
+            <p className="text-xs text-slate-400">{t("common.appName")} &middot; {t("common.userPortal")}</p>
           </div>
         </div>
 
@@ -74,7 +76,7 @@ export default function UserLoginPage() {
           {!challengeToken ? (
             <>
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Email Address</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.emailLabel")}</label>
                 <input
                   type="email"
                   value={email}
@@ -86,7 +88,7 @@ export default function UserLoginPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Password</label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.passwordLabel")}</label>
                 <input
                   type="password"
                   value={password}
@@ -100,9 +102,9 @@ export default function UserLoginPage() {
           ) : (
             <div>
               <div className="p-3 mb-4 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs">
-                Two-Factor Authentication is enabled for this account. Enter the 6-digit code from your authenticator app.
+                {t("auth.mfaRequired")}
               </div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">2FA Code (6 Digits)</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.totpCodeLabel")}</label>
               <input
                 type="text"
                 value={mfaCode}
@@ -120,7 +122,7 @@ export default function UserLoginPage() {
             disabled={loading}
             className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors shadow-lg shadow-indigo-600/20 disabled:opacity-50"
           >
-            {loading ? "Authenticating..." : challengeToken ? "Verify 2FA Code" : "Sign In to Webmail"}
+            {loading ? t("common.loading") : challengeToken ? t("auth.verifyCodeButton") : t("auth.signInButton")}
           </button>
         </form>
 

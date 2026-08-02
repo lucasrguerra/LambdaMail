@@ -162,7 +162,37 @@ func run(cfg config) {
 	}
 
 	// ------------------------------------------------------------- HTTP API
+	// The webmail reads and sends through this service because the folder,
+	// UID, flag and blob logic already lives here; duplicating it in another
+	// service would mean two implementations of the same IMAP semantics.
+	webmailUC := usecase.NewWebmailUseCase(
+		postgres.NewWebmailRepository(pool), blobReader, submissionUC, authRepo, cfg.PrimaryMailHost,
+	)
+
 	router := httppresentation.NewRouter(usecase.NewIngestReportsUseCase(reportRepo), func() error { return pool.Ping(ctx) })
+	if cfg.JwtSecret == "" {
+		log.Printf("JWT_SECRET is not set: the webmail mail API stays disabled")
+	}
+	router.SetMailAPI(webmailUC, cfg.JwtSecret)
+	if dkimRepo != nil {
+		router.SetAdminDkimAPI(dkimRepo, generateDkimKey, cfg.JwtSecret)
+	}
+	// The TLS panel reads the live watcher instead of the constants the admin
+	// service used to return, which reported a healthy certificate whatever
+	// the process actually held.
+	if source, ok := certProvider.(httppresentation.TlsStatusSource); ok {
+		router.SetAdminTlsAPI(source, cfg.PrimaryMailHost, cfg.TLSMode, cfg.JwtSecret, cfg.CertPollInterval)
+	}
+
+	// Real-time updates: the outbox relay reads the events delivery wrote in
+	// its own transaction and hands them to the hub, which pushes them to the
+	// browser (PLAN.md sections 9.4 and 14.2).
+	if cfg.JwtSecret != "" {
+		hub := httppresentation.NewEventHub(httppresentation.NewWebSessionVerifier(cfg.JwtSecret), webmailUC)
+		router.SetEventHub(hub)
+		go usecase.NewOutboxRelay(postgres.NewOutboxRepository(pool), hub).Run(ctx)
+		log.Printf("lambdamail-protocols real-time event stream enabled on /api/v1/events")
+	}
 	router.SetDegradedCheck(certDegraded)
 	applyMtaStsMode(router, cfg)
 

@@ -1,0 +1,7 @@
+{
+  // The production build excludes tests: they were being compiled into dist
+  // and shipped inside the image. Type checking still covers them through
+  // tsconfig.json, which "npm run lint" uses.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

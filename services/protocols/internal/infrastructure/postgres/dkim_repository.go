@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -122,3 +123,88 @@ func (r *DkimRepository) Insert(ctx context.Context, domainName, selector, algor
 
 // Ensure port interface compliance
 var _ port.DkimKeyRepository = (*DkimRepository)(nil)
+
+// DkimKeyInfo describes a key for the admin console. The private half is never
+// part of this: it exists only to be used, not to be looked at.
+type DkimKeyInfo struct {
+	ID          string     `json:"id"`
+	DomainName  string     `json:"domain"`
+	Selector    string     `json:"selector"`
+	Algorithm   string     `json:"algorithm"`
+	PublicKey   string     `json:"public_key"`
+	Status      string     `json:"status"`
+	ActivatedAt *time.Time `json:"activated_at"`
+	RetireAfter *time.Time `json:"retire_after"`
+}
+
+// ListKeys returns every key for a domain, newest first.
+func (r *DkimRepository) ListKeys(ctx context.Context, domainName string) ([]DkimKeyInfo, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT k.id::text, d.name, k.selector, k.algorithm, k.public_key, k.status,
+		       k.activated_at, k.retire_after
+		  FROM dkim_keys k JOIN domains d ON d.id = k.domain_id
+		 WHERE d.name = $1
+		 ORDER BY k.created_at DESC
+	`, domainName)
+	if err != nil {
+		return nil, fmt.Errorf("list dkim keys for %s: %w", domainName, err)
+	}
+	defer rows.Close()
+
+	keys := []DkimKeyInfo{}
+	for rows.Next() {
+		var k DkimKeyInfo
+		if err := rows.Scan(&k.ID, &k.DomainName, &k.Selector, &k.Algorithm,
+			&k.PublicKey, &k.Status, &k.ActivatedAt, &k.RetireAfter); err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
+// Rotate replaces the active key for one algorithm.
+//
+// The old key is retired rather than deleted, and only after the new one is in
+// place, both inside one transaction. Mail already in flight was signed with
+// the old selector and receivers may still be resolving it, so removing it
+// immediately would fail DKIM for messages that were perfectly valid when they
+// were sent (PLAN.md section 5).
+func (r *DkimRepository) Rotate(
+	ctx context.Context, domainName, selector, algorithm string,
+	privateKeyPEM []byte, publicKey string, overlap time.Duration,
+) error {
+	ciphertext, nonce, err := r.vault.Seal(privateKeyPEM)
+	if err != nil {
+		return fmt.Errorf("seal dkim private key: %w", err)
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var domainID string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM domains WHERE name = $1`, domainName).Scan(&domainID); err != nil {
+		return fmt.Errorf("find domain %s: %w", domainName, err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE dkim_keys SET status = 'RETIRING', retire_after = NOW() + $3::interval
+		 WHERE domain_id = $1 AND algorithm = $2::varchar AND status = 'ACTIVE'
+	`, domainID, algorithm, overlap.String()); err != nil {
+		return fmt.Errorf("retire current dkim key: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO dkim_keys (
+			domain_id, selector, algorithm, private_key_enc, private_key_nonce,
+			key_version, public_key, status, activated_at
+		) VALUES ($1, $2, $3::varchar, $4, $5, $6, $7, 'ACTIVE', NOW())
+	`, domainID, selector, algorithm, ciphertext, nonce, vault.CurrentKeyVersion, publicKey); err != nil {
+		return fmt.Errorf("insert rotated dkim key: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}

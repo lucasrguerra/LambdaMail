@@ -14,6 +14,7 @@ type config struct {
 	MailDomain      string
 	SpoolDir        string
 
+	JwtSecret string
 	MasterKey string
 
 	TLSMode           string
@@ -61,6 +62,9 @@ func loadConfig() config {
 		SpoolDir:        envOrDefault("PROTOCOLS_SPOOL_DIR", "/var/lambdamail/spool"),
 
 		MasterKey: os.Getenv("LAMBDAMAIL_MASTER_KEY"),
+		// Shared with the auth service, which mints the webmail sessions this
+		// service verifies on /api/v1/mail/*.
+		JwtSecret: os.Getenv("JWT_SECRET"),
 
 		TLSMode:           strings.ToLower(envOrDefault("TLS_MODE", "traefik")),
 		TraefikAcmeDir:    os.Getenv("TRAEFIK_ACME_DIR"),
