@@ -115,7 +115,7 @@ export default function UserSettingsPage() {
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-bold text-white">Two-Factor Authentication (TOTP RFC 6238)</h2>
+              <h2 className="text-lg font-bold text-white">{t("ui.twoFactorSection")}</h2>
               <p className="text-xs text-slate-400">
                 Protect your webmail session with Google Authenticator, Aegis, Authy, or 1Password.
               </p>
@@ -181,7 +181,7 @@ export default function UserSettingsPage() {
 
         {/* APP PASSWORDS SECTION (ADR-010) */}
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <h2 className="text-lg font-bold text-white mb-1">App Passwords (IMAP / SMTP Clients)</h2>
+          <h2 className="text-lg font-bold text-white mb-1">{t("ui.appPasswordsSection")}</h2>
           <p className="text-xs text-slate-400 mb-4">
             Thunderbird, iOS Mail, and Android clients do not support 2FA. Generate dedicated high-entropy passwords for IMAP/SMTP.
           </p>
@@ -205,17 +205,17 @@ export default function UserSettingsPage() {
 
           {generatedAppPass && (
             <div className="mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
-              <strong>App Password Generated:</strong>
+              <strong>{t("ui.appPasswordGenerated")}</strong>
               <div className="mt-1 font-mono text-sm font-bold text-amber-200 bg-slate-950 p-2 rounded border border-amber-500/20">
                 {generatedAppPass}
               </div>
-              <p className="mt-1 text-[11px] text-amber-400">Copy this password now. It will not be shown again.</p>
+              <p className="mt-1 text-[11px] text-amber-400">{t("ui.copyPasswordNow")}</p>
             </div>
           )}
 
           <div className="space-y-2">
             {appPasswords.length === 0 ? (
-              <div className="text-xs text-slate-500 italic">No app passwords generated yet.</div>
+              <div className="text-xs text-slate-500 italic">{t("ui.noAppPasswords")}</div>
             ) : (
               appPasswords.map((ap) => (
                 <div key={ap.id} className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs">
@@ -240,14 +240,14 @@ export default function UserSettingsPage() {
 
         {/* ACTIVE SESSIONS SECTION */}
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <h2 className="text-lg font-bold text-white mb-1">Active Webmail Sessions</h2>
+          <h2 className="text-lg font-bold text-white mb-1">{t("ui.activeSessions")}</h2>
           <p className="text-xs text-slate-400 mb-4">Individually revocable sessions with surface isolation.</p>
           <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
             <div>
-              <div className="font-bold text-slate-200">Current Webmail Browser Session</div>
+              <div className="font-bold text-slate-200">{t("ui.currentSession")}</div>
               <div className="text-[10px] text-slate-400 font-mono">Cookie: Path=/user | Aud: lambdamail:user</div>
             </div>
-            <span className="badge-verified px-2 py-0.5 rounded text-[10px]">ACTIVE</span>
+            <span className="badge-verified px-2 py-0.5 rounded text-[10px]">{t("ui.active")}</span>
           </div>
         </div>
       </div>

@@ -45,10 +45,10 @@ export default function AdminSecurityPage() {
       <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-bold text-white">Mail Server Preflight Diagnostics</h2>
+            <h2 className="text-sm font-bold text-white">{t("ui.preflightTitle")}</h2>
             <p className="text-xs text-slate-400">Automated check runner for port 25, PTR, FCrDNS, RBLs, and Cloudflare tokens.</p>
           </div>
-          <span className="badge-verified px-3 py-1 rounded-full text-xs font-bold font-mono">ALL CHECKS PASSED</span>
+          <span className="badge-verified px-3 py-1 rounded-full text-xs font-bold font-mono">{t("ui.allChecksPassed")}</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
@@ -71,11 +71,11 @@ export default function AdminSecurityPage() {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                <th className="p-3">Timestamp</th>
-                <th className="p-3">Actor / Account</th>
-                <th className="p-3">Event Action</th>
-                <th className="p-3">Target Object</th>
-                <th className="p-3">Client IP</th>
+                <th className="p-3">{t("ui.timestamp")}</th>
+                <th className="p-3">{t("ui.actor")}</th>
+                <th className="p-3">{t("ui.eventAction")}</th>
+                <th className="p-3">{t("ui.targetObject")}</th>
+                <th className="p-3">{t("ui.clientIp")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">

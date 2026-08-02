@@ -100,7 +100,7 @@ func TestWebmailApiEndToEnd(t *testing.T) {
 		"To: " + address + "\r\n" +
 		"Subject: =?UTF-8?Q?Relat=C3=B3rio?=\r\n" +
 		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
-		"Corpo da mensagem de teste.\r\n"
+		"Body of the test message.\r\n"
 
 	targets, err := inbound.ResolveRecipient(ctx, address)
 	if err != nil {
@@ -186,7 +186,7 @@ func TestWebmailApiEndToEnd(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("got %d messages, want 1", len(messages))
 	}
-	if messages[0].Subject != "Relatório" {
+	if messages[0].Subject != "Relat\u00f3rio" {
 		t.Errorf("Subject = %q, want the decoded encoded-word", messages[0].Subject)
 	}
 	if messages[0].FromName != "Alice Sender" {
@@ -212,10 +212,10 @@ func TestWebmailApiEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(body, &message); err != nil {
 		t.Fatalf("decode message: %v", err)
 	}
-	if !strings.Contains(message.Text, "Corpo da mensagem de teste.") {
+	if !strings.Contains(message.Text, "Body of the test message.") {
 		t.Errorf("the rendered body is not the stored message: %q", message.Text)
 	}
-	if message.Subject != "Relatório" {
+	if message.Subject != "Relat\u00f3rio" {
 		t.Errorf("rendered Subject = %q, want the decoded encoded-word", message.Subject)
 	}
 	if !strings.Contains(message.From, "alice@remote.test") {

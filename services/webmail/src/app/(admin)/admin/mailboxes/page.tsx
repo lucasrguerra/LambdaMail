@@ -88,7 +88,7 @@ export default function AdminMailboxesPage() {
 
       {/* Create Mailbox Form */}
       <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-        <h2 className="text-sm font-bold text-white mb-4">Provision New Mailbox Account</h2>
+        <h2 className="text-sm font-bold text-white mb-4">{t("ui.provisionMailbox")}</h2>
         <form onSubmit={handleCreateMailbox} className="flex gap-3">
           <input
             type="email"
@@ -126,11 +126,11 @@ export default function AdminMailboxesPage() {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                <th className="p-3">Email Address</th>
+                <th className="p-3">{t("ui.emailAddress")}</th>
                 <th className="p-3">Role</th>
-                <th className="p-3">Storage Quota</th>
+                <th className="p-3">{t("ui.storageQuota")}</th>
                 <th className="p-3">2FA Status</th>
-                <th className="p-3">Account Status</th>
+                <th className="p-3">{t("ui.accountStatus")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -155,7 +155,7 @@ export default function AdminMailboxesPage() {
                     </span>
                   </td>
                   <td className="p-3">
-                    <span className="badge-verified px-2 py-0.5 rounded text-[10px]">ACTIVE</span>
+                    <span className="badge-verified px-2 py-0.5 rounded text-[10px]">{t("ui.active")}</span>
                   </td>
                 </tr>
               ))}

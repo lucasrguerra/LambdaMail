@@ -84,9 +84,9 @@ export default function AdminDomainsPage() {
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
                 <th className="p-3">Type</th>
-                <th className="p-3">Record Name</th>
-                <th className="p-3">Expected Specification Value</th>
-                <th className="p-3">Actual DNS Record (Cloudflare)</th>
+                <th className="p-3">{t("ui.recordName")}</th>
+                <th className="p-3">{t("ui.expectedValue")}</th>
+                <th className="p-3">{t("ui.actualRecord")}</th>
                 <th className="p-3">Status</th>
               </tr>
             </thead>

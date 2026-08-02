@@ -98,7 +98,7 @@ export default function ComposePage() {
 
         <form onSubmit={handleSend} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">To (Recipients)</label>
+            <label className="block text-xs font-medium text-slate-300 mb-1">{t("ui.toRecipients")}</label>
             <input
               type="email"
               value={to}
@@ -111,7 +111,7 @@ export default function ComposePage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Subject</label>
+            <label className="block text-xs font-medium text-slate-300 mb-1">{t("ui.subject")}</label>
             <input
               type="text"
               value={subject}
@@ -124,7 +124,7 @@ export default function ComposePage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Message Body</label>
+            <label className="block text-xs font-medium text-slate-300 mb-1">{t("ui.messageBody")}</label>
             <textarea
               rows={8}
               value={body}

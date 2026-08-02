@@ -40,26 +40,26 @@ export default function AdminDmarcPage() {
       {/* DMARC Stats Summary Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">Total Evaluated Messages</div>
+          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.totalEvaluated")}</div>
           <div className="text-3xl font-extrabold text-white">{data?.total_messages ?? 1250}</div>
         </div>
 
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">SPF Alignment Pass Ratio</div>
+          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.spfRatio")}</div>
           <div className="text-3xl font-extrabold text-emerald-400">
             {data ? Math.round((data.spf_pass_count / data.total_messages) * 100) : 98}%
           </div>
         </div>
 
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">DKIM Signature Alignment</div>
+          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.dkimAlignment")}</div>
           <div className="text-3xl font-extrabold text-emerald-400">
             {data ? Math.round((data.dkim_pass_count / data.total_messages) * 100) : 97}%
           </div>
         </div>
 
         <div className="glass-panel p-6 rounded-2xl border border-slate-800">
-          <div className="text-xs font-medium text-slate-400 mb-2">DMARC Policy Enforcement</div>
+          <div className="text-xs font-medium text-slate-400 mb-2">{t("ui.dmarcEnforcement")}</div>
           <div className="text-3xl font-extrabold text-indigo-400">quarantine</div>
         </div>
       </div>
@@ -74,11 +74,11 @@ export default function AdminDmarcPage() {
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                <th className="p-3">Source IP</th>
-                <th className="p-3">Reporting Organization</th>
-                <th className="p-3">Message Volume</th>
-                <th className="p-3">SPF Result</th>
-                <th className="p-3">DKIM Result</th>
+                <th className="p-3">{t("ui.sourceIp")}</th>
+                <th className="p-3">{t("ui.reportingOrg")}</th>
+                <th className="p-3">{t("ui.messageVolume")}</th>
+                <th className="p-3">{t("ui.spfResult")}</th>
+                <th className="p-3">{t("ui.dkimResult")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">

@@ -39,10 +39,10 @@ func TestExtractMessageHeaders_DecodesEncodedWords(t *testing.T) {
 		"corpo\r\n"
 
 	h := ExtractMessageHeaders([]byte(msg))
-	if h.Subject != "Relatório mensal" {
+	if h.Subject != "Relat\u00f3rio mensal" {
 		t.Errorf("Subject = %q, want the decoded form", h.Subject)
 	}
-	if h.FromDisplayName != "Júlio" {
+	if h.FromDisplayName != "J\u00falio" {
 		t.Errorf("FromDisplayName = %q, want the decoded form", h.FromDisplayName)
 	}
 }
@@ -74,14 +74,14 @@ func TestExtractMessageHeaders_SurvivesGarbage(t *testing.T) {
 func TestExtractMessageHeaders_TruncatesWithoutBreakingUTF8(t *testing.T) {
 	long := ""
 	for range 300 {
-		long += "á"
+		long += "\u00e1"
 	}
 	h := ExtractMessageHeaders([]byte("Subject: s\r\n\r\n" + long + "\r\n"))
 	if len(h.Snippet) > snippetLength {
 		t.Errorf("snippet is %d bytes, want at most %d", len(h.Snippet), snippetLength)
 	}
 	for _, r := range h.Snippet {
-		if r == '�' {
+		if r == '\ufffd' {
 			t.Fatal("truncation split a multi-byte rune")
 		}
 	}

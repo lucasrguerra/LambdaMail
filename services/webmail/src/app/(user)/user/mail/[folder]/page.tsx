@@ -2,6 +2,7 @@
 
 import React, { use, useCallback, useEffect, useState } from "react";
 import { useTranslations } from "../../../../../i18n/provider";
+import { useMailEvents } from "../../../../../lib/useMailEvents";
 
 interface MessageSummary {
   uid: number;
@@ -74,6 +75,20 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   useEffect(() => {
     void loadMessages("");
   }, [loadMessages]);
+
+  // Push updates, plus a refetch on every (re)connect: while the socket was
+  // down the folder may have changed, and reconnecting without reconciling
+  // would leave the list quietly stale.
+  useMailEvents(
+    useCallback(
+      (event) => {
+        if (event.type === "resync" || event.type === "EmailReceived") {
+          void loadMessages(searchQuery);
+        }
+      },
+      [loadMessages, searchQuery],
+    ),
+  );
 
   // Debounced so typing in the search box does not issue a query per keystroke.
   useEffect(() => {

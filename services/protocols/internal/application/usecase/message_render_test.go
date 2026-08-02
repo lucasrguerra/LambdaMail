@@ -10,7 +10,7 @@ func TestRenderMessage_ExtractsHeadersAndText(t *testing.T) {
 		"Content-Type: text/plain; charset=utf-8\r\n\r\nCorpo.\r\n"
 
 	got := RenderMessage([]byte(raw), 7)
-	if got.UID != 7 || got.Subject != "Olá" {
+	if got.UID != 7 || got.Subject != "Ol\u00e1" {
 		t.Errorf("UID/Subject = %d/%q", got.UID, got.Subject)
 	}
 	if got.Text != "Corpo.\r\n" {
