@@ -17,6 +17,25 @@ matters:
 Degraded is deliberately not a failure: restarting cannot fix a certificate the
 proxy never issued, and a restart loop would only hide it.
 
+### Container health
+
+Every long-running service carries a Docker healthcheck, so `docker compose ps`
+is a real answer rather than a list of processes that have not exited:
+
+```bash
+docker compose ps --format 'table {{.Service}}\t{{.Status}}'
+```
+
+`migrate` is the one service without a probe, on purpose: it applies the
+migrations and stops. Everything that needs it waits on
+`service_completed_successfully`, which is a stronger guarantee than a probe —
+a healthcheck there would report unhealthy exactly when the job had succeeded.
+
+The probes are shallow by design. `web` checks only that Next can route a
+request; it does not reach through to `auth` or `protocols`, because a blip in
+one backend should not mark the frontend unhealthy and take the site down with
+it. Those services have probes of their own.
+
 ## Certificates
 
 Under `TLS_MODE=traefik` the mail listeners read the certificate Coolify's proxy
@@ -175,3 +194,14 @@ Being explicit so nothing is assumed:
 - Master key rotation is manual.
 - Log retention is whatever Docker's json-file driver is configured for
   (10 MB × 3 per service, in `docker-compose.yaml`).
+- **Per-record DNS verification is not implemented.** The admin console's
+  reconcile button records the request and re-reads the stored status; it does
+  not query a resolver and compare the thirteen expected records. The console
+  used to draw a table of green ticks for records nobody had checked. Verify by
+  hand, or with `make preflight`, until this is real.
+- **Attachments are not uploaded.** The compose screen lists the files you pick
+  and sends their names only; there is no upload endpoint behind the picker
+  yet. The screen says so when you attach something, rather than letting the
+  message leave without them.
+- The vacation responder, the signature and the Sieve rules are stored, but
+  nothing consumes them during delivery yet.

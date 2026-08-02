@@ -134,12 +134,19 @@ This creates the domain if needed, the mailbox as `SUPER_ADMIN`, its standard
 folders, and the four system aliases (`postmaster@`, `abuse@`, `dmarc@`,
 `tlsrpt@`) that the published DNS records point at.
 
-Then:
+Then sign in at `https://<WEBMAIL_HOST>/`, which opens the mail client.
 
-1. Sign in to the webmail at `https://<WEBMAIL_HOST>/user/login`.
-2. Go to **Settings** and enrol a second factor. The admin console requires
-   one and will refuse to open until it exists.
-3. Sign in to `https://<WEBMAIL_HOST>/admin/login`.
+An account that may administer the server gets an **Admin console** link in the
+webmail sidebar. Following it asks for the password and second factor again,
+because the console is a separate audience — being signed in to webmail is
+never enough on its own.
+
+If the account has no second factor yet, the admin sign-in enrols one on the
+spot: it shows a QR code to scan, takes the first code back, and hands over the
+recovery codes. There is no need to visit another screen first, and no way to
+end up locked out of the console for want of a factor you could not reach.
+
+Leaving the console needs nothing — the webmail session was never given up.
 
 ## Step 5 — DNS records
 
