@@ -2,6 +2,7 @@ package httppresentation
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,5 +66,40 @@ func TestRouter_MtaSts_Autoconfig_SecurityTxt_Ingest(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"ok"`) {
 		t.Errorf("dmarc ingest status = %d, body = %q", w.Code, w.Body.String())
+	}
+}
+
+// A certificate problem must be visible without taking the container down:
+// restarting cannot fix a certificate Traefik never issued, so /health stays
+// 200 and carries the degraded state instead (PLAN.md section 8.4).
+func TestRouter_HealthReportsDegradedWithoutFailing(t *testing.T) {
+	router := NewRouter(appusecase.NewIngestReportsUseCase(nil), func() error { return nil })
+	router.SetDegradedCheck(func() error { return errors.New("self-signed certificate in use") })
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("degraded health status = %d, want 200 so the orchestrator does not restart-loop", w.Code)
+	}
+	if got := w.Header().Get("X-LambdaMail-Health"); got != "degraded" {
+		t.Errorf("X-LambdaMail-Health = %q, want degraded", got)
+	}
+	if !strings.Contains(w.Body.String(), "self-signed certificate in use") {
+		t.Errorf("the degraded body does not name the cause: %q", w.Body.String())
+	}
+}
+
+// A dependency that is actually down is a different state: that one must fail.
+func TestRouter_HealthFailsWhenDependencyIsDown(t *testing.T) {
+	router := NewRouter(appusecase.NewIngestReportsUseCase(nil), func() error { return errors.New("database unreachable") })
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("health status = %d, want 503", w.Code)
 	}
 }

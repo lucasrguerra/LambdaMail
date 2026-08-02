@@ -229,7 +229,7 @@ func (w *OutboundWorkerUseCase) sendDsn(ctx context.Context, action valueobject.
 		return
 	}
 
-	dsnBytes, isLoop := valueobject.BuildDsnReport(action, job.EnvelopeFrom, job.EnvelopeTo, job.ID.String(), reason)
+	dsnBytes, isLoop := valueobject.BuildDsnReport(action, w.localHost, job.EnvelopeFrom, job.EnvelopeTo, job.ID.String(), reason)
 	if isLoop || dsnBytes == nil {
 		return
 	}
@@ -252,7 +252,7 @@ func (w *OutboundWorkerUseCase) sendDsn(ctx context.Context, action valueobject.
 	}
 
 	_ = w.inboundUC.Handle(ctx, ProcessInboundEmailInput{
-		Sender:             "postmaster@lambdamail.local",
+		Sender:             "postmaster@" + w.localHost,
 		Recipients:         targets,
 		RecipientAddresses: addresses,
 		Body:               bytes.NewReader(dsnBytes),

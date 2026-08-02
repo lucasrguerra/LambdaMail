@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -80,7 +81,7 @@ func run(cfg config) {
 	}
 
 	secretVault, vaultErr := vault.New(cfg.MasterKey)
-	certProvider := buildCertProvider(ctx, cfg, pool, secretVault, vaultErr)
+	certProvider, certDegraded := buildCertProvider(ctx, cfg, pool, secretVault, vaultErr)
 
 	// ---------------------------------------------------------------- repos
 	mailboxes := postgres.NewMailboxRepository(pool)
@@ -131,12 +132,13 @@ func run(cfg config) {
 		log.Printf("lambdamail-protocols delivering through the smarthost %s", relay.Address())
 	}
 
-	// ARC needs a signing key, so it can only be enabled where DKIM is.
+	// ARC needs a signing key, so it can only be enabled where DKIM is. The
+	// key is resolved on the first message rather than here: on a first boot
+	// the provisioner below has not run yet, and binding now would leave ARC
+	// off until someone restarted the process.
 	if cfg.ArcSealEnabled && dkimRepo != nil {
-		if sealer := buildArcSealer(ctx, cfg, dkimRepo); sealer != nil {
-			inboundUC.SetArcSealer(sealer)
-			log.Printf("lambdamail-protocols ARC sealing enabled for %s", cfg.domain())
-		}
+		inboundUC.SetArcSealer(arc.NewLazySealer(dkimRepo, dkim.ParsePrivateKey, cfg.domain(), cfg.PrimaryMailHost))
+		log.Printf("lambdamail-protocols ARC sealing enabled for %s", cfg.domain())
 	}
 
 	// --------------------------------------------------------- access UCs
@@ -161,6 +163,7 @@ func run(cfg config) {
 
 	// ------------------------------------------------------------- HTTP API
 	router := httppresentation.NewRouter(usecase.NewIngestReportsUseCase(reportRepo), func() error { return pool.Ping(ctx) })
+	router.SetDegradedCheck(certDegraded)
 	applyMtaStsMode(router, cfg)
 
 	server := &http.Server{
@@ -187,7 +190,11 @@ func run(cfg config) {
 // store Traefik maintains and keeps watching it, because the certificate is
 // replaced every sixty days and a stale one takes every listener down
 // (PLAN.md section 8).
-func buildCertProvider(ctx context.Context, cfg config, pool *pgxpool.Pool, secretVault *vault.SecretVault, vaultErr error) port.CertProvider {
+//
+// The second return value is the probe behind /health's degraded state: a
+// certificate problem does not stop the process, so it has to be visible
+// somewhere an operator is already looking (PLAN.md section 8.4).
+func buildCertProvider(ctx context.Context, cfg config, pool *pgxpool.Pool, secretVault *vault.SecretVault, vaultErr error) (port.CertProvider, func() error) {
 	// Mode B: LambdaMail obtains the certificate itself. This is the only
 	// mode DANE can run in, because it is the only one where the key for the
 	// next certificate exists before that certificate does
@@ -204,7 +211,7 @@ func buildCertProvider(ctx context.Context, cfg config, pool *pgxpool.Pool, secr
 		if err != nil {
 			log.Fatalf("start self-managed ACME: %v", err)
 		}
-		return provider
+		return provider, healthy
 	}
 
 	if cfg.TraefikAcmeDir != "" {
@@ -215,14 +222,14 @@ func buildCertProvider(ctx context.Context, cfg config, pool *pgxpool.Pool, secr
 			}
 			go watcher.Watch(ctx.Done(), cfg.CertPollInterval)
 			log.Printf("lambdamail-protocols reading TLS certificates from %s (polling every %s)", cfg.TraefikAcmeDir, cfg.CertPollInterval)
-			return watcher
+			return watcher, watcherDegradedCheck(watcher, cfg)
 		}
 		log.Printf("WARNING: could not read the ACME store (%v) - falling back", err)
 	}
 
 	if cfg.StaticCertPath != "" {
 		if provider, err := tlsprovider.NewLocalFileCertProvider(cfg.StaticCertPath, cfg.StaticCertKeyPath); err == nil {
-			return provider
+			return provider, healthy
 		} else {
 			log.Printf("WARNING: could not load the configured TLS certificate: %v", err)
 		}
@@ -233,7 +240,35 @@ func buildCertProvider(ctx context.Context, cfg config, pool *pgxpool.Pool, secr
 	if err != nil {
 		log.Fatalf("generate fallback self-signed certificate: %v", err)
 	}
-	return provider
+	return provider, func() error {
+		return errors.New("serving an ephemeral self-signed certificate: no ACME store could be read, so every client sees an untrusted certificate")
+	}
+}
+
+// healthy is the degraded probe for a certificate source with nothing to
+// report.
+func healthy() error { return nil }
+
+// watcherDegradedCheck turns the watcher's state into the conditions PLAN.md
+// section 8.4 tabulates: a missing certificate for the mail host, a store that
+// has stopped being re-read, and an expiry closing in.
+func watcherDegradedCheck(watcher *tlsprovider.AcmeCertWatcher, cfg config) func() error {
+	// Two missed polls is the smallest gap that cannot be a scheduling
+	// hiccup, and it is the symptom of risk R2: a watcher gone blind.
+	staleAfter := 3 * cfg.CertPollInterval
+
+	return func() error {
+		if !watcher.HasCertificateFor(cfg.PrimaryMailHost) {
+			return fmt.Errorf("the ACME store holds no certificate for %s: declare a Traefik router for that host", cfg.PrimaryMailHost)
+		}
+		if last := watcher.LastReload(); !last.IsZero() && time.Since(last) > staleAfter {
+			return fmt.Errorf("the ACME store has not been re-read since %s", last.Format(time.RFC3339))
+		}
+		if host, expiry, ok := watcher.EarliestExpiry(); ok && time.Until(expiry) < 24*time.Hour {
+			return fmt.Errorf("the certificate for %s expires at %s", host, expiry.Format(time.RFC3339))
+		}
+		return nil
+	}
 }
 
 func relayConfig(cfg config) usecase.RelayConfig {
@@ -243,29 +278,6 @@ func relayConfig(cfg config) usecase.RelayConfig {
 		Username: cfg.RelayUser,
 		Password: cfg.RelayPass,
 	}
-}
-
-// buildArcSealer signs ARC sets with the domain's RSA DKIM key, which is what
-// a verifier resolves through the same selector.
-func buildArcSealer(ctx context.Context, cfg config, keys port.DkimKeyRepository) port.ArcSealer {
-	domain := cfg.domain()
-
-	active, err := keys.FindActiveKeys(ctx, domain)
-	if err != nil || len(active) == 0 {
-		log.Printf("WARNING: ARC sealing requested but no DKIM key is active for %s yet; it will start once one is provisioned", domain)
-		return nil
-	}
-
-	for _, key := range active {
-		signer, err := dkim.ParsePrivateKey(key.PrivateKeyPEM)
-		if err != nil {
-			continue
-		}
-		return arc.NewSealer(domain, key.Selector, cfg.PrimaryMailHost, signer)
-	}
-
-	log.Printf("WARNING: none of the DKIM keys for %s could be used for ARC", domain)
-	return nil
 }
 
 func buildScanner(cfg config) port.ContentScanner {

@@ -20,6 +20,13 @@ import (
 // makeCertPEM issues a self-signed certificate for the given names.
 func makeCertPEM(t *testing.T, names ...string) (certPEM, keyPEM []byte) {
 	t.Helper()
+	return makeCertPEMWithValidity(t, -time.Hour, 90*24*time.Hour, names...)
+}
+
+// makeCertPEMWithValidity issues a certificate whose validity window is given
+// relative to now, so a test can produce an expired or nearly expired one.
+func makeCertPEMWithValidity(t *testing.T, notBefore, notAfter time.Duration, names ...string) (certPEM, keyPEM []byte) {
+	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -29,8 +36,8 @@ func makeCertPEM(t *testing.T, names ...string) (certPEM, keyPEM []byte) {
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: names[0]},
 		DNSNames:     names,
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(90 * 24 * time.Hour),
+		NotBefore:    time.Now().Add(notBefore),
+		NotAfter:     time.Now().Add(notAfter),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
@@ -49,6 +56,13 @@ func makeCertPEM(t *testing.T, names ...string) (certPEM, keyPEM []byte) {
 // resolver name to that resolver's account and certificates.
 func writeAcmeStore(t *testing.T, dir, resolverName string, entries map[string][]string) string {
 	t.Helper()
+	return writeAcmeStoreWithValidity(t, dir, resolverName, entries, -time.Hour, 90*24*time.Hour)
+}
+
+// writeAcmeStoreWithValidity is writeAcmeStore with control over how long the
+// issued certificates are valid for.
+func writeAcmeStoreWithValidity(t *testing.T, dir, resolverName string, entries map[string][]string, notBefore, notAfter time.Duration) string {
+	t.Helper()
 
 	type domain struct {
 		Main string   `json:"main"`
@@ -62,7 +76,7 @@ func writeAcmeStore(t *testing.T, dir, resolverName string, entries map[string][
 
 	var certificates []certificate
 	for main, sans := range entries {
-		certPEM, keyPEM := makeCertPEM(t, append([]string{main}, sans...)...)
+		certPEM, keyPEM := makeCertPEMWithValidity(t, notBefore, notAfter, append([]string{main}, sans...)...)
 		certificates = append(certificates, certificate{
 			Domain:      domain{Main: main, SANs: sans},
 			Certificate: base64.StdEncoding.EncodeToString(certPEM),
@@ -240,21 +254,63 @@ func TestAcmeCertWatcher_FailsWhenStoreMissing(t *testing.T) {
 	}
 }
 
-// An identical file must not cause a pointless swap; LastReload only advances
-// when the content actually changed.
-func TestAcmeCertWatcher_SkipsReloadWhenContentUnchanged(t *testing.T) {
+// An identical file must not cause a pointless swap, but the watcher must
+// still record that it looked. acme.json sits untouched for sixty days, so a
+// LastReload that only advanced on change could not tell a healthy idle
+// watcher apart from one that went blind (PLAN.md risk R2).
+func TestAcmeCertWatcher_SkipsSwapButRecordsCheckWhenContentUnchanged(t *testing.T) {
 	dir := t.TempDir()
 	writeAcmeStore(t, dir, "letsencrypt", map[string][]string{"mail.example.test": nil})
 
 	watcher, _ := NewAcmeCertWatcher(dir, "acme.json", "mail.example.test")
-	first := watcher.LastReload()
+	firstReload := watcher.LastReload()
+	firstChange := watcher.LastChange()
 
 	time.Sleep(2 * time.Millisecond)
 	if err := watcher.reload(); err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 
-	if !watcher.LastReload().Equal(first) {
-		t.Error("an unchanged file triggered a reload")
+	if !watcher.LastChange().Equal(firstChange) {
+		t.Error("an unchanged file swapped the certificate store")
+	}
+	if !watcher.LastReload().After(firstReload) {
+		t.Error("LastReload did not advance, so a blind watcher would look identical to an idle one")
+	}
+}
+
+// An expired entry must not be served: every peer would reject the handshake,
+// whereas skipping it lets the SNI fallback take over (PLAN.md section 8.2).
+func TestAcmeCertWatcher_SkipsExpiredCertificate(t *testing.T) {
+	dir := t.TempDir()
+	writeAcmeStoreWithValidity(t, dir, "letsencrypt",
+		map[string][]string{"expired.example.test": nil}, -48*time.Hour, -24*time.Hour)
+
+	if _, err := NewAcmeCertWatcher(dir, "acme.json", "expired.example.test"); err == nil {
+		t.Fatal("a store holding only an expired certificate must not load as usable")
+	}
+}
+
+// The soonest expiry is what decides when the deployment breaks, so it has to
+// be readable for the alerts of PLAN.md section 8.4.
+func TestAcmeCertWatcher_ReportsEarliestExpiry(t *testing.T) {
+	dir := t.TempDir()
+	writeAcmeStoreWithValidity(t, dir, "letsencrypt",
+		map[string][]string{"mail.example.test": nil}, -time.Hour, 72*time.Hour)
+
+	watcher, err := NewAcmeCertWatcher(dir, "acme.json", "mail.example.test")
+	if err != nil {
+		t.Fatalf("NewAcmeCertWatcher: %v", err)
+	}
+
+	host, expiry, ok := watcher.EarliestExpiry()
+	if !ok {
+		t.Fatal("EarliestExpiry reported nothing for a loaded store")
+	}
+	if host != "mail.example.test" {
+		t.Errorf("EarliestExpiry host = %q, want mail.example.test", host)
+	}
+	if remaining := time.Until(expiry); remaining > 73*time.Hour || remaining < 71*time.Hour {
+		t.Errorf("expiry is %s away, want roughly 72h", remaining)
 	}
 }

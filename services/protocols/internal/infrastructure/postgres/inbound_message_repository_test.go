@@ -38,7 +38,7 @@ func TestInboundMessageRepository_Persist_AllocatesSequentialUIDs(t *testing.T) 
 
 	blobID := uuid.New()
 	_, err = pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes) VALUES ($1, $2, 'local', '/tmp/x', 10)`,
-		blobID, "deadbeef00000000000000000000000000000000000000000000000000000000"[:64])
+		blobID, testBlobDigest())
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}
@@ -46,22 +46,23 @@ func TestInboundMessageRepository_Persist_AllocatesSequentialUIDs(t *testing.T) 
 	repo := NewInboundMessageRepository(pool)
 	blob := port.BlobRef{ID: blobID, SHA256: "deadbeef", SizeBytes: 10}
 
-	firstUID, err := repo.Persist(ctx, port.PersistInboundMessageInput{
+	firstUIDs, err := repo.PersistAll(ctx, []port.PersistInboundMessageInput{{
 		MailboxID: mailboxID, Blob: blob,
 		SenderAddress: "sender@example.test", RecipientAddress: "user@msgrepo-test-" + domainID.String() + ".invalid",
 		SPFResult: "none", DKIMResult: "none", DMARCResult: "none",
-	})
+	}})
 	if err != nil {
-		t.Fatalf("first Persist: %v", err)
+		t.Fatalf("first PersistAll: %v", err)
 	}
-	secondUID, err := repo.Persist(ctx, port.PersistInboundMessageInput{
+	secondUIDs, err := repo.PersistAll(ctx, []port.PersistInboundMessageInput{{
 		MailboxID: mailboxID, Blob: blob,
 		SenderAddress: "sender2@example.test", RecipientAddress: "user@msgrepo-test-" + domainID.String() + ".invalid",
 		SPFResult: "none", DKIMResult: "none", DMARCResult: "none",
-	})
+	}})
 	if err != nil {
-		t.Fatalf("second Persist: %v", err)
+		t.Fatalf("second PersistAll: %v", err)
 	}
+	firstUID, secondUID := firstUIDs[0], secondUIDs[0]
 	if secondUID <= firstUID {
 		t.Errorf("secondUID (%d) must be strictly greater than firstUID (%d) - RFC 3501 section 2.3.1.1", secondUID, firstUID)
 	}
@@ -71,7 +72,7 @@ func TestInboundMessageRepository_Persist_AllocatesSequentialUIDs(t *testing.T) 
 		t.Fatalf("query ref_count: %v", err)
 	}
 	if refCount != 2 {
-		t.Errorf("ref_count = %d, want 2 after two Persist calls referencing the same blob", refCount)
+		t.Errorf("ref_count = %d, want 2 after two PersistAll calls referencing the same blob", refCount)
 	}
 
 	var unreadCount, totalCount int
@@ -79,10 +80,10 @@ func TestInboundMessageRepository_Persist_AllocatesSequentialUIDs(t *testing.T) 
 		t.Fatalf("query folder counters: %v", err)
 	}
 	if unreadCount != 2 {
-		t.Errorf("folder unread_count = %d, want 2 after two Persist calls", unreadCount)
+		t.Errorf("folder unread_count = %d, want 2 after two PersistAll calls", unreadCount)
 	}
 	if totalCount != 2 {
-		t.Errorf("folder total_count = %d, want 2 after two Persist calls", totalCount)
+		t.Errorf("folder total_count = %d, want 2 after two PersistAll calls", totalCount)
 	}
 
 	var usedBytes int64
@@ -90,7 +91,7 @@ func TestInboundMessageRepository_Persist_AllocatesSequentialUIDs(t *testing.T) 
 		t.Fatalf("query mailbox used_bytes: %v", err)
 	}
 	if usedBytes != blob.SizeBytes*2 {
-		t.Errorf("mailbox used_bytes = %d, want %d (two Persist calls of %d bytes each)", usedBytes, blob.SizeBytes*2, blob.SizeBytes)
+		t.Errorf("mailbox used_bytes = %d, want %d (two PersistAll calls of %d bytes each)", usedBytes, blob.SizeBytes*2, blob.SizeBytes)
 	}
 }
 
@@ -118,18 +119,88 @@ func TestInboundMessageRepository_Persist_ReturnsErrorWhenNoInboxFolderExists(t 
 
 	blobID := uuid.New()
 	_, err = pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes) VALUES ($1, $2, 'local', '/tmp/x', 10)`,
-		blobID, "cafebabe00000000000000000000000000000000000000000000000000000000"[:64])
+		blobID, testBlobDigest())
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}
 
 	repo := NewInboundMessageRepository(pool)
-	_, err = repo.Persist(ctx, port.PersistInboundMessageInput{
+	_, err = repo.PersistAll(ctx, []port.PersistInboundMessageInput{{
 		MailboxID: mailboxID, Blob: port.BlobRef{ID: blobID, SizeBytes: 10},
 		SenderAddress: "sender@example.test", RecipientAddress: "nofolder@example.test",
 		SPFResult: "none", DKIMResult: "none", DMARCResult: "none",
-	})
+	}})
 	if err == nil {
 		t.Fatal("expected an error when the mailbox has no INBOX folder, got nil")
+	}
+}
+
+// An alias fanning out is one SMTP transaction with one reply. If a later
+// recipient's insert fails, the earlier ones must not remain: the sender is
+// told to retry, and the retry would deliver to them a second time.
+func TestInboundMessageRepository_PersistAll_RollsBackEveryRecipientOnFailure(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "fanout-test-" + domainID.String() + ".invalid"
+	if _, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName); err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	// The first mailbox has an INBOX, the second deliberately does not, so
+	// persisting the pair fails on the second entry.
+	goodMailboxID, badMailboxID := uuid.New(), uuid.New()
+	for i, id := range []uuid.UUID{goodMailboxID, badMailboxID} {
+		local := []string{"good", "bad"}[i]
+		if _, err := pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash) VALUES ($1, $2, $3, $4, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG')`,
+			id, domainID, local, local+"@"+domainName); err != nil {
+			t.Fatalf("seed mailbox %s: %v", local, err)
+		}
+	}
+
+	folderID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO folders (id, mailbox_id, name, special_use) VALUES ($1, $2, 'INBOX', 'inbox')`,
+		folderID, goodMailboxID); err != nil {
+		t.Fatalf("seed folder: %v", err)
+	}
+
+	blobID := uuid.New()
+	blobDigest := testBlobDigest()
+	if _, err := pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes) VALUES ($1, $2, 'local', '/tmp/x', 10)`,
+		blobID, blobDigest); err != nil {
+		t.Fatalf("seed blob: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM message_blobs WHERE id = $1`, blobID)
+	blob := port.BlobRef{ID: blobID, SHA256: blobDigest, SizeBytes: 10}
+
+	repo := NewInboundMessageRepository(pool)
+	_, err := repo.PersistAll(ctx, []port.PersistInboundMessageInput{
+		{MailboxID: goodMailboxID, Blob: blob, SenderAddress: "sender@remote.test", RecipientAddress: "alias@" + domainName,
+			SPFResult: "none", DKIMResult: "none", DMARCResult: "none"},
+		{MailboxID: badMailboxID, Blob: blob, SenderAddress: "sender@remote.test", RecipientAddress: "alias@" + domainName,
+			SPFResult: "none", DKIMResult: "none", DMARCResult: "none"},
+	})
+	if err == nil {
+		t.Fatal("PersistAll succeeded even though the second recipient has no INBOX")
+	}
+
+	var messageCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM email_messages WHERE mailbox_id = $1`, goodMailboxID).Scan(&messageCount); err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if messageCount != 0 {
+		t.Errorf("the first recipient kept %d message(s) after a failed fan-out; the sender's retry would duplicate them", messageCount)
+	}
+
+	var refCount int
+	if err := pool.QueryRow(ctx, `SELECT ref_count FROM message_blobs WHERE id = $1`, blobID).Scan(&refCount); err != nil {
+		t.Fatalf("query ref_count: %v", err)
+	}
+	if refCount != 0 {
+		t.Errorf("ref_count = %d after a rolled-back delivery, want 0", refCount)
 	}
 }

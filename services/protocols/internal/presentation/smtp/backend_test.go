@@ -12,6 +12,7 @@ import (
 
 	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/application/usecase"
+	"lambdamail/protocols/internal/domain/valueobject"
 )
 
 type fakeMailboxRepository struct {
@@ -37,6 +38,8 @@ func (f *fakeMailboxRepository) ResolveDeliveryTargets(_ context.Context, addres
 type recordingBlobStorage struct {
 	stored []byte
 	ref    port.BlobRef
+	// err makes Store fail, standing in for an unexpected internal failure.
+	err error
 }
 
 func (b *recordingBlobStorage) Store(_ context.Context, r io.Reader) (port.BlobRef, error) {
@@ -44,21 +47,44 @@ func (b *recordingBlobStorage) Store(_ context.Context, r io.Reader) (port.BlobR
 	if err != nil {
 		return port.BlobRef{}, err
 	}
+	if b.err != nil {
+		return port.BlobRef{}, b.err
+	}
 	b.stored = data
 	return b.ref, nil
+}
+
+// rejectingScanner stands in for the spam or virus scanner refusing a message.
+type rejectingScanner struct{ rejection error }
+
+func (s *rejectingScanner) Scan(_ context.Context, _ port.ScanInput) (*valueobject.ScanResult, error) {
+	return nil, s.rejection
 }
 
 type recordingMessageRepository struct {
 	persisted []port.PersistInboundMessageInput
 }
 
-func (m *recordingMessageRepository) Persist(_ context.Context, input port.PersistInboundMessageInput) (int64, error) {
-	m.persisted = append(m.persisted, input)
-	return int64(len(m.persisted)), nil
+func (m *recordingMessageRepository) PersistAll(_ context.Context, inputs []port.PersistInboundMessageInput) ([]int64, error) {
+	uids := make([]int64, 0, len(inputs))
+	for _, input := range inputs {
+		m.persisted = append(m.persisted, input)
+		uids = append(uids, int64(len(m.persisted)))
+	}
+	return uids, nil
 }
 
 func newTestSession(mailboxes *fakeMailboxRepository, blobs *recordingBlobStorage, messages *recordingMessageRepository) gosmtp.Session {
+	return newTestSessionWithScanner(mailboxes, blobs, messages, nil)
+}
+
+// newTestSessionWithScanner builds a session whose scanner refuses the message
+// with the given error, which is how a rejection reaches the Data handler.
+func newTestSessionWithScanner(mailboxes *fakeMailboxRepository, blobs *recordingBlobStorage, messages *recordingMessageRepository, rejection error) gosmtp.Session {
 	uc := usecase.NewProcessInboundEmailUseCase(mailboxes, blobs, messages)
+	if rejection != nil {
+		uc.SetScanner(&rejectingScanner{rejection: rejection})
+	}
 	backend := NewBackend(uc)
 	session, err := backend.NewSession(nil)
 	if err != nil {
@@ -192,5 +218,83 @@ func TestSession_Reset_ClearsAccumulatedRecipients(t *testing.T) {
 	}
 	if len(messages.persisted) != 0 {
 		t.Errorf("persisted %d messages after Reset, want 0", len(messages.persisted))
+	}
+}
+
+// The reply a remote MTA receives must come from the use case's decision, not
+// from parsing its error text: rewording a message would otherwise change a
+// permanent refusal into a retry, or the reverse.
+func TestSession_Data_RendersUseCaseRejectionVerbatim(t *testing.T) {
+	cases := []struct {
+		name             string
+		rejection        *usecase.SmtpRejection
+		wantCode         int
+		wantEnhancedCode gosmtp.EnhancedCode
+	}{
+		{"virus is permanent", &usecase.SmtpRejection{Code: 554, EnhancedCode: [3]int{5, 7, 1}, Message: "Virus detected: Eicar-Test"}, 554, gosmtp.EnhancedCode{5, 7, 1}},
+		{"greylist is temporary", &usecase.SmtpRejection{Code: 451, EnhancedCode: [3]int{4, 7, 1}, Message: "Greylisted, please try again later"}, 451, gosmtp.EnhancedCode{4, 7, 1}},
+		{"dmarc reject is permanent", &usecase.SmtpRejection{Code: 550, EnhancedCode: [3]int{5, 7, 1}, Message: "DMARC policy rejects this message"}, 550, gosmtp.EnhancedCode{5, 7, 1}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mailboxID := uuid.New()
+			mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
+				"user@example.test": {ID: mailboxID, QuotaBytes: 1000},
+			}}
+			session := newTestSessionWithScanner(mailboxes,
+				&recordingBlobStorage{ref: port.BlobRef{ID: uuid.New()}}, &recordingMessageRepository{}, tc.rejection)
+
+			if err := session.Mail("sender@remote.test", nil); err != nil {
+				t.Fatalf("MAIL FROM: %v", err)
+			}
+			if err := session.Rcpt("user@example.test", nil); err != nil {
+				t.Fatalf("RCPT TO: %v", err)
+			}
+
+			err := session.Data(bytes.NewBufferString("Subject: hi\r\n\r\nbody\r\n"))
+
+			var smtpErr *gosmtp.SMTPError
+			if !errors.As(err, &smtpErr) {
+				t.Fatalf("Data returned %v, want an *gosmtp.SMTPError", err)
+			}
+			if smtpErr.Code != tc.wantCode {
+				t.Errorf("reply code = %d, want %d", smtpErr.Code, tc.wantCode)
+			}
+			if smtpErr.EnhancedCode != tc.wantEnhancedCode {
+				t.Errorf("enhanced code = %v, want %v", smtpErr.EnhancedCode, tc.wantEnhancedCode)
+			}
+			if smtpErr.Message != tc.rejection.Message {
+				t.Errorf("message = %q, want %q", smtpErr.Message, tc.rejection.Message)
+			}
+		})
+	}
+}
+
+// An unexpected internal failure must be temporary: the message was not
+// stored, and a permanent reply would discard mail over a bug on this side.
+func TestSession_Data_ReportsInternalFailureAsTemporary(t *testing.T) {
+	mailboxID := uuid.New()
+	mailboxes := &fakeMailboxRepository{byAddress: map[string]port.MailboxRecord{
+		"user@example.test": {ID: mailboxID, QuotaBytes: 1000},
+	}}
+	session := newTestSession(mailboxes,
+		&recordingBlobStorage{err: errors.New("disk full")}, &recordingMessageRepository{})
+
+	if err := session.Mail("sender@remote.test", nil); err != nil {
+		t.Fatalf("MAIL FROM: %v", err)
+	}
+	if err := session.Rcpt("user@example.test", nil); err != nil {
+		t.Fatalf("RCPT TO: %v", err)
+	}
+
+	err := session.Data(bytes.NewBufferString("Subject: hi\r\n\r\nbody\r\n"))
+
+	var smtpErr *gosmtp.SMTPError
+	if !errors.As(err, &smtpErr) {
+		t.Fatalf("Data returned %v, want an *gosmtp.SMTPError", err)
+	}
+	if smtpErr.Code != 451 {
+		t.Errorf("reply code = %d, want 451 so the sender retries", smtpErr.Code)
 	}
 }

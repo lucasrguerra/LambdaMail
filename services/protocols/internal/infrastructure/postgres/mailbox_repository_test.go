@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -308,4 +309,11 @@ func TestMailboxRepository_ResolveDeliveryTargets_SkipsAliasDestinationThatIsNot
 	if len(targets) != 0 {
 		t.Errorf("targets = %+v, want empty slice - external forwarding destinations are not internal mailboxes and outbound delivery does not exist yet", targets)
 	}
+}
+
+// testBlobDigest produces a unique 64-character value for message_blobs'
+// content_sha256, which is UNIQUE in the schema. A hardcoded digest makes the
+// test pass exactly once per database and fail on every re-run.
+func testBlobDigest() string {
+	return strings.ReplaceAll(uuid.New().String()+uuid.New().String(), "-", "")[:64]
 }
