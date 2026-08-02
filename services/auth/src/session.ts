@@ -9,6 +9,10 @@ export interface SessionTokenPayload {
   aud: "lambdamail:user" | "lambdamail:admin";
   mfaSatisfied: boolean;
   mfaSatisfiedAt?: number;
+  // Separates the short-lived token handed out between password and second
+  // factor from a real session. Without it, a challenge token - issued before
+  // any second factor was proven - would be accepted anywhere a session is.
+  purpose: "mfa_challenge" | "session";
   iat: number;
   exp: number;
 }
@@ -87,6 +91,9 @@ export function isSurfaceAuthorized(
   requiredSurface: "user" | "admin",
 ): boolean {
   if (!payload) return false;
+  // A challenge token proves only that a password was right. Treating it as a
+  // session would let the whole second factor be skipped by presenting it.
+  if (payload.purpose !== "session") return false;
   const expectedAud = requiredSurface === "admin" ? "lambdamail:admin" : "lambdamail:user";
   if (payload.aud !== expectedAud || payload.surface !== requiredSurface) {
     return false;

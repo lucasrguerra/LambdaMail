@@ -1,259 +1,378 @@
 import { IncomingMessage, ServerResponse } from "node:http";
-import { verifyPassword, hashPassword, encryptSecret } from "./crypto.js";
-import { generateTotpSecret, verifyTotpCode } from "./totp.js";
-import { generateRecoveryCodes, generateAppPassword, hashAppPassword } from "./mfaHelpers.js";
-import { createJwt, verifyJwt, isSurfaceAuthorized } from "./session.js";
+import crypto from "node:crypto";
+import { generateTotpSecret } from "./totp.js";
+import { generateRecoveryCodes, generateAppPassword } from "./mfaHelpers.js";
+import { createJwt, verifyJwt, isSurfaceAuthorized, type SessionTokenPayload } from "./session.js";
+import * as repo from "./repository.js";
+
+const CHALLENGE_TTL_SECONDS = 300;
+const SESSION_TTL_SECONDS = 28800;
+
+/** Cookie scoped to the whole origin: the API lives under /api, so a cookie
+ * pinned to /user or /admin would never be sent with the requests that need
+ * it. Isolation between surfaces comes from the audience claim, which is
+ * checked on every request, not from the cookie path. */
+function sessionCookie(name: string, value: string, maxAge: number, secure: boolean): string {
+  const attrs = [`${name}=${value}`, "Path=/", "HttpOnly", "SameSite=Strict", `Max-Age=${maxAge}`];
+  if (secure) attrs.push("Secure");
+  return attrs.join("; ");
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      // A login endpoint has no reason to accept a large body; refusing early
+      // keeps an unauthenticated caller from buffering memory here.
+      if (size > 64 * 1024) {
+        reject(new Error("PAYLOAD_TOO_LARGE"));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function clientIp(req: IncomingMessage): string | null {
+  return req.socket.remoteAddress ?? null;
+}
+
+/** True when the deployment terminates TLS, which is always the case behind
+ * Traefik. Only a plain local run drops the Secure attribute. */
+function isSecureRequest(): boolean {
+  return process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "true";
+}
 
 export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boolean {
-  const url = req.url || "/";
-  const method = req.method || "GET";
-
+  const url = (req.url || "/").split("?")[0];
   if (!url.startsWith("/api/v1/")) {
     return false;
   }
+  void route(req, res, url);
+  return true;
+}
 
+function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
   res.setHeader("Content-Type", "application/json");
+  res.statusCode = statusCode;
+  res.end(JSON.stringify(data));
+}
 
-  // Auxiliary JSON response helper
-  const sendJson = (statusCode: number, data: unknown) => {
-    res.statusCode = statusCode;
-    res.end(JSON.stringify(data));
-  };
-
-  // Helper to extract Bearer token or Cookie
+function extractToken(req: IncomingMessage, url: string): string {
   const authHeader = req.headers["authorization"] || "";
-  let token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : "";
-  if (!token && req.headers.cookie) {
-    const cookies = req.headers.cookie.split(";").map((c) => c.trim());
-    const userCookie = cookies.find((c) => c.startsWith("lm_user_session="));
-    const adminCookie = cookies.find((c) => c.startsWith("lm_admin_session="));
-    if (url.startsWith("/api/v1/admin/") && adminCookie) {
-      token = adminCookie.split("=")[1];
-    } else if (userCookie) {
-      token = userCookie.split("=")[1];
+  if (authHeader.startsWith("Bearer ")) {
+    return authHeader.substring(7);
+  }
+  const raw = req.headers.cookie;
+  if (!raw) return "";
+  const wanted = url.startsWith("/api/v1/admin/") ? "lm_admin_session" : "lm_user_session";
+  for (const part of raw.split(";")) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf("=");
+    if (eq > 0 && trimmed.slice(0, eq) === wanted) {
+      // sliced rather than split so a value containing "=" survives intact.
+      return trimmed.slice(eq + 1);
     }
   }
+  return "";
+}
 
-  const sessionPayload = token ? verifyJwt(token) : null;
+async function route(req: IncomingMessage, res: ServerResponse, url: string): Promise<void> {
+  const method = req.method || "GET";
 
-  // STRICT SURFACE ISOLATION (PLAN.md ADR-008 & Section 14.1)
-  // Token presented to /api/v1/admin/* MUST have aud: "lambdamail:admin"
-  if (url.startsWith("/api/v1/admin/")) {
-    if (!isSurfaceAuthorized(sessionPayload, "admin")) {
-      sendJson(401, { error: "UNAUTHORIZED", message: "Admin session required" });
-      return true;
+  try {
+    const token = extractToken(req, url);
+    const session = token ? verifyJwt(token) : null;
+
+    // Surface isolation (PLAN.md section 14.1). A /user token carries
+    // aud: lambdamail:user and can never satisfy an admin route.
+    if (url.startsWith("/api/v1/admin/") && !isSurfaceAuthorized(session, "admin")) {
+      return sendJson(res, 401, { error: "UNAUTHORIZED", message: "Admin session required" });
     }
-  }
-
-  if (url.startsWith("/api/v1/user/") && !url.startsWith("/api/v1/user/login")) {
-    if (!isSurfaceAuthorized(sessionPayload, "user") && !isSurfaceAuthorized(sessionPayload, "admin")) {
-      sendJson(401, { error: "UNAUTHORIZED", message: "User session required" });
-      return true;
+    if (url.startsWith("/api/v1/user/") && !isSurfaceAuthorized(session, "user")) {
+      return sendJson(res, 401, { error: "UNAUTHORIZED", message: "User session required" });
     }
+
+    if (url === "/api/v1/auth/user/login" && method === "POST") return login(req, res, "user");
+    if (url === "/api/v1/auth/admin/login" && method === "POST") return login(req, res, "admin");
+    if (url === "/api/v1/auth/mfa/verify" && method === "POST") return mfaVerify(req, res);
+    if (url === "/api/v1/auth/logout" && method === "POST") return logout(res);
+
+    if (url === "/api/v1/user/me" && method === "GET") return me(res, session!);
+    if (url === "/api/v1/user/locale" && method === "PUT") return updateLocale(req, res, session!);
+    if (url === "/api/v1/user/mfa/totp/enroll" && method === "POST") return totpEnroll(res, session!);
+    if (url === "/api/v1/user/mfa/totp/confirm" && method === "POST") return totpConfirm(req, res, session!);
+    if (url === "/api/v1/user/app-passwords" && method === "GET") return appPasswordsList(res, session!);
+    if (url === "/api/v1/user/app-passwords" && method === "POST") return appPasswordCreate(req, res, session!);
+    if (url.startsWith("/api/v1/user/app-passwords/") && method === "DELETE") {
+      return appPasswordDelete(res, session!, url.substring("/api/v1/user/app-passwords/".length));
+    }
+
+    if (url === "/api/v1/admin/dashboard" && method === "GET") return adminDashboard(res);
+    if (url === "/api/v1/admin/domains" && method === "GET") return adminDomains(res);
+    if (url === "/api/v1/admin/mailboxes" && method === "GET") return adminMailboxes(res);
+    if (url === "/api/v1/admin/dmarc" && method === "GET") return adminDmarc(res);
+    if (url === "/api/v1/admin/queue" && method === "GET") return adminQueue(res);
+    if (url === "/api/v1/admin/preflight" && method === "GET") return adminPreflight(res);
+
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "API endpoint not found" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown";
+    if (message === "PAYLOAD_TOO_LARGE") {
+      return sendJson(res, 413, { error: "PAYLOAD_TOO_LARGE", message: "Request body too large" });
+    }
+    // Never leak an internal message (SQL text, connection strings) to a
+    // caller that may be unauthenticated.
+    console.error(`auth: unhandled error on ${url}:`, err);
+    return sendJson(res, 500, { error: "INTERNAL_ERROR", message: "Request could not be processed" });
+  }
+}
+
+async function parseJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+  const raw = await readBody(req);
+  try {
+    return JSON.parse(raw || "{}") as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------- login
+
+async function login(req: IncomingMessage, res: ServerResponse, surface: "user" | "admin"): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) return sendJson(res, 400, { error: "BAD_REQUEST", message: "Invalid JSON" });
+
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!email || !password) {
+    return sendJson(res, 400, { error: "INVALID_INPUT", message: "Email and password required" });
   }
 
-  // --- AUTH ENDPOINTS ---
-  if (url === "/api/v1/auth/user/login" && method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      try {
-        const { email, password } = JSON.parse(body || "{}");
-        if (!email || !password) {
-          return sendJson(400, { error: "INVALID_INPUT", message: "Email and password required" });
-        }
+  const outcome = await repo.authenticate(email, password);
 
-        // Demo/seeded user check
-        const domain = email.split("@")[1] || "example.com";
-        const isMfaActive = email.includes("mfa");
-
-        if (isMfaActive) {
-          const challengeToken = createJwt({
-            sub: "user-challenge-id",
-            email,
-            role: "USER",
-            domainId: "domain-1",
-            surface: "user",
-            aud: "lambdamail:user",
-            mfaSatisfied: false,
-          }, 300);
-          return sendJson(200, { mfa_required: true, challenge_token: challengeToken });
-        }
-
-        const userToken = createJwt({
-          sub: "user-123",
-          email,
-          role: "USER",
-          domainId: "domain-1",
-          surface: "user",
-          aud: "lambdamail:user",
-          mfaSatisfied: false,
-        });
-
-        res.setHeader("Set-Cookie", `lm_user_session=${userToken}; Path=/user; HttpOnly; Secure; SameSite=Strict`);
-        return sendJson(200, { token: userToken, surface: "user", role: "USER" });
-      } catch {
-        return sendJson(400, { error: "BAD_REQUEST", message: "Invalid JSON" });
-      }
-    });
-    return true;
+  if (outcome.status === "LOCKED") {
+    return sendJson(res, 423, { error: "ACCOUNT_LOCKED", message: "Too many failed attempts, try again later" });
+  }
+  if (outcome.status !== "OK") {
+    // One message for every failure mode: distinguishing "no such account"
+    // from "wrong password" hands an attacker a list of valid addresses.
+    return sendJson(res, 401, { error: "INVALID_CREDENTIALS", message: "Invalid email or password" });
   }
 
-  if (url === "/api/v1/auth/admin/login" && method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      try {
-        const { email, password } = JSON.parse(body || "{}");
-        if (!email || !password) {
-          return sendJson(400, { error: "INVALID_INPUT", message: "Email and password required" });
-        }
+  const { mailbox, mfaRequired } = outcome;
 
-        const challengeToken = createJwt({
-          sub: "admin-123",
-          email,
-          role: "SUPER_ADMIN",
-          domainId: "domain-1",
-          surface: "admin",
-          aud: "lambdamail:admin",
-          mfaSatisfied: false,
-        }, 300);
-
-        return sendJson(200, { mfa_required: true, challenge_token: challengeToken });
-      } catch {
-        return sendJson(400, { error: "BAD_REQUEST", message: "Invalid JSON" });
-      }
-    });
-    return true;
-  }
-
-  if (url === "/api/v1/auth/mfa/verify" && method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      try {
-        const { challenge_token, code } = JSON.parse(body || "{}");
-        const payload = verifyJwt(challenge_token);
-        if (!payload) {
-          return sendJson(401, { error: "CHALLENGE_EXPIRED", message: "Challenge token expired or invalid" });
-        }
-
-        if (!code || code.trim().length === 0) {
-          return sendJson(400, { error: "CODE_REQUIRED", message: "Verification code required" });
-        }
-
-        const surface = payload.surface;
-        const aud = surface === "admin" ? "lambdamail:admin" : "lambdamail:user";
-
-        const sessionToken = createJwt({
-          sub: payload.sub,
-          email: payload.email,
-          role: payload.role,
-          domainId: payload.domainId,
-          surface: surface as "user" | "admin",
-          aud: aud as "lambdamail:user" | "lambdamail:admin",
-          mfaSatisfied: true,
-          mfaSatisfiedAt: Date.now(),
-        });
-
-        const cookieName = surface === "admin" ? "lm_admin_session" : "lm_user_session";
-        const cookiePath = surface === "admin" ? "/admin" : "/user";
-        res.setHeader("Set-Cookie", `${cookieName}=${sessionToken}; Path=${cookiePath}; HttpOnly; Secure; SameSite=Strict`);
-
-        return sendJson(200, { token: sessionToken, surface, role: payload.role, mfa_satisfied: true });
-      } catch {
-        return sendJson(400, { error: "BAD_REQUEST", message: "Invalid JSON" });
-      }
-    });
-    return true;
-  }
-
-  // --- USER MFA ENROLLMENT ---
-  if (url === "/api/v1/user/mfa/totp/enroll" && method === "POST") {
-    const email = sessionPayload?.email || "user@lambdamail.local";
-    const secretData = generateTotpSecret(email);
-    return sendJson(200, { secret: secretData.base32Secret, uri: secretData.uri });
-  }
-
-  if (url === "/api/v1/user/mfa/totp/confirm" && method === "POST") {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      try {
-        const { secret, code } = JSON.parse(body || "{}");
-        const verification = verifyTotpCode(secret, code);
-        if (!verification.valid) {
-          return sendJson(400, { error: "INVALID_TOTP_CODE", message: "TOTP verification failed" });
-        }
-
-        const recovery = generateRecoveryCodes(10);
-        return sendJson(200, {
-          confirmed: true,
-          recovery_codes: recovery.rawCodes,
-        });
-      } catch {
-        return sendJson(400, { error: "BAD_REQUEST", message: "Invalid JSON" });
-      }
-    });
-    return true;
-  }
-
-  // --- ADMIN ENDPOINTS ---
-  if (url === "/api/v1/admin/dashboard" && method === "GET") {
-    return sendJson(200, {
-      inbound_24h: 1420,
-      outbound_24h: 890,
-      queue_depth: 3,
-      bounce_rate: 0.12,
-      spam_score_avg: 0.45,
-      disk_used_percent: 18.4,
-      domains_verified: 2,
-      domains_total: 2,
-      preflight_status: "HEALTHY",
+  // An admin whose second factor is not enrolled must not fall through to a
+  // full session: the admin surface requires MFA unconditionally.
+  if (surface === "admin" && !(await repo.hasConfirmedTotp(mailbox.id))) {
+    return sendJson(res, 403, {
+      error: "MFA_ENROLLMENT_REQUIRED",
+      message: "Enroll a second factor from the webmail settings before using the admin console",
     });
   }
 
-  if (url === "/api/v1/admin/domains" && method === "GET") {
-    return sendJson(200, [
+  if (mfaRequired) {
+    const challengeToken = createJwt(
       {
-        id: "domain-1",
-        name: "example.com",
-        dns_status: "VERIFIED",
-        dmarc_policy: "quarantine",
-        mta_sts_mode: "testing",
-        dane_enabled: false,
-        records_count: 13,
+        sub: mailbox.id,
+        email: mailbox.email_address,
+        role: mailbox.role,
+        domainId: mailbox.domain_id,
+        surface,
+        aud: surface === "admin" ? "lambdamail:admin" : "lambdamail:user",
+        mfaSatisfied: false,
+        purpose: "mfa_challenge",
       },
-    ]);
+      CHALLENGE_TTL_SECONDS,
+    );
+    return sendJson(res, 200, { mfa_required: true, challenge_token: challengeToken });
   }
 
-  if (url === "/api/v1/admin/dmarc" && method === "GET") {
-    return sendJson(200, {
-      total_messages: 1250,
-      spf_pass_count: 1220,
-      dkim_pass_count: 1210,
-      dmarc_pass_count: 1200,
-      sources: [
-        { ip: "209.85.220.41", org: "Google LLC", count: 850, spf: "pass", dkim: "pass" },
-        { ip: "40.107.0.50", org: "Microsoft Corp", count: 350, spf: "pass", dkim: "pass" },
-        { ip: "192.0.2.45", org: "Unknown Host", count: 50, spf: "fail", dkim: "fail" },
-      ],
-    });
+  // No factor enrolled yet. The session is issued so the user can reach the
+  // settings screen and enroll; when policy obliges them to, the response says
+  // so and the UI keeps them on that screen.
+  await issueSession(req, res, mailbox, surface, repo.isMfaEnrollmentRequired(mailbox));
+}
+
+async function issueSession(
+  req: IncomingMessage,
+  res: ServerResponse,
+  mailbox: repo.MailboxRecord,
+  surface: "user" | "admin",
+  enrollmentRequired = false,
+): Promise<void> {
+  const sessionToken = createJwt({
+    sub: mailbox.id,
+    email: mailbox.email_address,
+    role: mailbox.role,
+    domainId: mailbox.domain_id,
+    surface,
+    aud: surface === "admin" ? "lambdamail:admin" : "lambdamail:user",
+    mfaSatisfied: true,
+    mfaSatisfiedAt: Date.now(),
+    purpose: "session",
+  });
+
+  await repo.recordSession(
+    mailbox.id,
+    surface,
+    crypto.createHash("sha256").update(sessionToken).digest("hex"),
+    new Date(Date.now() + SESSION_TTL_SECONDS * 1000),
+    clientIp(req),
+    req.headers["user-agent"] ?? null,
+  );
+
+  const cookieName = surface === "admin" ? "lm_admin_session" : "lm_user_session";
+  res.setHeader("Set-Cookie", sessionCookie(cookieName, sessionToken, SESSION_TTL_SECONDS, isSecureRequest()));
+  sendJson(res, 200, {
+    token: sessionToken,
+    surface,
+    role: mailbox.role,
+    locale: mailbox.locale,
+    mfa_satisfied: true,
+    mfa_enrollment_required: enrollmentRequired,
+  });
+}
+
+async function mfaVerify(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) return sendJson(res, 400, { error: "BAD_REQUEST", message: "Invalid JSON" });
+
+  const challengeToken = typeof body.challenge_token === "string" ? body.challenge_token : "";
+  const code = typeof body.code === "string" ? body.code : "";
+  const payload = challengeToken ? verifyJwt(challengeToken) : null;
+
+  // Only a challenge token gets past here. A full session token must not be
+  // replayable into this endpoint to refresh its own MFA timestamp.
+  if (!payload || payload.purpose !== "mfa_challenge") {
+    return sendJson(res, 401, { error: "CHALLENGE_EXPIRED", message: "Challenge token expired or invalid" });
+  }
+  if (!code.trim()) {
+    return sendJson(res, 400, { error: "CODE_REQUIRED", message: "Verification code required" });
   }
 
-  if (url === "/api/v1/admin/preflight" && method === "GET") {
-    return sendJson(200, {
-      status: "HEALTHY",
-      checks: [
-        { name: "Outbound Port 25 Egress", status: "PASS" },
-        { name: "PTR Record Matching Host", status: "PASS" },
-        { name: "FCrDNS Verification", status: "PASS" },
-        { name: "IP Clean in RBLs", status: "PASS" },
-        { name: "Cloudflare API Token Scope", status: "PASS" },
-        { name: "Certificates in acme.json", status: "PASS" },
-      ],
-    });
+  // A TOTP code is six digits; anything else is treated as a recovery code,
+  // which is single-use and consumed on success.
+  const isTotpShaped = /^\d{6}$/.test(code.trim());
+  const accepted = isTotpShaped
+    ? await repo.verifyTotpForLogin(payload.sub, code)
+    : await repo.consumeRecoveryCode(payload.sub, code, clientIp(req));
+
+  if (!accepted) {
+    return sendJson(res, 401, { error: "INVALID_MFA_CODE", message: "Invalid verification code" });
   }
 
-  return sendJson(404, { error: "NOT_FOUND", message: "API endpoint not found" });
+  const mailbox = await repo.findMailboxByEmail(payload.email);
+  if (!mailbox || !mailbox.is_active) {
+    return sendJson(res, 401, { error: "INVALID_CREDENTIALS", message: "Account unavailable" });
+  }
+
+  await issueSession(req, res, mailbox, payload.surface);
+}
+
+function logout(res: ServerResponse): void {
+  res.setHeader("Set-Cookie", [
+    sessionCookie("lm_user_session", "", 0, isSecureRequest()),
+    sessionCookie("lm_admin_session", "", 0, isSecureRequest()),
+  ] as unknown as string);
+  sendJson(res, 200, { ok: true });
+}
+
+// -------------------------------------------------------------- user area
+
+async function me(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const mailbox = await repo.findMailboxByEmail(session.email);
+  if (!mailbox) return sendJson(res, 404, { error: "NOT_FOUND", message: "Mailbox not found" });
+  sendJson(res, 200, {
+    id: mailbox.id,
+    email: mailbox.email_address,
+    role: mailbox.role,
+    locale: mailbox.locale,
+    mfa_enrolled: await repo.hasConfirmedTotp(mailbox.id),
+    recovery_codes_left: await repo.countUnusedRecoveryCodes(mailbox.id),
+  });
+}
+
+async function updateLocale(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const locale = typeof body?.locale === "string" ? body.locale : "";
+  if (!["en", "pt-BR", "es"].includes(locale)) {
+    return sendJson(res, 400, { error: "INVALID_LOCALE", message: "Supported locales: en, pt-BR, es" });
+  }
+  await repo.setLocale(session.sub, locale);
+  sendJson(res, 200, { locale });
+}
+
+async function totpEnroll(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const secret = generateTotpSecret(session.email);
+  // Stored server-side; the confirm step reads it from the database rather
+  // than trusting the client to send it back.
+  await repo.startTotpEnrollment(session.sub, secret.base32Secret);
+  sendJson(res, 200, { secret: secret.base32Secret, uri: secret.uri });
+}
+
+async function totpConfirm(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const code = typeof body?.code === "string" ? body.code : "";
+  if (!(await repo.confirmTotpEnrollment(session.sub, code))) {
+    return sendJson(res, 400, { error: "INVALID_TOTP_CODE", message: "TOTP verification failed" });
+  }
+  const recovery = await generateRecoveryCodes(10);
+  await repo.storeRecoveryCodes(session.sub, recovery.hashedCodes);
+  // The raw codes are shown exactly once; only their hashes are kept.
+  sendJson(res, 200, { confirmed: true, recovery_codes: recovery.rawCodes });
+}
+
+async function appPasswordsList(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.listAppPasswords(session.sub));
+}
+
+async function appPasswordCreate(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const body = await parseJsonBody(req);
+  const label = typeof body?.label === "string" && body.label.trim() ? body.label.trim().slice(0, 64) : "";
+  if (!label) return sendJson(res, 400, { error: "INVALID_INPUT", message: "Label required" });
+
+  const raw = generateAppPassword();
+  const id = await repo.createAppPassword(session.sub, label, raw);
+  // Shown once, stored hashed - same contract as the recovery codes.
+  sendJson(res, 201, { id, label, password: raw });
+}
+
+async function appPasswordDelete(res: ServerResponse, session: SessionTokenPayload, id: string): Promise<void> {
+  if (!(await repo.deleteAppPassword(session.sub, id))) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "App password not found" });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+// ------------------------------------------------------------- admin area
+
+async function adminDashboard(res: ServerResponse): Promise<void> {
+  const stats = await repo.dashboardStats();
+  sendJson(res, 200, stats);
+}
+
+async function adminDomains(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.listDomains());
+}
+
+async function adminMailboxes(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.listMailboxes());
+}
+
+async function adminDmarc(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.dmarcSummary());
+}
+
+async function adminQueue(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.queueSummary());
+}
+
+async function adminPreflight(res: ServerResponse): Promise<void> {
+  sendJson(res, 200, await repo.preflightSummary());
 }
