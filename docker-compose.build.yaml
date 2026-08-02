@@ -1,0 +1,21 @@
+# Development overlay: builds the images from source instead of pulling them.
+#
+# Production deploys pull what CI already built and tested, so the compose file
+# proper carries no build definitions - rebuilding four images on the target
+# host is slow and, on a small server, the webmail build is enough to fail the
+# deployment outright.
+#
+# Use it explicitly:
+#   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build
+services:
+  auth:
+    build: { context: ./services/auth }
+
+  storage:
+    build: { context: ./services/storage }
+
+  protocols:
+    build: { context: ./services/protocols }
+
+  web:
+    build: { context: ./services/webmail }

@@ -122,7 +122,6 @@ services:
   # -------------------------------------------------------------- AUTH
   auth:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/auth:${IMAGE_TAG:-latest}
-    build: { context: ./services/auth }
     restart: *restart
     logging: *default-logging
     environment:
@@ -156,7 +155,6 @@ services:
   # ----------------------------------------------------------- STORAGE
   storage:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/storage:${IMAGE_TAG:-latest}
-    build: { context: ./services/storage }
     restart: *restart
     logging: *default-logging
     environment:
@@ -187,7 +185,6 @@ services:
   # --------------------------------------------------------- PROTOCOLS
   protocols:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/protocols:${IMAGE_TAG:-latest}
-    build: { context: ./services/protocols }
     restart: *restart
     logging: *default-logging
     ports:
@@ -266,7 +263,6 @@ services:
   # -------------------------------------------------------------- WEB
   web:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/webmail:${IMAGE_TAG:-latest}
-    build: { context: ./services/webmail }
     restart: *restart
     logging: *default-logging
     environment:

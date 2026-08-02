@@ -177,6 +177,10 @@ docker compose pull
 docker compose up -d
 ```
 
+Deploys pull the images CI published rather than building on the server;
+`docker-compose.build.yaml` is the overlay local development uses to build from
+source instead.
+
 Migrations run automatically on start, before the services that depend on them.
 To pin a version, set `IMAGE_TAG` to a release version or a `sha-` tag rather
 than `latest`.

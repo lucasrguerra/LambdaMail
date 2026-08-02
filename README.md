@@ -75,7 +75,7 @@ route into the console needs one.
 ```bash
 cp .env.example .env
 make gen-dev-cert                    # self-signed certificate for the listeners
-docker compose up --build
+make up                              # builds from source via the build overlay
 make seed                            # a postmaster@example.test fixture
 ```
 

@@ -1,7 +1,8 @@
 .PHONY: up down logs test lint migrate-up migrate-down gen-dev-cert seed preflight create-admin reset-password
 
+# Local development builds from source; production pulls what CI published.
 up:
-	docker compose --env-file .env up --build
+	docker compose -f docker-compose.yaml -f docker-compose.build.yaml --env-file .env up --build
 
 down:
 	docker compose down -v

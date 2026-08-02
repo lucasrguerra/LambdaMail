@@ -200,9 +200,8 @@ jobs:
       # start the stack at all.
       - name: Cria a rede do proxy
         run: docker network create "${COOLIFY_PROXY_NETWORK:-coolify}"
-      # --build makes compose build each service locally and tag it under the
-      # same name the published image uses, so the stack comes up without ever
-      # reaching the registry.
-      - run: docker compose --env-file .env up --build --wait
-      - run: docker compose ps
-      - run: docker compose down -v
+      # The build overlay is explicit here: CI has to exercise the code in the
+      # branch, not the images already published from main.
+      - run: docker compose -f docker-compose.yaml -f docker-compose.build.yaml --env-file .env up --build --wait
+      - run: docker compose -f docker-compose.yaml -f docker-compose.build.yaml ps
+      - run: docker compose -f docker-compose.yaml -f docker-compose.build.yaml down -v
