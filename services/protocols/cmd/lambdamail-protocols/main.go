@@ -306,10 +306,11 @@ func watcherDegradedCheck(watcher *tlsprovider.AcmeCertWatcher, cfg config) func
 
 func relayConfig(cfg config) usecase.RelayConfig {
 	return usecase.RelayConfig{
-		Host:     cfg.RelayHost,
-		Port:     cfg.RelayPort,
-		Username: cfg.RelayUser,
-		Password: cfg.RelayPass,
+		Host:         cfg.RelayHost,
+		Port:         cfg.RelayPort,
+		Username:     cfg.RelayUser,
+		Password:     cfg.RelayPass,
+		SpfMechanism: cfg.RelaySpfInclude,
 	}
 }
 

@@ -22,6 +22,10 @@ type RelayConfig struct {
 	Port     int
 	Username string
 	Password string
+	// SpfMechanism is the SPF term that authorises this relay, as the
+	// provider documents it ("include:spf.brevo.com"). It has to be given
+	// because it cannot be derived - see SpfInclude.
+	SpfMechanism string
 	// RootCAs trusts an internal relay presenting a certificate from a
 	// private CA. Left nil, the system trust store is used. There is
 	// deliberately no option to skip verification: the credentials sent over
@@ -46,13 +50,31 @@ func (c RelayConfig) Address() string {
 // SpfInclude renders the mechanism to add to the domain's SPF record. Without
 // it the relay's own IP is not authorised to send for the domain and every
 // message it forwards fails SPF (PLAN.md section 10.4).
+//
+// SpfMechanism is used when set, and it normally has to be: the provider's
+// documented include is rarely derivable from the relay hostname. Brevo is the
+// example that proves it - the relay is smtp-relay.brevo.com, but brevo.com
+// publishes the SPF of their *corporate* mail (Google Workspace and Zendesk),
+// while the sending ranges live at spf.brevo.com. Reducing the host to its
+// organisational domain would authorise Google to send for the domain and not
+// the relay, so every message it forwarded would fail SPF - and against a
+// "-all" policy, be rejected outright.
+//
+// Falling back to that reduction is still better than publishing nothing, so
+// it remains for relays whose hostname does happen to match, but a deployment
+// should set RELAY_SPF_INCLUDE to whatever its provider documents.
 func (c RelayConfig) SpfInclude() string {
 	if !c.Configured() {
 		return ""
 	}
-	// A relay host is normally a subdomain of the provider's sending
-	// infrastructure; including its organisational domain is what the
-	// provider documents. The host itself is used when it cannot be reduced.
+	if mechanism := strings.TrimSpace(c.SpfMechanism); mechanism != "" {
+		// Accepted with or without the "include:" prefix, and any other SPF
+		// term ("a:", "ip4:", "mx:") is passed through untouched.
+		if strings.Contains(mechanism, ":") {
+			return mechanism
+		}
+		return "include:" + mechanism
+	}
 	host := strings.TrimSuffix(strings.ToLower(c.Host), ".")
 	labels := strings.Split(host, ".")
 	if len(labels) > 2 {

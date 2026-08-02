@@ -37,6 +37,10 @@ type config struct {
 	RelayPort int
 	RelayUser string
 	RelayPass string
+	// RelaySpfInclude overrides the SPF mechanism published for the relay.
+	// Providers document their own, and it is rarely the relay hostname's
+	// organisational domain - see RelayConfig.SpfInclude.
+	RelaySpfInclude string
 
 	// ArcSealEnabled adds an ARC set to accepted messages. It is off by
 	// default because it only earns its keep on a host that forwards mail
@@ -85,10 +89,11 @@ func loadConfig() config {
 		DnssecResolver:  envOrDefault("DNSSEC_RESOLVER", "1.1.1.1:53"),
 		MaxMessageBytes: int64(envInt("MAX_MESSAGE_BYTES", 52428800)),
 
-		RelayHost: os.Getenv("RELAY_HOST"),
-		RelayPort: envInt("RELAY_PORT", 587),
-		RelayUser: os.Getenv("RELAY_USER"),
-		RelayPass: os.Getenv("RELAY_PASS"),
+		RelayHost:       os.Getenv("RELAY_HOST"),
+		RelayPort:       envInt("RELAY_PORT", 587),
+		RelayUser:       os.Getenv("RELAY_USER"),
+		RelayPass:       os.Getenv("RELAY_PASS"),
+		RelaySpfInclude: os.Getenv("RELAY_SPF_INCLUDE"),
 
 		ArcSealEnabled: envBool("ARC_SEAL_ENABLED", false),
 

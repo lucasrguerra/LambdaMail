@@ -307,3 +307,46 @@ func relayTestCertificate(t *testing.T) tls.Certificate {
 
 // relayTestRoots holds the CA pool for the certificate issued above.
 var relayTestRoots *x509.CertPool
+
+// The provider's documented include is not derivable from the relay hostname,
+// and guessing it wrong is worse than useless against a "-all" policy.
+//
+// Brevo is the case that proves it: the relay is smtp-relay.brevo.com, but
+// brevo.com publishes the SPF of their corporate mail (Google Workspace,
+// Zendesk) while the sending ranges live at spf.brevo.com. Reducing the host
+// to its organisational domain authorises Google to send for the domain and
+// not the relay.
+func TestRelayConfig_SpfIncludeUsesTheConfiguredMechanism(t *testing.T) {
+	relay := RelayConfig{Host: "smtp-relay.brevo.com", SpfMechanism: "include:spf.brevo.com"}
+	if got := relay.SpfInclude(); got != "include:spf.brevo.com" {
+		t.Errorf("SpfInclude() = %q, want the configured mechanism", got)
+	}
+
+	// The reduction would have produced this, which is the wrong answer.
+	if got := (RelayConfig{Host: "smtp-relay.brevo.com"}).SpfInclude(); got != "include:brevo.com" {
+		t.Errorf("fallback = %q, want include:brevo.com", got)
+	}
+}
+
+func TestRelayConfig_SpfMechanismAcceptsBareDomainsAndOtherTerms(t *testing.T) {
+	cases := map[string]string{
+		"spf.brevo.com":         "include:spf.brevo.com",
+		"include:spf.brevo.com": "include:spf.brevo.com",
+		"ip4:198.51.100.0/24":   "ip4:198.51.100.0/24",
+		"a:relay.example.test":  "a:relay.example.test",
+	}
+	for mechanism, want := range cases {
+		got := RelayConfig{Host: "relay.example.test", SpfMechanism: mechanism}.SpfInclude()
+		if got != want {
+			t.Errorf("SpfInclude(%q) = %q, want %q", mechanism, got, want)
+		}
+	}
+}
+
+// An unconfigured relay publishes nothing, or the SPF record would authorise
+// a host that is not being used.
+func TestRelayConfig_SpfIncludeEmptyWithoutRelay(t *testing.T) {
+	if got := (RelayConfig{SpfMechanism: "include:spf.brevo.com"}).SpfInclude(); got != "" {
+		t.Errorf("SpfInclude() = %q with no relay host, want empty", got)
+	}
+}
