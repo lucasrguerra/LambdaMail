@@ -238,6 +238,38 @@ for the delivery worker. A `4.7.5` deferral means the destination published a
 TLS policy that could not be satisfied — that is deliberate; the message is
 retried rather than sent in the clear.
 
+**"Delivery Delay Notification" with `dial tcp …:25: i/o timeout`.** This is
+step 1 of the prerequisites, and it is the single most common reason a new
+deployment cannot send anywhere:
+
+```
+Reason: dial tcp alt4.gmail-smtp-in.l.google.com:25: dial tcp 192.178.213.26:25: i/o timeout
+```
+
+A *timeout* rather than a refusal is the signature of a provider block —
+nothing is answering because the packets never leave. Receiving still works,
+and the queued messages keep retrying, so nothing is lost while you sort it
+out. Two ways forward:
+
+1. Ask the provider to unblock outbound port 25 for the host.
+2. Send through a relay, which needs no cooperation from them:
+
+   ```bash
+   RELAY_HOST=smtp.your-provider.example
+   RELAY_PORT=587
+   RELAY_USER=...
+   RELAY_PASS=...
+   ```
+
+   Delivery then goes to the relay for every destination, and the relay is
+   added to the published SPF record automatically — without that the relay's
+   IP is not authorised for your domain and everything it forwards fails SPF.
+   Credentials are only ever sent over STARTTLS; if the relay does not offer
+   it, the message is deferred rather than the password sent in the clear.
+
+Watch the backlog drain on the admin console's outbound queue screen, or with
+`make preflight` for the port check itself.
+
 **`/health` returns `X-LambdaMail-Health: degraded`.** The stack is running but
 a certificate needs attention: usually no certificate exists for
 `PRIMARY_MAIL_HOST` because no router was declared for it, or one is expiring

@@ -84,6 +84,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/mail/message/", r.handleMailMessage)
 	r.mux.HandleFunc("/api/v1/mail/seen", r.handleMailSeen)
 	r.mux.HandleFunc("/api/v1/mail/send", r.handleMailSend)
+	r.mux.HandleFunc("/api/v1/mail/draft", r.handleMailDraft)
 	r.mux.HandleFunc("/api/v1/reports/dmarc", r.handleDmarcIngest)
 	r.mux.HandleFunc("/api/v1/reports/tlsrpt", r.handleTlsRptIngest)
 }
@@ -295,5 +296,15 @@ func (r *Router) handleMailSend(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.mailReady(w) {
 		r.mail.handleSend(w, req)
+	}
+}
+
+func (r *Router) handleMailDraft(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleSaveDraft(w, req)
 	}
 }

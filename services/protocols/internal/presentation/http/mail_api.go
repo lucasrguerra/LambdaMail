@@ -246,32 +246,80 @@ func (m *mailAPI) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	input, ok := m.decodeCompose(w, r, session.Email)
+	if !ok {
+		return
+	}
+
+	if err := m.useCase.Send(r.Context(), input); err != nil {
+		m.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
+}
+
+// handleSaveDraft stores the message being composed in the Drafts folder.
+func (m *mailAPI) handleSaveDraft(w http.ResponseWriter, r *http.Request) {
+	session, ok := m.authenticate(w, r)
+	if !ok {
+		return
+	}
+	input, ok := m.decodeCompose(w, r, session.Email)
+	if !ok {
+		return
+	}
+
+	uid, err := m.useCase.SaveDraft(r.Context(), input)
+	if err != nil {
+		m.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"saved": true, "uid": uid})
+}
+
+// decodeCompose reads a composed message off the wire.
+//
+// "html" and "text" are both accepted, and both are new: the field was called
+// "body" while the composer had always sent "html", so every message sent from
+// the webmail was delivered with an empty body. "bcc" was likewise never read,
+// so blind recipients were silently dropped.
+func (m *mailAPI) decodeCompose(
+	w http.ResponseWriter, r *http.Request, sender string,
+) (usecase.ComposeInput, bool) {
 	var body struct {
 		To      []string `json:"to"`
 		Cc      []string `json:"cc"`
+		Bcc     []string `json:"bcc"`
 		Subject string   `json:"subject"`
-		Body    string   `json:"body"`
+		Text    string   `json:"text"`
+		HTML    string   `json:"html"`
+		// Accepted so an older client - or a script written against the
+		// previous shape - still sends a readable message rather than a blank
+		// one. Only used when neither text nor html is present.
+		LegacyBody string `json:"body"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxComposeBytes)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
-		return
+		return usecase.ComposeInput{}, false
+	}
+
+	text := body.Text
+	if text == "" && body.HTML == "" {
+		text = body.LegacyBody
 	}
 
 	// The sender is the session's address, never a field in the request:
 	// letting the body choose From is how a webmail becomes an open relay for
 	// spoofed mail.
-	err := m.useCase.Send(r.Context(), usecase.ComposeInput{
-		From:    session.Email,
+	return usecase.ComposeInput{
+		From:    sender,
 		To:      body.To,
 		Cc:      body.Cc,
+		Bcc:     body.Bcc,
 		Subject: body.Subject,
-		Body:    body.Body,
-	})
-	if err != nil {
-		m.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
+		Text:    text,
+		HTML:    body.HTML,
+	}, true
 }
 
 // fail maps domain errors onto status codes without leaking internals.
@@ -285,6 +333,8 @@ func (m *mailAPI) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusTooManyRequests, "SEND_LIMIT_EXCEEDED", "Hourly recipient limit reached")
 	case errors.Is(err, usecase.ErrSenderNotOwned):
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "Sender address does not belong to this account")
+	case errors.Is(err, usecase.ErrDraftsUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "DRAFTS_UNAVAILABLE", "Draft storage is not configured")
 	default:
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Request could not be processed")
 	}

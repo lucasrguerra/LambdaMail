@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"mime"
 	"net/mail"
 	"strings"
@@ -31,6 +32,12 @@ type WebmailUseCase struct {
 	submission *ProcessOutboundEmailUseCase
 	auth       port.AuthRepository
 	localHost  string
+	// blobStore and messages file the sender's own copy into Sent, and hold
+	// drafts. Both are optional: when either is nil the copy is skipped rather
+	// than the send failing, because a message that has already been queued
+	// for delivery must not be reported as an error.
+	blobStore port.BlobStorage
+	messages  port.InboundMessageRepository
 }
 
 func NewWebmailUseCase(
@@ -44,6 +51,13 @@ func NewWebmailUseCase(
 		localHost = "localhost"
 	}
 	return &WebmailUseCase{repo: repo, blobs: blobs, submission: submission, auth: auth, localHost: localHost}
+}
+
+// WithLocalFiling enables the Sent copy and draft storage.
+func (uc *WebmailUseCase) WithLocalFiling(store port.BlobStorage, messages port.InboundMessageRepository) *WebmailUseCase {
+	uc.blobStore = store
+	uc.messages = messages
+	return uc
 }
 
 // MailboxIDFor resolves a session's address to its mailbox, which the event
@@ -114,8 +128,16 @@ type ComposeInput struct {
 	From    string
 	To      []string
 	Cc      []string
+	// Bcc reaches the envelope but never the headers - that is the whole
+	// point of it. It used not to exist here at all, so a blind copy typed
+	// into the webmail was silently dropped and nobody received it.
+	Bcc     []string
 	Subject string
-	Body    string
+	// Text is the plain-text body. HTML, when present, is what the composer
+	// produced; both are sent together as multipart/alternative so a reader
+	// that cannot or will not render HTML still has something to show.
+	Text string
+	HTML string
 }
 
 // ErrNoRecipients rejects a submission with nobody to deliver to, before it
@@ -126,7 +148,10 @@ var ErrNoRecipients = errors.New("webmail: at least one recipient is required")
 // case the SMTP ports use, so webmail mail gets the identical treatment:
 // send limits, DKIM signing and the durable queue.
 func (uc *WebmailUseCase) Send(ctx context.Context, input ComposeInput) error {
-	recipients := normaliseRecipients(append(append([]string{}, input.To...), input.Cc...))
+	// Bcc joins the envelope here and is left out of buildMimeMessage, which
+	// is what makes it blind.
+	recipients := normaliseRecipients(
+		append(append(append([]string{}, input.To...), input.Cc...), input.Bcc...))
 	if len(recipients) == 0 {
 		return ErrNoRecipients
 	}
@@ -141,15 +166,110 @@ func (uc *WebmailUseCase) Send(ctx context.Context, input ComposeInput) error {
 
 	payload := buildMimeMessage(input, recipients, uc.localHost)
 
-	return uc.submission.Submit(ctx, ProcessOutboundEmailInput{
+	if err := uc.submission.Submit(ctx, ProcessOutboundEmailInput{
 		MailboxID:            account.ID,
 		SenderAddr:           account.EmailAddress,
 		DomainName:           account.DomainName,
 		Recipients:           recipients,
 		Body:                 bytes.NewReader(payload),
 		MaxRecipientsPerHour: account.MaxRecipientsPerHour,
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Only after the message is durably queued. Filing it first would leave a
+	// copy in Sent for a message that was then rejected by the send limit.
+	//
+	// A failure here is logged and swallowed: the mail is already on its way,
+	// and telling the composer the send failed would invite a duplicate.
+	if err := uc.fileLocalCopy(ctx, account.ID, account.EmailAddress, "Sent", payload); err != nil {
+		log.Printf("webmail: could not file the Sent copy for %s: %v", account.EmailAddress, err)
+	}
+	return nil
 }
+
+// fileLocalCopy stores a message the user themselves composed into one of
+// their own folders. It reuses the inbound persistence path so the copy gets a
+// real IMAP UID and shows up over IMAP as well as in the webmail.
+func (uc *WebmailUseCase) fileLocalCopy(
+	ctx context.Context, mailboxID uuid.UUID, address, folder string, payload []byte,
+) error {
+	if uc.blobStore == nil || uc.messages == nil {
+		return nil
+	}
+	blob, err := uc.blobStore.Store(ctx, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	headers := ExtractMessageHeaders(payload)
+	_, err = uc.messages.PersistAll(ctx, []port.PersistInboundMessageInput{{
+		MailboxID:        mailboxID,
+		Blob:             blob,
+		SenderAddress:    address,
+		RecipientAddress: address,
+		TargetFolderName: folder,
+		Subject:          headers.Subject,
+		Snippet:          headers.Snippet,
+		FromDisplayName:  headers.FromDisplayName,
+		MessageIDHeader:  headers.MessageID,
+		HasAttachments:   headers.HasAttachments,
+	}})
+	return err
+}
+
+// SaveDraft files the message being composed into the Drafts folder.
+//
+// Nothing did this before: the composer displayed "draft saved automatically"
+// from a setTimeout, with no request behind it, and closing the tab lost the
+// message. Drafts are whole RFC 5322 messages like any other, so they are
+// readable over IMAP too.
+func (uc *WebmailUseCase) SaveDraft(ctx context.Context, input ComposeInput) (uint32, error) {
+	account, err := uc.auth.FindByAddress(ctx, input.From)
+	if err != nil {
+		return 0, err
+	}
+	if account == nil {
+		return 0, ErrNoSuchMailbox
+	}
+	if uc.blobStore == nil || uc.messages == nil {
+		return 0, ErrDraftsUnavailable
+	}
+
+	// A draft has no envelope, so recipients may legitimately be empty here -
+	// unlike Send, this must not reject a half-written message.
+	recipients := normaliseRecipients(
+		append(append(append([]string{}, input.To...), input.Cc...), input.Bcc...))
+	payload := buildMimeMessage(input, recipients, uc.localHost)
+
+	blob, err := uc.blobStore.Store(ctx, bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	headers := ExtractMessageHeaders(payload)
+	uids, err := uc.messages.PersistAll(ctx, []port.PersistInboundMessageInput{{
+		MailboxID:        account.ID,
+		Blob:             blob,
+		SenderAddress:    account.EmailAddress,
+		RecipientAddress: account.EmailAddress,
+		TargetFolderName: "Drafts",
+		Subject:          headers.Subject,
+		Snippet:          headers.Snippet,
+		FromDisplayName:  headers.FromDisplayName,
+		MessageIDHeader:  headers.MessageID,
+		HasAttachments:   headers.HasAttachments,
+	}})
+	if err != nil {
+		return 0, err
+	}
+	if len(uids) == 0 {
+		return 0, nil
+	}
+	return uint32(uids[0]), nil
+}
+
+// ErrDraftsUnavailable reports that this deployment cannot store drafts,
+// rather than accepting one and dropping it.
+var ErrDraftsUnavailable = errors.New("webmail: draft storage is not configured")
 
 func normaliseRecipients(raw []string) []string {
 	seen := map[string]bool{}
@@ -172,13 +292,25 @@ func normaliseRecipients(raw []string) []string {
 // buildMimeMessage assembles the headers a receiver expects. Date and
 // Message-ID are set here because a message without them is scored as spam by
 // most receivers (PLAN.md section 5).
+//
+// Bcc recipients are deliberately absent from the headers: they are carried in
+// the envelope only, which is what "blind" means.
+//
+// A message with HTML goes out as multipart/alternative with a plain-text part
+// first, in ascending order of preference per RFC 2046 section 5.1.4. Sending
+// the composer's HTML under a text/plain header - which is what this did while
+// the body was being dropped anyway - shows the recipient raw markup.
 func buildMimeMessage(input ComposeInput, recipients []string, localHost string) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + input.From + "\r\n")
 	if len(input.To) > 0 {
 		b.WriteString("To: " + strings.Join(input.To, ", ") + "\r\n")
 	} else {
-		b.WriteString("To: " + strings.Join(recipients, ", ") + "\r\n")
+		to := normaliseRecipients(input.To)
+		if len(to) == 0 {
+			to = recipients
+		}
+		b.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
 	}
 	if len(input.Cc) > 0 {
 		b.WriteString("Cc: " + strings.Join(input.Cc, ", ") + "\r\n")
@@ -187,14 +319,82 @@ func buildMimeMessage(input ComposeInput, recipients []string, localHost string)
 	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
 	b.WriteString(fmt.Sprintf("Message-ID: <%s@%s>\r\n", uuid.NewString(), localHost))
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(strings.ReplaceAll(input.Body, "\n", "\r\n"))
-	if !strings.HasSuffix(input.Body, "\n") {
-		b.WriteString("\r\n")
+
+	text := input.Text
+	if text == "" && input.HTML != "" {
+		text = htmlToPlainText(input.HTML)
 	}
+
+	if input.HTML == "" {
+		b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+		b.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+		b.WriteString(normaliseEOL(text))
+		return []byte(b.String())
+	}
+
+	boundary := "=_alt_" + uuid.NewString()
+	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n")
+
+	b.WriteString("--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+	b.WriteString(normaliseEOL(text))
+
+	b.WriteString("--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/html; charset=utf-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+	b.WriteString(normaliseEOL(input.HTML))
+
+	b.WriteString("--" + boundary + "--\r\n")
 	return []byte(b.String())
+}
+
+// normaliseEOL converts to CRLF and guarantees the trailing break a MIME part
+// boundary must be preceded by.
+func normaliseEOL(s string) string {
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
+	if !strings.HasSuffix(s, "\r\n") {
+		s += "\r\n"
+	}
+	return s
+}
+
+// htmlToPlainText derives a readable fallback from composed HTML.
+//
+// Deliberately crude - block elements become line breaks, tags are dropped,
+// the handful of entities a contenteditable actually emits are decoded. It
+// exists so the text/plain part is not empty, which is what makes a
+// multipart/alternative message look like spam to a filter.
+func htmlToPlainText(html string) string {
+	replacer := strings.NewReplacer(
+		"<br>", "\n", "<br/>", "\n", "<br />", "\n",
+		"</p>", "\n\n", "</div>", "\n", "</li>", "\n", "</tr>", "\n",
+		"<li>", "- ",
+	)
+	s := replacer.Replace(html)
+
+	var out strings.Builder
+	depth := 0
+	for _, r := range s {
+		switch {
+		case r == '<':
+			depth++
+		case r == '>' && depth > 0:
+			depth--
+		case depth == 0:
+			out.WriteRune(r)
+		}
+	}
+
+	text := strings.NewReplacer(
+		"&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&#39;", "'",
+	).Replace(out.String())
+
+	// Collapse the runs of blank lines the block replacements leave behind.
+	for strings.Contains(text, "\n\n\n") {
+		text = strings.ReplaceAll(text, "\n\n\n", "\n\n")
+	}
+	return strings.TrimSpace(text)
 }
 
 // encodeHeaderValue RFC 2047-encodes a subject that is not plain ASCII, so an

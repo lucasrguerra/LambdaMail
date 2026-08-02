@@ -256,6 +256,9 @@ func (w *OutboundWorkerUseCase) sendDsn(ctx context.Context, action valueobject.
 		Recipients:         targets,
 		RecipientAddresses: addresses,
 		Body:               bytes.NewReader(dsnBytes),
+		// This server wrote this message a moment ago; scanning our own
+		// postmaster notification only ever files it as Junk.
+		SystemGenerated: true,
 	})
 }
 
