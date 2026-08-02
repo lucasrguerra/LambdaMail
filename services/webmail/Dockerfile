@@ -1,7 +1,9 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+# --include=dev: the Next build needs devDependencies, and npm omits them
+# when NODE_ENV=production, which the deployment sets.
+RUN npm ci --include=dev
 COPY . .
 RUN npm run build
 

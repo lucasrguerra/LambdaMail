@@ -2,8 +2,10 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # npm ci, not npm install: the image must be the lockfile's content, not
-# whatever resolves the day it is built.
-RUN npm ci
+# whatever resolves the day it is built. --include=dev because this stage
+# needs typescript, and npm omits devDependencies when NODE_ENV=production -
+# which the deployment sets.
+RUN npm ci --include=dev
 COPY . .
 RUN npm run build
 
