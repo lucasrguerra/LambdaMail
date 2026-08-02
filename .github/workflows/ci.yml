@@ -2,9 +2,14 @@ name: CI
 
 # Runs on every branch and pull request. Publishing lives in release.yml and
 # only runs once this workflow has passed.
+#
+# main is excluded from the push trigger on purpose: release.yml already calls
+# this workflow there. Running both would put two jobs in the same concurrency
+# group, and one would cancel the other - which is why every merge used to
+# leave a cancelled CI run behind.
 on:
   push:
-    branches: ['**']
+    branches-ignore: [main]
   pull_request:
     branches: [main]
   workflow_call:
@@ -18,7 +23,7 @@ jobs:
     name: Lint de idioma (R9)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: node scripts/lang-lint.mjs
 
   go-protocols:
@@ -42,9 +47,14 @@ jobs:
       run:
         working-directory: services/protocols
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version-file: services/protocols/go.mod }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/protocols/go.mod
+          # defaults.run.working-directory applies to run steps, not to
+          # actions, so setup-go looks for go.sum at the repository root and
+          # silently skips its cache without this.
+          cache-dependency-path: services/protocols/go.sum
       - name: Run migrations
         run: |
           docker run --rm --network host \
@@ -65,8 +75,8 @@ jobs:
       run:
         working-directory: services/auth
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: "20" }
       - run: npm install
       - run: npm run lint
@@ -79,8 +89,8 @@ jobs:
       run:
         working-directory: services/storage
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: "20" }
       - run: npm install
       - run: npm run lint
@@ -93,8 +103,8 @@ jobs:
       run:
         working-directory: services/webmail
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: "20" }
       - run: npm install
       - run: npm run build
@@ -103,7 +113,7 @@ jobs:
     name: Trivy (dependências, segredos e Dockerfiles)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # A mail server holds credentials for every mailbox it serves, so the
       # secret scanner matters as much as the vulnerability one here: a DKIM
@@ -125,14 +135,14 @@ jobs:
       matrix:
         service: [protocols, auth, storage, webmail]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Built but not pushed: this proves each Dockerfile still works on every
       # branch, while publishing stays in release.yml.
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
           push: false
@@ -153,7 +163,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [go-protocols, ts-auth, ts-storage, webmail-build]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: cp .env.example .env
       # The proxy network is declared external because Coolify owns it on the
       # deploy host. Nothing creates it here, and without it compose refuses to
