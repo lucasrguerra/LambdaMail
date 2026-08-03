@@ -422,11 +422,18 @@ async function totpEnroll(
 async function totpConfirm(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
   const body = await parseJsonBody(req);
   const code = typeof body?.code === "string" ? body.code : "";
-  if (!(await repo.confirmTotpEnrollment(session.sub, code))) {
+  const verified = await repo.verifyPendingTotp(session.sub, code);
+  if (!verified) {
     return sendJson(res, 400, { error: "INVALID_TOTP_CODE", message: "TOTP verification failed" });
   }
+
+  // The codes are generated and stored before the factor is marked confirmed.
+  // The other order enables the factor first, so anything that goes wrong here
+  // leaves an account locked behind a second factor with no way back in.
   const recovery = await generateRecoveryCodes(10);
   await repo.storeRecoveryCodes(session.sub, recovery.hashedCodes);
+  await repo.markTotpConfirmed(verified.id, verified.step);
+
   // The raw codes are shown exactly once; only their hashes are kept.
   sendJson(res, 200, { confirmed: true, recovery_codes: recovery.rawCodes });
 }

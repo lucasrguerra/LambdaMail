@@ -212,3 +212,34 @@ describe("TOTP code parsing", () => {
     }
   });
 });
+
+describe("recovery code generation stays inside the container's memory", () => {
+  // Argon2id here is configured for 64 MiB per hash. Hashing the ten codes in
+  // parallel reserved 640 MiB, over the auth container's 512 MiB limit, and the
+  // process was OOM-killed in the middle of enrolment - which reached the
+  // browser as "upstream service is unreachable" and left the account with a
+  // confirmed second factor and no recovery codes.
+  //
+  // Timed against the real hash rather than a mock: the cost here is memory
+  // held concurrently, and only the real implementation reserves it. Four codes
+  // sequentially must take roughly four times one hash; in parallel they would
+  // take about one.
+  it("hashes the codes one at a time, not all at once", { timeout: 60000 }, async () => {
+    const { hashPassword } = await import("./crypto.js");
+    const { generateRecoveryCodes } = await import("./mfaHelpers.js");
+
+    const singleStart = Date.now();
+    await hashPassword("baseline");
+    const single = Date.now() - singleStart;
+
+    const batchStart = Date.now();
+    const out = await generateRecoveryCodes(4);
+    const batch = Date.now() - batchStart;
+
+    expect(out.rawCodes).toHaveLength(4);
+    expect(out.hashedCodes).toHaveLength(4);
+    expect(out.hashedCodes.every((h) => h.startsWith("$argon2id$"))).toBe(true);
+    // Generous lower bound: parallel would land near 1x, sequential near 4x.
+    expect(batch).toBeGreaterThan(single * 2.5);
+  });
+});

@@ -201,19 +201,34 @@ async function loadTotp(mailboxId: string, status: "PENDING" | "CONFIRMED"): Pro
 }
 
 /** Confirms enrollment by proving one code against the stored secret. */
-export async function confirmTotpEnrollment(mailboxId: string, code: string): Promise<boolean> {
+/**
+ * Checks a code against the pending enrolment without committing anything.
+ *
+ * Split from the commit so the caller can store the recovery codes first.
+ * Confirming and then generating them meant a failure in between - which
+ * happened, on memory - left an account with a second factor enabled and no
+ * recovery codes, and the person enrolling never saw the codes they are told
+ * to save. Leaving the enrolment pending is the recoverable end of that.
+ */
+export async function verifyPendingTotp(
+  mailboxId: string,
+  code: string,
+): Promise<{ id: string; step: number } | null> {
   const row = await loadTotp(mailboxId, "PENDING");
-  if (!row) return false;
+  if (!row) return null;
 
   const secret = decryptSecret(row.secret_enc, row.secret_nonce, row.key_version);
   const result = verifyTotpCode(secret, code, row.last_used_step === null ? null : Number(row.last_used_step));
-  if (!result.valid) return false;
+  if (!result.valid) return null;
+  return { id: row.id, step: result.step };
+}
 
+/** Marks a verified enrolment confirmed. */
+export async function markTotpConfirmed(id: string, step: number): Promise<void> {
   await query(
     `UPDATE mfa_totp SET status = 'CONFIRMED', confirmed_at = NOW(), last_used_step = $2 WHERE id = $1`,
-    [row.id, result.step],
+    [id, step],
   );
-  return true;
 }
 
 /**
