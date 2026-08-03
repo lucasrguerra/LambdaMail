@@ -10,6 +10,7 @@
  * Usage:
  *   node dist/cli.js create-admin <email> <password> [--force]
  *   node dist/cli.js reset-password <email> <password>
+ *   node dist/cli.js reset-mfa <email>
  */
 
 import { query, queryOne, closePool } from "./db.js";
@@ -89,8 +90,8 @@ async function createAdmin(email: string, password: string, force: boolean): Pro
   console.log(`created administrator ${email}`);
   console.log(`system aliases: ${SYSTEM_ALIASES.map((a) => `${a}@${domain}`).join(", ")}`);
   console.log("");
-  console.log("Sign in at /admin/login. The console requires a second factor, so enroll");
-  console.log("one from the webmail settings at /user/settings first.");
+  console.log("Sign in at /admin/login. If the account has no second factor yet, the");
+  console.log("console enrolls one there and then - no need to visit another screen.");
 }
 
 async function resetPassword(email: string, password: string): Promise<void> {
@@ -110,6 +111,42 @@ async function resetPassword(email: string, password: string): Promise<void> {
   console.log(`password reset for ${email}; all its sessions were signed out`);
 }
 
+/**
+ * Removes every second factor from an account, so the next sign-in enrolls a
+ * new one.
+ *
+ * This is the lost-phone command, and the answer to a subtler case: an
+ * enrollment can be confirmed against a secret the authenticator no longer
+ * holds, and the account is then locked behind codes nobody can produce. The
+ * alternative - deleting the mailbox and recreating it - would take its mail,
+ * folders and aliases with it for no reason.
+ *
+ * The password is untouched, so this alone does not grant anyone access.
+ * Sessions are revoked because a live session would otherwise keep the console
+ * open without the factor that was just removed.
+ */
+async function resetMfa(email: string): Promise<void> {
+  const mailbox = await queryOne<{ id: string }>(
+    `SELECT id FROM mailboxes WHERE email_address = $1`,
+    [email.toLowerCase()],
+  );
+  if (!mailbox) fail(`${email} was not found`);
+
+  const totp = await query<{ id: string }>(
+    `DELETE FROM mfa_totp WHERE mailbox_id = $1 RETURNING id`, [mailbox!.id]);
+  const codes = await query<{ id: string }>(
+    `DELETE FROM mfa_recovery_codes WHERE mailbox_id = $1 RETURNING id`, [mailbox!.id]);
+  await query(
+    `UPDATE web_sessions SET revoked_at = NOW() WHERE mailbox_id = $1 AND revoked_at IS NULL`,
+    [mailbox!.id],
+  );
+
+  console.log(`removed ${totp.length} authenticator secret(s) and ${codes.length} recovery code(s) for ${email}`);
+  console.log("its sessions were signed out; the password is unchanged");
+  console.log("");
+  console.log("Sign in at /admin/login and the console will enroll a new factor.");
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
 
@@ -125,9 +162,14 @@ async function main(): Promise<void> {
       if (args.length < 2) fail("usage: reset-password <email> <password>");
       await resetPassword(args[0], args[1]);
       break;
+    case "reset-mfa":
+      if (args.length < 1) fail("usage: reset-mfa <email>");
+      await resetMfa(args[0]);
+      break;
     default:
       console.log("commands: create-admin <email> <password> [--force]");
       console.log("          reset-password <email> <password>");
+      console.log("          reset-mfa <email>");
       process.exit(command ? 1 : 0);
   }
 }

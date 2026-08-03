@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint migrate-up migrate-down gen-dev-cert seed preflight create-admin reset-password
+.PHONY: up down logs test lint migrate-up migrate-down gen-dev-cert seed preflight create-admin reset-password reset-mfa
 
 # Local development builds from source; production pulls what CI published.
 up:
@@ -56,3 +56,11 @@ reset-password:
 	@test -n "$(EMAIL)" || (echo "EMAIL is required" && exit 1)
 	@test -n "$(PASSWORD)" || (echo "PASSWORD is required" && exit 1)
 	docker compose run --rm --entrypoint node auth dist/cli.js reset-password "$(EMAIL)" "$(PASSWORD)"
+
+# Clears every second factor from an account: the lost-phone case, and the one
+# where an enrollment was confirmed against a secret the authenticator does not
+# have. The password is untouched, so this alone grants nobody access.
+#   make reset-mfa EMAIL=you@example.com
+reset-mfa:
+	@test -n "$(EMAIL)" || (echo "EMAIL is required" && exit 1)
+	docker compose run --rm --entrypoint node auth dist/cli.js reset-mfa "$(EMAIL)"

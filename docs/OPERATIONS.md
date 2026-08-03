@@ -90,16 +90,29 @@ restore is a hypothesis.
 ```bash
 make create-admin EMAIL=… PASSWORD='…'     # first admin, or --force for another
 make reset-password EMAIL=… PASSWORD='…'   # recovers a lockout, ends its sessions
+make reset-mfa EMAIL=…                     # clears every second factor
 ```
 
 An account locks itself for 15 minutes after 5 failed passwords. That is the
 lockout working, not a fault; `reset-password` clears it.
 
-If somebody loses their second factor and their recovery codes, there is no
-self-service path today. Clear the enrolment directly and have them enrol again:
+`reset-mfa` is the lost-phone command, and the answer to a subtler case: an
+enrolment can be confirmed against a secret the authenticator no longer holds,
+and the account is then locked behind codes nobody can produce. It removes the
+authenticator secrets and the recovery codes, and signs the account's sessions
+out - a live session would otherwise keep the console open without the factor
+that was just removed. The password is untouched, so this alone grants nobody
+access; the next sign-in enrols a new factor.
+
+Do not delete and recreate the mailbox for this. That takes its mail, folders
+and aliases with it, and none of those are the problem.
+
+The equivalent by hand, if you are on an image that predates the command -
+note that clearing `mfa_totp` alone leaves the recovery codes valid:
 
 ```sql
 DELETE FROM mfa_totp WHERE mailbox_id = (SELECT id FROM mailboxes WHERE email_address = 'them@example.com');
+DELETE FROM mfa_recovery_codes WHERE mailbox_id = (SELECT id FROM mailboxes WHERE email_address = 'them@example.com');
 ```
 
 ## Delivery
