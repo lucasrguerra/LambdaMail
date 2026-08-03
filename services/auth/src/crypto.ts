@@ -28,9 +28,42 @@ function getMasterKey(): Buffer {
   return crypto.createHash("sha256").update(envKey).digest();
 }
 
+/**
+ * Caps how many Argon2 operations run at once.
+ *
+ * Each one reserves ARGON2_MEMORY_KIB - 64 MiB - for its whole duration, and
+ * nothing else bounds how many are in flight: every login attempt starts one,
+ * from an unauthenticated request. Twenty concurrent sign-ins would reserve
+ * 1.28 GiB against a container allowed 512 MiB, so anyone could stop the auth
+ * service by opening enough connections. Account lockout does not help; it is
+ * per account, and these need not share one.
+ *
+ * Queuing instead of refusing keeps every request correct, just slower under
+ * load, and holds peak memory at CONCURRENCY x 64 MiB no matter the traffic.
+ */
+const ARGON2_CONCURRENCY = 4;
+
+let active = 0;
+const waiting: Array<() => void> = [];
+
+async function withHashSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (active >= ARGON2_CONCURRENCY) {
+    await new Promise<void>((resolve) => waiting.push(resolve));
+  }
+  active++;
+  try {
+    return await work();
+  } finally {
+    active--;
+    // Waking exactly one keeps the count accurate; waking all would let every
+    // queued caller through at once, which is the thing being prevented.
+    waiting.shift()?.();
+  }
+}
+
 /** Produces an Argon2id PHC string, the only format this service stores. */
 export async function hashPassword(password: string): Promise<string> {
-  return argon2id({
+  return withHashSlot(() => argon2id({
     password,
     salt: crypto.randomBytes(ARGON2_SALT_BYTES),
     parallelism: ARGON2_PARALLELISM,
@@ -38,7 +71,7 @@ export async function hashPassword(password: string): Promise<string> {
     memorySize: ARGON2_MEMORY_KIB,
     hashLength: ARGON2_HASH_LENGTH,
     outputType: "encoded",
-  });
+  }));
 }
 
 /**
@@ -55,7 +88,10 @@ export async function verifyPassword(password: string, storedHash: string): Prom
     return false;
   }
   try {
-    return await argon2Verify({ password, hash: storedHash });
+    // Gated as well as hashing, and this is the one that matters most: an
+    // unauthenticated login reaches it, so without the cap anyone could
+    // reserve 64 MiB per request until the container is killed.
+    return await withHashSlot(() => argon2Verify({ password, hash: storedHash }));
   } catch {
     // A malformed stored hash is a failed login, not a crash that would take
     // the login endpoint down for everyone.

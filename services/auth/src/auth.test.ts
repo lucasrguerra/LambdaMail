@@ -243,3 +243,29 @@ describe("recovery code generation stays inside the container's memory", () => {
     expect(batch).toBeGreaterThan(single * 2.5);
   });
 });
+
+describe("Argon2 concurrency is bounded", () => {
+  // Each Argon2 operation reserves 64 MiB for its duration, and every login
+  // attempt starts one from an unauthenticated request. Without a cap, enough
+  // simultaneous sign-ins reserve more than the container is allowed and the
+  // process is killed - a denial of service that needs no credentials.
+  it("does not let unbounded parallel verifies exhaust memory", { timeout: 120000 }, async () => {
+    const { hashPassword, verifyPassword } = await import("./crypto.js");
+    const stored = await hashPassword("correct horse battery staple");
+
+    // Twenty at once would reserve 1.28 GiB unbounded; gated, it stays at four.
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => verifyPassword("correct horse battery staple", stored)),
+    );
+    expect(results.every(Boolean)).toBe(true);
+  });
+
+  it("still rejects a wrong password under concurrency", { timeout: 120000 }, async () => {
+    const { hashPassword, verifyPassword } = await import("./crypto.js");
+    const stored = await hashPassword("the real one");
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => verifyPassword(i % 2 === 0 ? "the real one" : "wrong", stored)),
+    );
+    expect(results).toEqual([true, false, true, false, true, false, true, false]);
+  });
+});
