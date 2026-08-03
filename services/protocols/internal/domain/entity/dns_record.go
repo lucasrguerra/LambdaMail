@@ -77,22 +77,6 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 			TTL:     1,
 			Comment: "LambdaMail SPF Record",
 		},
-		// 5. RSA DKIM TXT record
-		{
-			Type:    "TXT",
-			Name:    fmt.Sprintf("default._domainkey.%s", domainName),
-			Value:   fmt.Sprintf("v=DKIM1; k=rsa; p=%s", rsaDkimPubKey),
-			TTL:     1,
-			Comment: "LambdaMail RSA DKIM Key",
-		},
-		// 6. Ed25519 DKIM TXT record
-		{
-			Type:    "TXT",
-			Name:    fmt.Sprintf("default-ed._domainkey.%s", domainName),
-			Value:   fmt.Sprintf("v=DKIM1; k=ed25519; p=%s", edDkimPubKey),
-			TTL:     1,
-			Comment: "LambdaMail Ed25519 DKIM Key",
-		},
 		// 7. DMARC TXT record
 		{
 			Type:    "TXT",
@@ -171,6 +155,34 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 			Priority: intPtr(0),
 			Comment:  "LambdaMail Outlook Autodiscover",
 		},
+	}
+
+	// 5 and 6. DKIM records, published only once there is a key to put in them.
+	//
+	// "p=" with nothing after it is not an absent key, it is a revoked one
+	// (RFC 6376 section 3.6.1): a verifier reading it treats every signature
+	// from that selector as broken. These used to be emitted unconditionally,
+	// so a deployment that had not provisioned keys yet - a fresh database, or
+	// a missing master key - published a revocation for its own domain. That is
+	// strictly worse than publishing nothing, and on a domain with a strict
+	// DMARC policy it quarantines all of its own outbound mail.
+	if rsaDkimPubKey != "" {
+		records = append(records, DnsRecord{
+			Type:    "TXT",
+			Name:    fmt.Sprintf("default._domainkey.%s", domainName),
+			Value:   fmt.Sprintf("v=DKIM1; k=rsa; p=%s", rsaDkimPubKey),
+			TTL:     1,
+			Comment: "LambdaMail RSA DKIM Key",
+		})
+	}
+	if edDkimPubKey != "" {
+		records = append(records, DnsRecord{
+			Type:    "TXT",
+			Name:    fmt.Sprintf("default-ed._domainkey.%s", domainName),
+			Value:   fmt.Sprintf("v=DKIM1; k=ed25519; p=%s", edDkimPubKey),
+			TTL:     1,
+			Comment: "LambdaMail Ed25519 DKIM Key",
+		})
 	}
 
 	// 2. Conditional AAAA record if IPv6 is supplied

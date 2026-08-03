@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"log"
 )
 
 // DkimKeyProvisioner is the storage side of key provisioning. It is declared
@@ -93,6 +94,17 @@ func (uc *ProvisionDkimKeysUseCase) ensure(ctx context.Context, domainName, algo
 	stored, err := uc.keys.FindPublicKey(ctx, domainName, algorithm)
 	if err != nil {
 		return "", fmt.Errorf("confirm %s key for %s: %w", algorithm, domainName, err)
+	}
+
+	// The insert is conditional on the domain existing, and inserting nothing
+	// is not an error at the SQL level - so a domain that has never been
+	// onboarded silently produces no key here. Saying so is the difference
+	// between an operator seeing "DKIM is not set up yet, onboard the domain"
+	// and seeing unsigned mail with no explanation.
+	if stored == "" {
+		log.Printf("dkim: no %s key for %s after provisioning - the domain is probably not onboarded yet, so mail from it will not be signed",
+			algorithm, domainName)
+		return "", nil
 	}
 
 	out.Created = append(out.Created, algorithm)

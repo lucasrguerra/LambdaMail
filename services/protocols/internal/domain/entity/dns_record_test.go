@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -66,5 +67,68 @@ func TestBuildDnsRecordSpecs_GeneratesMandatoryRecords(t *testing.T) {
 	}
 	if !foundDmarc {
 		t.Error("DMARC record not found in specs")
+	}
+}
+
+// An empty "p=" is a revocation, not an absent key (RFC 6376 section 3.6.1).
+// Publishing one for a domain that simply has not provisioned keys yet tells
+// every verifier that the selector's signatures are invalid - and on a domain
+// whose DMARC policy is strict, that quarantines all of its own outbound mail.
+func TestDkimRecordsAreOmittedWhenThereIsNoKey(t *testing.T) {
+	records := BuildDnsRecordSpecs(DnsRecordSpec{
+		DomainName: "example.test",
+		MailHost:   "mail.example.test",
+		ServerIPv4: "198.51.100.10",
+	})
+
+	for _, r := range records {
+		if strings.Contains(r.Name, "_domainkey") {
+			t.Errorf("published a DKIM record with no key: %s = %q", r.Name, r.Value)
+		}
+		if strings.Contains(r.Value, "p=\"") || strings.HasSuffix(r.Value, "p=") {
+			t.Errorf("published an empty public key: %s = %q", r.Name, r.Value)
+		}
+	}
+}
+
+func TestDkimRecordsArePublishedWhenKeysExist(t *testing.T) {
+	records := BuildDnsRecordSpecs(DnsRecordSpec{
+		DomainName:    "example.test",
+		MailHost:      "mail.example.test",
+		ServerIPv4:    "198.51.100.10",
+		RsaDkimPubKey: "MIIBIjANBgkq",
+		EdDkimPubKey:  "11qYAYKxCrfV",
+	})
+
+	var rsa, ed bool
+	for _, r := range records {
+		if r.Name == "default._domainkey.example.test" && strings.Contains(r.Value, "MIIBIjANBgkq") {
+			rsa = true
+		}
+		if r.Name == "default-ed._domainkey.example.test" && strings.Contains(r.Value, "11qYAYKxCrfV") {
+			ed = true
+		}
+	}
+	if !rsa {
+		t.Error("the RSA DKIM record was not published despite a key being present")
+	}
+	if !ed {
+		t.Error("the Ed25519 DKIM record was not published despite a key being present")
+	}
+}
+
+// One key present and the other absent must publish exactly one record: an
+// Ed25519 rollout should not revoke the RSA selector that is still signing.
+func TestOnlyTheAvailableDkimKeyIsPublished(t *testing.T) {
+	records := BuildDnsRecordSpecs(DnsRecordSpec{
+		DomainName:    "example.test",
+		MailHost:      "mail.example.test",
+		RsaDkimPubKey: "MIIBIjANBgkq",
+	})
+
+	for _, r := range records {
+		if strings.Contains(r.Name, "default-ed._domainkey") {
+			t.Errorf("published an Ed25519 record with no key: %q", r.Value)
+		}
 	}
 }

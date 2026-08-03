@@ -70,6 +70,58 @@ make create-admin EMAIL=you@example.com PASSWORD='...'
 `make create-admin` is not optional: a fresh install has no mailbox, and every
 route into the console needs one.
 
+### Ports
+
+Everything below is TCP. "Inbound" is what the host's firewall and the
+provider's security group must allow; "outbound" is what the host must be able
+to reach.
+
+| Port | Direction | Who connects | Required? | Notes |
+| ---: | :--- | :--- | :--- | :--- |
+| 25 | in | Any sending MTA | **Yes** to receive mail | Must be open to the world. Rate-limited, not authenticated — that is how SMTP works. |
+| 25 | **out** | This host → remote MTAs | **Yes** to send mail | The one most providers block. Without it, set a relay (`RELAY_HOST`); see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
+| 80 | in | Let's Encrypt, browsers | **Yes** | ACME HTTP-01 challenge, and the redirect to HTTPS. Closing it means no certificate. |
+| 443 | in | Browsers | **Yes** | Webmail, admin console, MTA-STS policy, autodiscover. |
+| 587 | in | Mail clients | Recommended | Submission with STARTTLS. The port clients should use. |
+| 465 | in | Mail clients | Optional | Submission with implicit TLS, for clients that insist. |
+| 143 | in | Mail clients | Optional | IMAP with STARTTLS. Prefer 993. |
+| 993 | in | Mail clients | Recommended | IMAPS. |
+| 110 / 995 | in | Mail clients | Optional | POP3 / POP3S. Leave closed unless something needs POP3. |
+| 4190 | in | Mail clients | Optional | ManageSieve, for editing filters from a desktop client. |
+| 53 | out | This host → resolver | **Yes** | MX, SPF, DKIM, DANE and MTA-STS lookups. UDP **and** TCP — DNSSEC answers overflow UDP. |
+| 443 | out | This host → APIs | If used | Cloudflare DNS automation, MTA-STS policy fetch, ClamAV signature updates. |
+
+Ports 110, 995 and 4190 are published by the compose file but are worth closing
+at the firewall unless a client actually needs them — every open port is one
+more thing to keep patched.
+
+### What the host has to allow
+
+- **Reverse DNS (PTR)** for the public IPv4 must resolve to `PRIMARY_MAIL_HOST`,
+  and that name must resolve back to the same address. Set by whoever owns the
+  IP block — your provider's panel, never Cloudflare. Gmail and Outlook
+  spam-folder or refuse mail without it. If the host has a public IPv6 and
+  publishes an AAAA record, it needs a PTR too: senders that connect over IPv6
+  are judged on the IPv6 reverse.
+- **Outbound port 25 unblocked.** Ask the provider; a timeout rather than a
+  refusal when connecting to a remote MX is the signature of a block.
+- **Docker** with the compose plugin, and a user in the `docker` group or root.
+- **Ports below 1024** are bound by Docker's proxy on the host, so the daemon
+  needs the privilege — the default on a normal install. The containers
+  themselves run unprivileged.
+- **The proxy's certificate directory** must be readable by the `protocols`
+  container. Under `TLS_MODE=traefik` it reads the certificate the proxy
+  obtained, from the directory given by `COOLIFY_PROXY_DIR`, mounted read-only.
+  The images run as a non-root user, so an `acme.json` left at mode `600` and
+  owned by root cannot be read, and the mail listeners fall back to a
+  self-signed certificate while HTTPS keeps working — a confusing failure that
+  looks like a certificate problem and is a permissions problem.
+- **Disk** for the mail spool (`protocols_spool`) and Postgres. Mail is stored
+  once and reference-counted, but plan for growth.
+- **A firewall that does not rate-limit port 25 into uselessness.** Some
+  providers apply aggressive SYN limits that look like intermittent delivery
+  failures.
+
 ## Running locally
 
 ```bash
