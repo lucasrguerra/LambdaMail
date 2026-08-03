@@ -46,10 +46,12 @@
     "noCertificate": "No hay certificado cargado para este host.",
     "noChecks": "No se informaron verificaciones.",
     "noDomains": "Aún no se ha dado de alta ningún dominio.",
+    "notPublished": "No publicado",
     "onboardIntro": "Crea el dominio y sus alias estándar RFC 2142, apuntados a su dirección.",
     "onboardTitle": "Añadir un dominio",
     "openAdmin": "Consola de administración",
     "preflightTitle": "Verificaciones de preparación",
+    "presentProxied": "Presente (con proxy)",
     "queueEmpty": "La cola de salida está vacía.",
     "queueSubtitle": "Inspeccione la cola de salida, reintente un trabajo o cancele uno.",
     "queueTitle": "Cola de salida",
@@ -73,6 +75,7 @@
     "tracePlaceholder": "ID de la cola",
     "traceTitle": "Rastrear un mensaje",
     "unknownSni": "Solicitudes SNI desconocidas",
+    "verifyIntro": "Resuelve cada registro esperado en resolutores públicos e informa uno por uno.",
     "watcherHealthy": "Monitor de certificado"
   },
   "auth": {

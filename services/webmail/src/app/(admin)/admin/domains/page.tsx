@@ -24,6 +24,23 @@ import { Button } from "../../../../components/ui/Button";
  * instead of drawing a table of green ticks.
  */
 
+interface DnsRecordCheck {
+  type: string;
+  name: string;
+  expected: string;
+  verified: boolean;
+  detail: string;
+  proxied: boolean;
+}
+
+interface DnsVerification {
+  domain: string;
+  status: string;
+  verified: number;
+  total: number;
+  records: DnsRecordCheck[];
+}
+
 interface Domain {
   id: string;
   name: string;
@@ -53,6 +70,7 @@ export default function AdminDomainsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [reconciling, setReconciling] = useState(false);
+  const [verification, setVerification] = useState<DnsVerification | null>(null);
   const [onboardDomain, setOnboardDomain] = useState("");
   const [onboarding, setOnboarding] = useState(false);
 
@@ -86,22 +104,27 @@ export default function AdminDomainsPage() {
 
   const selected = domains.find((d) => d.id === selectedId) ?? null;
 
+  // Asks the protocols service to resolve every expected record and report
+  // each one. It used to post to the auth service, which has no resolver and
+  // could only re-read the status already in the database.
   const handleReconcile = async () => {
     if (!selected) return;
     setReconciling(true);
     setNotice(null);
     setError(null);
+    setVerification(null);
     try {
-      // The real domain id, not the literal string "default-domain" that used
-      // to be sent here for every domain on the server.
-      const res = await fetch("/api/v1/admin/domains/reconcile", {
+      const res = await fetch(`/api/v1/admin/dns/verify?domain=${encodeURIComponent(selected.name)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      setVerification(data);
+      // Reconciliation still runs, so the stored status and the audit trail
+      // stay in step with what was just observed.
+      await fetch("/api/v1/admin/domains/reconcile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain_id: selected.id }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message);
-      setNotice(data.message ?? t("settings.settingsSaved"));
+      }).catch(() => undefined);
       await load();
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
@@ -262,19 +285,67 @@ export default function AdminDomainsPage() {
             ))
           )}
 
-          {/* Says what reconciliation currently does. The old copy announced
-              "Cloudflare sync finished: all 13 DNS records verified" on every
-              press - including when the request failed - while the endpoint
-              behind it only writes an audit entry. */}
-          <Card className="space-y-3">
-            <div className="flex items-start gap-2 text-xs text-amber-300">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <p>{t("admin.reconcileNotImplemented")}</p>
+          <Card className="space-y-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-xs text-slate-400">{t("admin.verifyIntro")}</p>
+              <Button variant="outline" size="sm" onClick={handleReconcile} disabled={reconciling || !selected}>
+                <RefreshCw className={`w-3.5 h-3.5 ${reconciling ? "animate-spin" : ""}`} />
+                <span>{t("admin.reconcileDns")}</span>
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={handleReconcile} disabled={reconciling || !selected}>
-              <RefreshCw className={`w-3.5 h-3.5 ${reconciling ? "animate-spin" : ""}`} />
-              <span>{t("admin.reconcileDns")}</span>
-            </Button>
+
+            {verification && (
+              <>
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`text-2xl font-black font-mono ${
+                      verification.verified === verification.total ? "text-emerald-400" : "text-amber-400"
+                    }`}
+                  >
+                    {verification.verified} / {verification.total}
+                  </span>
+                  <Badge variant={statusVariant(verification.status)}>{verification.status}</Badge>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
+                        <th className="p-2.5">{t("ui.recordName")}</th>
+                        <th className="p-2.5">{t("ui.expectedValue")}</th>
+                        <th className="p-2.5">{t("common.status")}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono">
+                      {verification.records.map((rec, i) => (
+                        <tr key={i} className="hover:bg-slate-900/30 align-top">
+                          <td className="p-2.5 text-slate-200 whitespace-nowrap">
+                            <span className="text-emerald-400 font-bold">{rec.type}</span> {rec.name}
+                          </td>
+                          <td className="p-2.5 text-slate-400 break-all max-w-md">{rec.expected}</td>
+                          <td className="p-2.5 whitespace-nowrap">
+                            {rec.verified ? (
+                              <span className="flex items-center gap-1 text-emerald-400">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                {rec.proxied ? t("admin.presentProxied") : t("admin.dnsStatusVerified")}
+                              </span>
+                            ) : (
+                              <span
+                                className="flex items-center gap-1 text-amber-400"
+                                title={rec.detail}
+                              >
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                {t("admin.notPublished")}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </Card>
         </div>
       )}

@@ -46,10 +46,12 @@
     "noCertificate": "No certificate is loaded for this host.",
     "noChecks": "No checks reported.",
     "noDomains": "No domains have been onboarded yet.",
+    "notPublished": "Not published",
     "onboardIntro": "Creates the domain and its standard RFC 2142 aliases, pointed at your address.",
     "onboardTitle": "Add a domain",
     "openAdmin": "Admin console",
     "preflightTitle": "Readiness checks",
+    "presentProxied": "Present (proxied)",
     "queueEmpty": "The outbound queue is empty.",
     "queueSubtitle": "Inspect the outbound queue, retry a job, or cancel one.",
     "queueTitle": "Outbound queue",
@@ -73,6 +75,7 @@
     "tracePlaceholder": "Queue ID",
     "traceTitle": "Trace a message",
     "unknownSni": "Unknown SNI requests",
+    "verifyIntro": "Resolves every expected record against public resolvers and reports each one.",
     "watcherHealthy": "Certificate watcher"
   },
   "auth": {

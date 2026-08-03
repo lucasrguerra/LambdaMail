@@ -46,10 +46,12 @@
     "noCertificate": "Nenhum certificado carregado para este host.",
     "noChecks": "Nenhuma verificação relatada.",
     "noDomains": "Nenhum domínio foi cadastrado ainda.",
+    "notPublished": "Não publicado",
     "onboardIntro": "Cria o domínio e os apelidos padrão da RFC 2142, apontados para o seu endereço.",
     "onboardTitle": "Adicionar um domínio",
     "openAdmin": "Console de administração",
     "preflightTitle": "Verificações de prontidão",
+    "presentProxied": "Presente (com proxy)",
     "queueEmpty": "A fila de saída está vazia.",
     "queueSubtitle": "Inspecione a fila de saída, tente reenviar um trabalho ou cancele um.",
     "queueTitle": "Fila de saída",
@@ -73,6 +75,7 @@
     "tracePlaceholder": "ID da fila",
     "traceTitle": "Rastrear uma mensagem",
     "unknownSni": "Requisições SNI desconhecidas",
+    "verifyIntro": "Resolve cada registro esperado em servidores DNS públicos e relata um a um.",
     "watcherHealthy": "Monitor de certificado"
   },
   "auth": {

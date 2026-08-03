@@ -120,7 +120,16 @@ func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessage
 		input.SenderAddress, []string{input.RecipientAddress}, input.Blob.SizeBytes,
 		nullIfEmpty(input.Subject), nullIfEmpty(input.Snippet), nullIfEmpty(input.FromDisplayName),
 		nullIfEmpty(input.MessageIDHeader), input.HasAttachments,
-		input.SPFResult, input.DKIMResult, input.DMARCResult)
+		// These three columns are constrained to the RFC verdict vocabulary
+		// ('pass', 'fail', 'none', ...) and are nullable, so "not evaluated"
+		// has to be NULL. Passing the Go zero value straight through sent an
+		// empty string, which satisfies neither the CHECK nor the meaning.
+		//
+		// It only ever surfaced on messages this server composed itself - the
+		// Sent copy and drafts have no authentication results by definition -
+		// and it failed the whole insert. Sent stayed empty because that write
+		// is deliberately non-fatal, and saving a draft reported an error.
+		nullIfEmpty(input.SPFResult), nullIfEmpty(input.DKIMResult), nullIfEmpty(input.DMARCResult))
 	if err != nil {
 		return 0, fmt.Errorf("insert email_messages: %w", err)
 	}

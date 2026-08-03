@@ -263,3 +263,75 @@ func TestInboundMessageRepository_FallsBackToInboxWhenFolderMissing(t *testing.T
 		t.Errorf("message landed in folder %s, want the INBOX %s", folderID, inboxID)
 	}
 }
+
+// A message this server composed - the Sent copy, or a draft - has no
+// authentication results, and the columns holding them are constrained to the
+// RFC verdict vocabulary. Passing Go's zero value sent an empty string, which
+// satisfies neither the CHECK nor the meaning, and the whole insert failed.
+//
+// The existing test above always supplied "none", so it never touched this.
+// The visible effect was a permanently empty Sent folder - that write is
+// non-fatal by design - and "could not save the draft" in the composer.
+func TestInboundMessageRepository_PersistsWithoutAuthenticationResults(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	domainID := uuid.New()
+	domainName := "noauth-test-" + domainID.String() + ".invalid"
+	if _, err := pool.Exec(ctx, `INSERT INTO domains (id, name, punycode_name) VALUES ($1, $2, $3)`,
+		domainID, domainName, domainName); err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	defer pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, domainID)
+
+	address := "user@" + domainName
+	mailboxID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash) VALUES ($1, $2, 'user', $3, '$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG')`,
+		mailboxID, domainID, address); err != nil {
+		t.Fatalf("seed mailbox: %v", err)
+	}
+	for _, f := range []struct{ name, use string }{{"INBOX", "inbox"}, {"Sent", "sent"}, {"Drafts", "drafts"}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO folders (id, mailbox_id, name, special_use) VALUES ($1, $2, $3, $4)`,
+			uuid.New(), mailboxID, f.name, f.use); err != nil {
+			t.Fatalf("seed folder %s: %v", f.name, err)
+		}
+	}
+
+	blobID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO message_blobs (id, content_sha256, storage_driver, storage_path, size_bytes) VALUES ($1, $2, 'local', '/tmp/x', 10)`,
+		blobID, testBlobDigest()); err != nil {
+		t.Fatalf("seed blob: %v", err)
+	}
+
+	repo := NewInboundMessageRepository(pool)
+	blob := port.BlobRef{ID: blobID, SHA256: "deadbeef", SizeBytes: 10}
+
+	for _, folder := range []string{"Sent", "Drafts"} {
+		uids, err := repo.PersistAll(ctx, []port.PersistInboundMessageInput{{
+			MailboxID: mailboxID, Blob: blob,
+			SenderAddress: address, RecipientAddress: address,
+			TargetFolderName: folder, Subject: "composed here",
+			// Left empty exactly as the compose path leaves them.
+		}})
+		if err != nil {
+			t.Fatalf("PersistAll into %s with no authentication results: %v", folder, err)
+		}
+		if len(uids) != 1 {
+			t.Fatalf("want one uid for %s, got %v", folder, uids)
+		}
+	}
+
+	// Stored as NULL, not as an empty string: "not evaluated" and "evaluated
+	// to nothing" are different answers.
+	var nulls int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM email_messages
+		 WHERE mailbox_id = $1 AND spf_result IS NULL AND dkim_result IS NULL AND dmarc_result IS NULL
+	`, mailboxID).Scan(&nulls); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if nulls != 2 {
+		t.Errorf("want 2 rows with NULL authentication results, got %d", nulls)
+	}
+}

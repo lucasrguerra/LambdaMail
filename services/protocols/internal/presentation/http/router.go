@@ -34,6 +34,9 @@ type Router struct {
 	dkim *adminDkimAPI
 	// tls reports what the certificate watcher sees, rather than a constant.
 	tls *adminTlsAPI
+	// dns verifies the published records against public resolvers. It lives
+	// here because this is the process with the resolver and the record spec.
+	dns *adminDnsAPI
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued
@@ -77,6 +80,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/autodiscover/autodiscover.xml", r.handleOutlookAutodiscover)
 	r.mux.HandleFunc("/api/v1/events", r.handleEvents)
 	r.mux.HandleFunc("/api/v1/admin/tls", r.handleAdminTls)
+	r.mux.HandleFunc("/api/v1/admin/dns/verify", r.handleAdminDnsVerify)
 	r.mux.HandleFunc("/api/v1/admin/dkim/keys", r.handleAdminDkimKeys)
 	r.mux.HandleFunc("/api/v1/admin/dkim/rotate", r.handleAdminDkimRotate)
 	r.mux.HandleFunc("/api/v1/mail/folders", r.handleMailFolders)

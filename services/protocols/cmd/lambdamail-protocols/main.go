@@ -27,6 +27,7 @@ import (
 
 	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/application/usecase"
+	"lambdamail/protocols/internal/domain/entity"
 	"lambdamail/protocols/internal/domain/valueobject"
 	"lambdamail/protocols/internal/infrastructure/arc"
 	"lambdamail/protocols/internal/infrastructure/clamav"
@@ -179,6 +180,16 @@ func run(cfg config) {
 	router.SetMailAPI(webmailUC, cfg.JwtSecret)
 	if dkimRepo != nil {
 		router.SetAdminDkimAPI(dkimRepo, generateDkimKey, cfg.JwtSecret)
+	}
+	// Per-record DNS verification. The console's reconcile button had nothing
+	// like this: the auth service answered it by re-reading the stored status,
+	// because the resolver and the record spec both live here.
+	if cfg.CloudflareToken != "" || cfg.PublicIPv4 != "" {
+		router.SetAdminDnsAPI(
+			&dnsSpecSource{cfg: cfg, dkim: dkimRepo},
+			netdns.NewPublicVerifier(),
+			cfg.JwtSecret,
+		)
 	}
 	// The TLS panel reads the live watcher instead of the constants the admin
 	// service used to return, which reported a healthy certificate whatever
@@ -599,4 +610,36 @@ func runHealthcheck() {
 		fmt.Fprintf(os.Stderr, "healthcheck failed: HTTP %d\n", resp.StatusCode)
 		os.Exit(1)
 	}
+}
+
+// dnsSpecSource assembles the records a domain is expected to publish, using
+// the same inputs the background reconciler uses so the console and the sync
+// cannot disagree about what "expected" means.
+type dnsSpecSource struct {
+	cfg  config
+	dkim *postgres.DkimRepository
+}
+
+func (s *dnsSpecSource) ExpectedRecords(ctx context.Context, domain string) ([]entity.DnsRecord, error) {
+	spec := entity.DnsRecordSpec{
+		DomainName:      domain,
+		MailHost:        s.cfg.PrimaryMailHost,
+		ServerIPv4:      s.cfg.PublicIPv4,
+		ServerIPv6:      s.cfg.PublicIPv6,
+		DaneEnabled:     s.cfg.OutboundDane,
+		RelaySpfInclude: relayConfig(s.cfg).SpfInclude(),
+	}
+
+	// Read rather than provisioned: verifying must not create keys as a side
+	// effect of somebody opening a screen.
+	if s.dkim != nil {
+		if rsa, err := s.dkim.FindPublicKey(ctx, domain, "rsa2048"); err == nil {
+			spec.RsaDkimPubKey = rsa
+		}
+		if ed, err := s.dkim.FindPublicKey(ctx, domain, "ed25519"); err == nil {
+			spec.EdDkimPubKey = ed
+		}
+	}
+
+	return entity.BuildDnsRecordSpecs(spec), nil
 }

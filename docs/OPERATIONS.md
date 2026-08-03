@@ -207,11 +207,6 @@ Being explicit so nothing is assumed:
 - Master key rotation is manual.
 - Log retention is whatever Docker's json-file driver is configured for
   (10 MB × 3 per service, in `docker-compose.yaml`).
-- **Per-record DNS verification is not implemented.** The admin console's
-  reconcile button records the request and re-reads the stored status; it does
-  not query a resolver and compare the thirteen expected records. The console
-  used to draw a table of green ticks for records nobody had checked. Verify by
-  hand, or with `make preflight`, until this is real.
 - **Attachments are not uploaded.** The compose screen lists the files you pick
   and sends their names only; there is no upload endpoint behind the picker
   yet. The screen says so when you attach something, rather than letting the
