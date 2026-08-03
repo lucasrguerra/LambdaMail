@@ -291,6 +291,24 @@ export default function UserSettingsPage() {
           {qrSecret && (
             <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-4 text-xs">
               <TotpEnrolment secret={qrSecret} uri={qrUri} />
+              {/* Enrolment resumes rather than restarting, so this code is the
+                  same one already scanned. Anyone who removed the entry from
+                  their app needs a way to ask for a different secret. */}
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await fetch("/api/v1/user/mfa/totp/enroll?reset=1", { method: "POST" });
+                  const data = await res.json().catch(() => ({}));
+                  if (res.ok) {
+                    setQrSecret(data.secret);
+                    setQrUri(data.uri);
+                    setTotpCode("");
+                  }
+                }}
+                className="text-[11px] text-slate-400 underline hover:text-slate-200"
+              >
+                {t("settings.startOverMfa")}
+              </button>
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
@@ -316,9 +334,9 @@ export default function UserSettingsPage() {
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   placeholder={t("settings.sixDigitCode")}
-                  maxLength={6}
+                  maxLength={7}
                   required
                   className="px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono text-center focus:outline-none focus:border-indigo-500"
                 />

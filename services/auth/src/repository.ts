@@ -127,16 +127,60 @@ async function registerFailedLogin(mailboxId: string): Promise<void> {
  * accepted back from the client - a secret the client chooses is a secret the
  * client can replay for somebody else's account.
  */
-export async function startTotpEnrollment(mailboxId: string, base32Secret: string, label = "Authenticator"): Promise<void> {
+/**
+ * Starts - or resumes - a TOTP enrollment, returning the secret to display.
+ *
+ * Resuming matters. This used to delete any pending row and store a freshly
+ * generated secret on every call, and the browser only holds the secret in
+ * component state: reloading the settings page, or coming back to it, brought
+ * the "enable" button back, and pressing it silently replaced the secret the
+ * authenticator had already been given. The app then showed perfectly valid
+ * codes for a secret the server no longer had, and every confirmation failed
+ * with no indication why.
+ *
+ * Returning the pending secret instead makes enrollment idempotent: the QR
+ * shown after a reload is the same one already scanned, so an existing entry
+ * keeps working and rescanning is harmless.
+ */
+export async function startTotpEnrollment(
+  mailboxId: string,
+  base32Secret: string,
+  label = "Authenticator",
+): Promise<string> {
+  const pending = await queryOne<{ secret_enc: Buffer; secret_nonce: Buffer; key_version: number }>(
+    `SELECT secret_enc, secret_nonce, key_version
+       FROM mfa_totp WHERE mailbox_id = $1 AND status = 'PENDING'
+       ORDER BY created_at DESC LIMIT 1`,
+    [mailboxId],
+  );
+  if (pending) {
+    try {
+      return decryptSecret(pending.secret_enc, pending.secret_nonce, pending.key_version);
+    } catch {
+      // Undecryptable - the master key changed under it. Nobody can ever
+      // confirm this row, so replacing it is the only way forward.
+      await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1 AND status = 'PENDING'`, [mailboxId]);
+    }
+  }
+
   const { encrypted, nonce, keyVersion } = encryptSecret(base32Secret);
-  // Any earlier unconfirmed attempt is replaced, so a user who restarts
-  // enrollment is not left with rows nobody can complete.
-  await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1 AND status = 'PENDING'`, [mailboxId]);
   await query(
     `INSERT INTO mfa_totp (mailbox_id, label, secret_enc, secret_nonce, key_version, status)
      VALUES ($1, $2, $3, $4, $5, 'PENDING')`,
     [mailboxId, label, encrypted, nonce, keyVersion],
   );
+  return base32Secret;
+}
+
+/**
+ * Abandons a pending enrollment, so the next one starts from a new secret.
+ *
+ * Needed because startTotpEnrollment now resumes: someone who deleted the
+ * entry from their authenticator would otherwise be handed the same secret
+ * they can no longer generate codes for.
+ */
+export async function resetTotpEnrollment(mailboxId: string): Promise<void> {
+  await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1 AND status = 'PENDING'`, [mailboxId]);
 }
 
 interface TotpRow {

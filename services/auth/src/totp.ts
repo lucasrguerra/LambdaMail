@@ -62,13 +62,17 @@ export function generateHotp(secretBuffer: Buffer, counter: number): string {
   return code;
 }
 
+/** Renders the otpauth:// URI an authenticator app scans. */
+export function generateTotpUri(label: string, base32Secret: string, issuer = "LambdaMail"): string {
+  const encodedLabel = encodeURIComponent(label);
+  const encodedIssuer = encodeURIComponent(issuer);
+  return `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${base32Secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
+}
+
 export function generateTotpSecret(label: string, issuer = "LambdaMail"): { base32Secret: string; uri: string } {
   const secretBytes = crypto.randomBytes(20);
   const base32Secret = base32Encode(secretBytes);
-  const encodedLabel = encodeURIComponent(label);
-  const encodedIssuer = encodeURIComponent(issuer);
-  const uri = `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${base32Secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
-  return { base32Secret, uri };
+  return { base32Secret, uri: generateTotpUri(label, base32Secret, issuer) };
 }
 
 export function verifyTotpCode(
@@ -77,8 +81,13 @@ export function verifyTotpCode(
   lastUsedStep: number | null = null,
   timeMs: number = Date.now(),
 ): { valid: boolean; step: number } {
-  const cleanCode = code.trim();
-  if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
+  // Every non-digit is stripped, not just surrounding whitespace.
+  // Authenticator apps display the code grouped as "123 456", and a value
+  // pasted or typed with that space was rejected as malformed before it was
+  // ever compared - which reads, to the person holding a phone showing the
+  // right number, as the server being wrong.
+  const cleanCode = code.replace(/\D/g, "");
+  if (cleanCode.length !== 6) {
     return { valid: false, step: 0 };
   }
 

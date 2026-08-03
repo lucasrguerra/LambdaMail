@@ -173,3 +173,42 @@ describe("challenge tokens are not sessions", () => {
     expect(isSurfaceAuthorized(parsed, "user")).toBe(false);
   });
 });
+
+describe("TOTP code parsing", () => {
+  // Authenticator apps display the code grouped as "123 456". A value typed or
+  // pasted with that space failed the length check before it was ever
+  // compared, which reads - to someone holding a phone showing the right
+  // number - as the server being wrong.
+  it("accepts a code exactly as the authenticator displays it", async () => {
+    const { generateTotpSecret, verifyTotpCode, generateHotp, base32Decode, getCurrentStep } =
+      await import("./totp.js");
+    const { base32Secret } = generateTotpSecret("user@example.test");
+    const code = generateHotp(base32Decode(base32Secret), getCurrentStep());
+
+    for (const typed of [code, `${code.slice(0, 3)} ${code.slice(3)}`, ` ${code} `, `${code}\n`]) {
+      expect(verifyTotpCode(base32Secret, typed).valid).toBe(true);
+    }
+  });
+
+  it("still refuses anything that is not six digits", async () => {
+    const { generateTotpSecret, verifyTotpCode } = await import("./totp.js");
+    const { base32Secret } = generateTotpSecret("user@example.test");
+    for (const bad of ["", "12345", "1234567", "abcdef", "12 34"]) {
+      expect(verifyTotpCode(base32Secret, bad).valid).toBe(false);
+    }
+  });
+
+  it("matches the RFC 6238 reference vectors", async () => {
+    const { generateHotp } = await import("./totp.js");
+    const secret = Buffer.from("12345678901234567890", "ascii");
+    const vectors: Array<[number, string]> = [
+      [59, "287082"],
+      [1111111109, "081804"],
+      [1234567890, "005924"],
+      [20000000000, "353130"],
+    ];
+    for (const [t, want] of vectors) {
+      expect(generateHotp(secret, Math.floor(t / 30))).toBe(want);
+    }
+  });
+});

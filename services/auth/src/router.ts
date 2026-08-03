@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import crypto from "node:crypto";
-import { generateTotpSecret } from "./totp.js";
+import { generateTotpSecret, generateTotpUri } from "./totp.js";
 import { generateRecoveryCodes, generateAppPassword } from "./mfaHelpers.js";
 import { createJwt, verifyJwt, isSurfaceAuthorized, type SessionTokenPayload } from "./session.js";
 import * as repo from "./repository.js";
@@ -134,7 +134,7 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url === "/api/v1/user/sieve" && method === "GET") return userGetSieve(res, session!);
     if (url === "/api/v1/user/sieve" && method === "POST") return userSaveSieve(req, res, session!);
     if (url === "/api/v1/user/vacation" && method === "POST") return userSaveVacation(req, res, session!);
-    if (url === "/api/v1/user/mfa/totp/enroll" && method === "POST") return totpEnroll(res, session!);
+    if (url === "/api/v1/user/mfa/totp/enroll" && method === "POST") return totpEnroll(req, res, session!);
     if (url === "/api/v1/user/mfa/totp/confirm" && method === "POST") return totpConfirm(req, res, session!);
     if (url === "/api/v1/user/app-passwords" && method === "GET") return appPasswordsList(res, session!);
     if (url === "/api/v1/user/app-passwords" && method === "POST") return appPasswordCreate(req, res, session!);
@@ -395,12 +395,28 @@ async function updateLocale(req: IncomingMessage, res: ServerResponse, session: 
   sendJson(res, 200, { locale });
 }
 
-async function totpEnroll(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
-  const secret = generateTotpSecret(session.email);
+async function totpEnroll(
+  req: IncomingMessage,
+  res: ServerResponse,
+  session: SessionTokenPayload,
+): Promise<void> {
+  // ?reset=1 abandons a pending enrollment. Without it this endpoint resumes,
+  // which is what stops a page reload from invalidating a secret the
+  // authenticator has already stored.
+  if (new URL(req.url ?? "", "http://internal").searchParams.get("reset") === "1") {
+    await repo.resetTotpEnrollment(session.sub);
+  }
+
+  const generated = generateTotpSecret(session.email);
   // Stored server-side; the confirm step reads it from the database rather
-  // than trusting the client to send it back.
-  await repo.startTotpEnrollment(session.sub, secret.base32Secret);
-  sendJson(res, 200, { secret: secret.base32Secret, uri: secret.uri });
+  // than trusting the client to send it back. The value returned is whichever
+  // secret is now pending, which may be one from an earlier attempt.
+  const secret = await repo.startTotpEnrollment(session.sub, generated.base32Secret);
+  const uri =
+    secret === generated.base32Secret
+      ? generated.uri
+      : generateTotpUri(session.email, secret);
+  sendJson(res, 200, { secret, uri });
 }
 
 async function totpConfirm(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {

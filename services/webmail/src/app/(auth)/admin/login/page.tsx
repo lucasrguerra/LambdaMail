@@ -138,8 +138,8 @@ export default function AdminLoginPage() {
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
-                  maxLength={6}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  maxLength={7}
                   required
                   className="w-full rounded-lg border border-slate-800 bg-slate-900 px-4 py-2.5 text-center font-mono text-lg tracking-widest text-white focus:border-emerald-500 focus:outline-none"
                 />
@@ -180,9 +180,9 @@ export default function AdminLoginPage() {
               <input
                 type="text"
                 value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value)}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="123456"
-                maxLength={6}
+                maxLength={7}
                 required
                 className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-center tracking-widest text-lg font-mono focus:outline-none focus:border-emerald-500 transition-colors"
               />

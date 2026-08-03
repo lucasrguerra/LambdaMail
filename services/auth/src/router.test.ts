@@ -193,6 +193,41 @@ describeDb("auth API against a real database", () => {
 
   // PLAN.md F4 acceptance criterion: a /user token must be refused by
   // /api/v1/admin/*.
+  // The browser holds the enrolment secret only in component state, so a
+  // reload brings the "enable" button back. Enrolling used to replace the
+  // stored secret on every call, which silently orphaned the entry the
+  // authenticator had already saved: the app kept showing valid codes for a
+  // secret the server no longer had, and confirmation failed forever with no
+  // way to tell why.
+  it("resumes a pending enrolment instead of replacing the secret", { timeout: 60000 }, async () => {
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [USER_ID]);
+    const login = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
+    const token = login.body.token as unknown as string;
+
+    const first = await post("/api/v1/user/mfa/totp/enroll", {}, token);
+    const second = await post("/api/v1/user/mfa/totp/enroll", {}, token);
+    expect(second.body.secret).toBe(first.body.secret);
+
+    // The code from the secret shown first must still confirm after the
+    // second call - that is the reload case.
+    const code = generateHotp(base32Decode(first.body.secret as unknown as string), getCurrentStep());
+    const confirm = await post("/api/v1/user/mfa/totp/confirm", { code }, token);
+    expect(confirm.status).toBe(200);
+  });
+
+  it("issues a different secret when enrolment is explicitly reset", { timeout: 60000 }, async () => {
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [USER_ID]);
+    const login = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
+    const token = login.body.token as unknown as string;
+
+    const first = await post("/api/v1/user/mfa/totp/enroll", {}, token);
+    const reset = await post("/api/v1/user/mfa/totp/enroll?reset=1", {}, token);
+    expect(reset.body.secret).not.toBe(first.body.secret);
+    // The URI has to carry the secret actually in force, or the QR would
+    // enrol something the server will not accept.
+    expect(reset.body.uri).toContain(reset.body.secret);
+  });
+
   it("rejects a user token on an admin endpoint", async () => {
     const login = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
     const token = (login.body.token ?? login.body.challenge_token) as unknown as string;

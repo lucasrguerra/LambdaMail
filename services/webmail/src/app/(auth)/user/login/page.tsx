@@ -131,9 +131,9 @@ export default function UserLoginPage() {
                 <input
                   type="text"
                   value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value)}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   placeholder="123456"
-                  maxLength={6}
+                  maxLength={7}
                   required
                   className="w-full pl-10 pr-4 py-3 rounded-xl bg-slate-900/90 border border-slate-800 text-white text-center tracking-widest text-lg font-mono focus:outline-none focus:border-indigo-500 transition-colors"
                 />

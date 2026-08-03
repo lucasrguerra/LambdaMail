@@ -205,6 +205,7 @@
     "signatureSaved": "Firma guardada.",
     "signatureTitle": "Firma de correo",
     "sixDigitCode": "Código de seis dígitos",
+    "startOverMfa": "¿Perdió el registro? Empiece de nuevo con una clave nueva",
     "subtitle": "Verificación en dos pasos, filtros, respuesta automática y su firma.",
     "title": "Configuración",
     "twoFactorIntro": "Proteja su cuenta con Google Authenticator, Aegis, Authy o 1Password.",

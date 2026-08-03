@@ -205,6 +205,7 @@
     "signatureSaved": "Signature saved.",
     "signatureTitle": "Email signature",
     "sixDigitCode": "Six-digit code",
+    "startOverMfa": "Lost the entry? Start over with a new key",
     "subtitle": "Two-factor authentication, filters, auto-reply and your signature.",
     "title": "Settings",
     "twoFactorIntro": "Protect your account with Google Authenticator, Aegis, Authy or 1Password.",
