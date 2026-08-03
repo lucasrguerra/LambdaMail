@@ -172,3 +172,26 @@ describe("two-factor enrolment", () => {
     expect(source).toContain("onContinue");
   });
 });
+
+describe("API proxy routing", () => {
+  // A route added to the protocols service but not to the proxy's list is sent
+  // to the auth service instead, which answers 401 from its admin guard. That
+  // is indistinguishable from a session problem, so the failure looks like
+  // "you are not logged in" rather than "this was routed to the wrong
+  // service" - which is exactly how it went unnoticed once already.
+  it("sends every protocols-owned admin area to the protocols service", () => {
+    const proxy = readFileSync(resolve(process.cwd(), "src/app/api/v1/[...path]/route.ts"), "utf8");
+
+    // Areas the protocols service actually serves, taken from its router.
+    for (const area of ["dkim", "tls", "dns"]) {
+      expect(proxy).toContain(`"${area}"`);
+    }
+    expect(proxy).toMatch(/PROTOCOLS_ADMIN_AREAS/);
+  });
+
+  it("still sends mail to protocols and everything else to auth", () => {
+    const proxy = readFileSync(resolve(process.cwd(), "src/app/api/v1/[...path]/route.ts"), "utf8");
+    expect(proxy).toMatch(/path\[0\] === "mail".*PROTOCOLS_SERVICE_URL/s);
+    expect(proxy).toContain("return AUTH_SERVICE_URL");
+  });
+});

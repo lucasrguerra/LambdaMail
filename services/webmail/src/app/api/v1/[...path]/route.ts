@@ -16,12 +16,23 @@ const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL ?? "http://auth:3001";
 // sees one origin and one cookie either way.
 const PROTOCOLS_SERVICE_URL = process.env.PROTOCOLS_SERVICE_URL ?? "http://protocols:8080";
 
+/**
+ * Admin areas the protocols service owns rather than the auth service.
+ *
+ * Each is here because that process holds something the auth service does not:
+ * the DKIM vault, the certificate watcher, and the DNS resolver plus the
+ * expected-record spec.
+ *
+ * Adding a route to protocols without adding it here sends the request to the
+ * auth service, which answers 401 from its admin guard - indistinguishable from
+ * a session problem, and the reason to keep this list beside the services it
+ * names.
+ */
+const PROTOCOLS_ADMIN_AREAS = new Set(["dkim", "tls", "dns"]);
+
 function upstreamFor(path: string[]): string {
-  // Mail reads and sends go to protocols, and so does DKIM: the private key
-  // has to be sealed with that service's vault, which derives its key
-  // differently from the auth service's.
   if (path[0] === "mail") return PROTOCOLS_SERVICE_URL;
-  if (path[0] === "admin" && (path[1] === "dkim" || path[1] === "tls")) return PROTOCOLS_SERVICE_URL;
+  if (path[0] === "admin" && PROTOCOLS_ADMIN_AREAS.has(path[1])) return PROTOCOLS_SERVICE_URL;
   return AUTH_SERVICE_URL;
 }
 
