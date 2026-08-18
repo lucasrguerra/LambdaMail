@@ -5,7 +5,7 @@
 @tailwind utilities;
 
 /**
- * Nocturne — the one visual language for both surfaces.
+ * Nocturne - the one visual language for both surfaces.
  *
  * The webmail used to be indigo over glass and the console green over glass,
  * so the two halves of the same product did not look related. Everything below
@@ -62,9 +62,9 @@ h1, h2, h3, h4, h5, h6 {
   background: rgba(145, 132, 217, 0.3);
 }
 
-/* ────────────────────────────────────────────────────────────────────────
+/* --------------------------------------------------------------------
    Surfaces
-   ──────────────────────────────────────────────────────────────────────── */
+   -------------------------------------------------------------------- */
 
 /** A code or DNS-record block: the darkest ground, monospace, accent ink. */
 .lm-code {
@@ -78,7 +78,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /**
- * A rule that fades to transparent at both ends rather than stopping cleanly —
+ * A rule that fades to transparent at both ends rather than stopping cleanly -
  * the one Nocturne signature that has to be CSS, because Tailwind has no
  * gradient border.
  */
@@ -94,13 +94,13 @@ h1, h2, h3, h4, h5, h6 {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────
+/* --------------------------------------------------------------------
    Navigation, rows and chips
-   ──────────────────────────────────────────────────────────────────────── */
+   -------------------------------------------------------------------- */
 
 /**
  * A sidebar item. The 3px mark on the left is the accent's whole appearance
- * here — an active item is not a filled pill. Nothing in this block is sized
+ * here - an active item is not a filled pill. Nothing in this block is sized
  * by its text: the label wraps to a second line instead of being clipped,
  * which is what broke when the interface was read in Portuguese or Spanish.
  */
@@ -202,9 +202,9 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: inset 0 0 0 1px var(--lm-edge);
 }
 
-/* ────────────────────────────────────────────────────────────────────────
-   Tables — the header and the row rules fade at their ends, as the rules do
-   ──────────────────────────────────────────────────────────────────────── */
+/* --------------------------------------------------------------------
+   Tables - the header and the row rules fade at their ends, as the rules do
+   -------------------------------------------------------------------- */
 
 .lm-table {
   width: 100%;
@@ -258,9 +258,9 @@ h1, h2, h3, h4, h5, h6 {
       no-repeat bottom / 100% 1px;
 }
 
-/* ────────────────────────────────────────────────────────────────────────
-   Scrollbars — a thin neutral thumb on no track
-   ──────────────────────────────────────────────────────────────────────── */
+/* --------------------------------------------------------------------
+   Scrollbars - a thin neutral thumb on no track
+   -------------------------------------------------------------------- */
 
 ::-webkit-scrollbar {
   width: 8px;

@@ -256,9 +256,9 @@ export default function AdminDomainsPage() {
                     <div className="break-words text-lg font-medium leading-tight text-slate-100">{d.name}</div>
                     <div className="mt-1 text-[12.5px] leading-relaxed text-slate-400">
                       {t("admin.mailboxCount", { count: d.mailbox_count })}
-                      {d.dmarc_policy ? ` · DMARC: ${d.dmarc_policy}` : ""}
-                      {d.mta_sts_mode ? ` · MTA-STS: ${d.mta_sts_mode}` : ""}
-                      {d.dane_enabled ? " · DANE" : ""}
+                      {d.dmarc_policy ? ` \u00b7 DMARC: ${d.dmarc_policy}` : ""}
+                      {d.mta_sts_mode ? ` \u00b7 MTA-STS: ${d.mta_sts_mode}` : ""}
+                      {d.dane_enabled ? " \u00b7 DANE" : ""}
                     </div>
                   </div>
                   <div className="flex flex-none flex-wrap items-center gap-2.5">

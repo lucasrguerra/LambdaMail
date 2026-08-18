@@ -51,7 +51,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="flex h-full flex-col gap-4 p-3">
       <div className="flex items-center gap-2.5 px-2 py-1">
         <div className="flex h-8 w-8 flex-none items-center justify-center rounded-[10px] bg-dark-card text-[17px] leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
-          λ
+          {"\u03bb"}
         </div>
         <div className="min-w-0">
           <div className="text-[15px] font-medium leading-tight">LambdaMail</div>
@@ -137,7 +137,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="fixed left-0 top-0 z-20 flex w-full items-center justify-between bg-dark-rail px-4 py-3 shadow-[inset_0_-1px_0_0_rgba(233,233,237,0.09)] md:hidden">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex h-8 w-8 flex-none items-center justify-center rounded-[10px] bg-dark-card text-[17px] leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
-            λ
+            {"\u03bb"}
           </div>
           <span className="min-w-0 truncate font-medium text-slate-100">
             {t("common.appName")} {t("common.adminPortal")}

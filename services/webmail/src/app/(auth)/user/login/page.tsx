@@ -59,7 +59,7 @@ export default function UserLoginPage() {
       <div className="w-full max-w-[400px] rounded-2xl bg-dark-panel p-7 shadow-edge">
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-dark-card text-xl leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
-            λ
+            {"\u03bb"}
           </div>
           <div className="min-w-0">
             <h1 className="text-lg font-medium leading-tight text-slate-100">{t("auth.userLoginTitle")}</h1>
