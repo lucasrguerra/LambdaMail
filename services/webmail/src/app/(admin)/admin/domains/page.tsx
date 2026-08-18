@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Globe, RefreshCw, Plus, KeyRound, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card } from "../../../../components/ui/Card";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
 
@@ -197,144 +196,147 @@ export default function AdminDomainsPage() {
     { id: "dkim" as const, label: "DKIM", icon: KeyRound },
   ];
 
-  return (
-    <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-            {t("admin.domainsTitle")}
-          </h1>
-        </div>
+  const panel = "flex flex-col gap-4 rounded-2xl bg-dark-panel p-[18px] shadow-edge";
+  const input =
+    "w-full min-h-[36px] rounded-[10px] bg-dark-card px-3 py-2 text-[13.5px] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent";
+  const fieldLabel = "mb-1.5 block text-xs text-slate-400";
 
-        <div className="flex bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 text-xs font-medium self-start md:self-auto">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-                  activeTab === tab.id
-                    ? "bg-emerald-600 text-white shadow-sm"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+  return (
+    <div className="mx-auto flex w-full max-w-[1060px] flex-col gap-[18px] px-5 pb-11 pt-7 sm:px-8">
+      <div>
+        <h1 className="text-[25px] font-medium leading-tight text-slate-100">{t("admin.domainsTitle")}</h1>
+        <p className="mt-1.5 text-[13.5px] text-slate-400">{t("admin.verifyIntro")}</p>
+      </div>
+
+      <div className="lm-tabstrip self-start">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              data-active={activeTab === tab.id}
+              aria-pressed={activeTab === tab.id}
+              className="lm-tab"
+            >
+              <Icon className="h-[15px] w-[15px] flex-none" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {notice && (
-        <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          <span>{notice}</span>
+        <div className="flex items-center gap-2 rounded-xl bg-dark-card px-4 py-3 text-[12.5px] text-slate-200 shadow-edge">
+          <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
+          <span className="break-words">{notice}</span>
         </div>
       )}
       {error && (
-        <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+        <div className="rounded-xl bg-rose-900/60 px-4 py-3 text-[12.5px] leading-relaxed text-rose-200 shadow-edge">
           {error}
         </div>
       )}
 
       {activeTab === "domains" && (
-        <div className="space-y-4">
+        <div className="flex flex-col gap-3">
           {domains.length === 0 && !loading ? (
-            <Card className="p-8 text-center text-xs text-slate-500">{t("admin.noDomains")}</Card>
+            <div className="rounded-2xl bg-dark-panel p-8 text-center text-[13px] text-slate-400 shadow-edge">
+              {t("admin.noDomains")}
+            </div>
           ) : (
             domains.map((d) => (
-              <Card key={d.id} className="p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 flex-shrink-0">
-                      <Globe className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-base font-bold text-white truncate">{d.name}</div>
-                      <div className="text-xs text-slate-400">
-                        {t("admin.mailboxCount", { count: d.mailbox_count })}
-                        {d.dmarc_policy ? ` | DMARC: ${d.dmarc_policy}` : ""}
-                        {d.mta_sts_mode ? ` | MTA-STS: ${d.mta_sts_mode}` : ""}
-                        {d.dane_enabled ? " | DANE" : ""}
-                      </div>
+              <div
+                key={d.id}
+                className="flex flex-col gap-3.5 rounded-2xl bg-dark-panel px-[18px] py-4 shadow-edge"
+              >
+                <div className="flex flex-wrap items-center gap-3.5">
+                  <div className="min-w-[200px] flex-1">
+                    <div className="break-words text-lg font-medium leading-tight text-slate-100">{d.name}</div>
+                    <div className="mt-1 text-[12.5px] leading-relaxed text-slate-400">
+                      {t("admin.mailboxCount", { count: d.mailbox_count })}
+                      {d.dmarc_policy ? ` · DMARC: ${d.dmarc_policy}` : ""}
+                      {d.mta_sts_mode ? ` · MTA-STS: ${d.mta_sts_mode}` : ""}
+                      {d.dane_enabled ? " · DANE" : ""}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="flex flex-none flex-wrap items-center gap-2.5">
                     <Badge variant={statusVariant(d.dns_status)}>{d.dns_status}</Badge>
                     <Button
-                      variant={selectedId === d.id ? "primary" : "outline"}
+                      variant={selectedId === d.id ? "primary" : "secondary"}
                       size="sm"
                       onClick={() => setSelectedId(d.id)}
                     >
-                      {selectedId === d.id ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
+                      {selectedId === d.id ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
                       <span>{selectedId === d.id ? t("common.status") : t("common.add")}</span>
                     </Button>
                   </div>
                 </div>
-                <div className="mt-3 pt-3 border-t border-slate-800 text-[11px] text-slate-500 font-mono">
+                <div className="text-[11.5px] text-slate-500">
                   {t("admin.lastChecked", {
                     when: d.dns_last_checked_at
                       ? new Date(d.dns_last_checked_at).toLocaleString()
                       : t("common.never"),
                   })}
                 </div>
-              </Card>
+              </div>
             ))
           )}
 
-          <Card className="space-y-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <p className="text-xs text-slate-400">{t("admin.verifyIntro")}</p>
-              <Button variant="outline" size="sm" onClick={handleReconcile} disabled={reconciling || !selected}>
-                <RefreshCw className={`w-3.5 h-3.5 ${reconciling ? "animate-spin" : ""}`} />
+          <section className={panel}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-[17px] font-medium leading-tight text-slate-100">
+                {selected ? t("admin.dnsRecordsFor", { domain: selected.name }) : t("ui.domainVerification")}
+              </h2>
+              <Button variant="secondary" size="sm" onClick={handleReconcile} disabled={reconciling || !selected}>
+                <RefreshCw className={`h-3.5 w-3.5 ${reconciling ? "animate-spin" : ""}`} />
                 <span>{t("admin.reconcileDns")}</span>
               </Button>
             </div>
 
             {verification && (
               <>
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`text-2xl font-black font-mono ${
-                      verification.verified === verification.total ? "text-emerald-400" : "text-amber-400"
-                    }`}
-                  >
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-mono text-2xl font-medium tabular-nums text-slate-100">
                     {verification.verified} / {verification.total}
                   </span>
                   <Badge variant={statusVariant(verification.status)}>{verification.status}</Badge>
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
+                  <table className="lm-table">
                     <thead>
-                      <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                        <th className="p-2.5">{t("ui.recordName")}</th>
-                        <th className="p-2.5">{t("ui.expectedValue")}</th>
-                        <th className="p-2.5">{t("common.status")}</th>
+                      <tr>
+                        <th className="pl-0">{t("ui.recordName")}</th>
+                        <th>{t("ui.expectedValue")}</th>
+                        <th className="pr-0 text-right">{t("common.status")}</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/60 font-mono">
+                    <tbody>
                       {verification.records.map((rec, i) => (
-                        <tr key={i} className="hover:bg-slate-900/30 align-top">
-                          <td className="p-2.5 text-slate-200 whitespace-nowrap">
-                            <span className="text-emerald-400 font-bold">{rec.type}</span> {rec.name}
+                        <tr key={i} className="align-top">
+                          <td className="whitespace-nowrap pl-0 text-[13px]">
+                            <Badge variant="neutral" className="mr-2 font-mono">
+                              {rec.type}
+                            </Badge>
+                            <span className="font-mono text-[12.5px] text-slate-200">{rec.name}</span>
                           </td>
-                          <td className="p-2.5 text-slate-400 break-all max-w-md">{rec.expected}</td>
-                          <td className="p-2.5 whitespace-nowrap">
+                          <td className="max-w-[420px] break-all font-mono text-xs text-slate-400">
+                            {rec.expected}
+                          </td>
+                          <td className="whitespace-nowrap pr-0 text-right">
                             {rec.verified ? (
-                              <span className="flex items-center gap-1 text-emerald-400">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span className="inline-flex items-center gap-1.5 text-[12.5px] text-indigo-400">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
                                 {rec.proxied ? t("admin.presentProxied") : t("admin.dnsStatusVerified")}
                               </span>
                             ) : (
                               <span
-                                className="flex items-center gap-1 text-amber-400"
+                                className="inline-flex items-center gap-1.5 text-[12.5px] text-amber-400"
                                 title={rec.detail}
                               >
-                                <AlertTriangle className="w-3.5 h-3.5" />
+                                <AlertTriangle className="h-3.5 w-3.5" />
                                 {t("admin.notPublished")}
                               </span>
                             )}
@@ -346,89 +348,105 @@ export default function AdminDomainsPage() {
                 </div>
               </>
             )}
-          </Card>
+          </section>
         </div>
       )}
 
       {activeTab === "onboarding" && (
-        <Card className="max-w-2xl space-y-4">
+        <section className={`${panel} max-w-[620px]`}>
           <div>
-            <h2 className="text-lg font-bold text-white mb-1">{t("admin.onboardTitle")}</h2>
-            <p className="text-xs text-slate-400">{t("admin.onboardIntro")}</p>
+            <h2 className="text-[17px] font-medium leading-tight text-slate-100">{t("admin.onboardTitle")}</h2>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-400">{t("admin.onboardIntro")}</p>
           </div>
-          <form onSubmit={handleOnboard} className="space-y-3 text-xs">
+          <form onSubmit={handleOnboard} className="flex flex-col gap-4">
             <div>
-              <label className="font-semibold text-slate-300 block mb-1">{t("admin.domainName")}</label>
+              <label htmlFor="onboard-domain" className={fieldLabel}>
+                {t("admin.domainName")}
+              </label>
               <input
+                id="onboard-domain"
                 type="text"
                 value={onboardDomain}
                 onChange={(e) => setOnboardDomain(e.target.value)}
                 placeholder="example.org"
                 required
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                className={input}
               />
             </div>
-            <Button type="submit" variant="primary" size="md" disabled={onboarding}>
-              <Plus className="w-4 h-4" />
+            <Button type="submit" variant="primary" size="md" className="self-start" disabled={onboarding}>
+              <Plus className="h-4 w-4" />
               <span>{onboarding ? t("common.loading") : t("common.add")}</span>
             </Button>
           </form>
-        </Card>
+        </section>
       )}
 
       {activeTab === "dkim" && (
-        <Card className="max-w-3xl space-y-5">
+        <section className={`${panel} max-w-[720px]`}>
           <div>
-            <h2 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
-              <KeyRound className="w-5 h-5 text-indigo-400" />
+            <h2 className="flex items-center gap-2 text-[17px] font-medium leading-tight text-slate-100">
+              <KeyRound className="h-[17px] w-[17px] flex-none text-indigo-500" />
               {t("admin.dkimTitle")}
             </h2>
-            <p className="text-xs text-slate-400">
-              {selected ? selected.name : t("admin.noDomains")}
-            </p>
+            <p className="mt-1 text-[13px] text-slate-400">{selected ? selected.name : t("admin.noDomains")}</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-            <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.dkimAlgorithm")}</label>
+          <div className="flex flex-wrap gap-3">
+            <div className="min-w-[200px] flex-1">
+              <label htmlFor="dkim-algorithm" className={fieldLabel}>
+                {t("admin.dkimAlgorithm")}
+              </label>
               <select
+                id="dkim-algorithm"
                 value={dkimAlgorithm}
                 onChange={(e) => setDkimAlgorithm(e.target.value as "ed25519" | "rsa2048")}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
+                className={input}
               >
                 <option value="ed25519">Ed25519</option>
                 <option value="rsa2048">RSA-2048</option>
               </select>
             </div>
-            <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.dkimSelector")}</label>
+            <div className="min-w-[200px] flex-1">
+              <label htmlFor="dkim-selector" className={fieldLabel}>
+                {t("admin.dkimSelector")}
+              </label>
               <input
+                id="dkim-selector"
                 type="text"
                 value={dkimSelector}
                 onChange={(e) => setDkimSelector(e.target.value)}
                 pattern="[A-Za-z0-9-]{1,63}"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
+                className={`${input} font-mono`}
               />
             </div>
           </div>
 
-          <Button variant="primary" size="md" onClick={handleRotateDkim} disabled={rotating || !selected}>
-            <KeyRound className="w-4 h-4" />
+          <Button
+            variant="primary"
+            size="md"
+            className="self-start"
+            onClick={handleRotateDkim}
+            disabled={rotating || !selected}
+          >
+            <KeyRound className="h-4 w-4" />
             <span>{rotating ? t("common.loading") : t("admin.dkimRotate")}</span>
           </Button>
 
           {dkimRecord && (
-            <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-3 text-xs">
-              <div className="font-bold text-white">{t("admin.dkimPublishRecord")}</div>
-              <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 font-mono text-[11px] text-emerald-400 break-all">
+            <div className="flex flex-col gap-2">
+              <div className="text-xs text-slate-400">{t("admin.dkimPublishRecord")}</div>
+              <div className="lm-code break-all px-3.5 py-3">
                 {dkimRecord.name} IN TXT &quot;{dkimRecord.value}&quot;
               </div>
-              <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/25 text-amber-300">
-                {t("admin.dkimOverlap", { days: dkimRecord.overlapDays })}
+              <div className="flex items-start gap-2.5 rounded-xl bg-dark-card px-3.5 py-3 shadow-edge">
+                <AlertTriangle className="mt-px h-4 w-4 flex-none text-amber-400" />
+                <span className="text-[12.5px] leading-relaxed text-slate-300">
+                  {t("admin.dkimOverlap", { days: dkimRecord.overlapDays })}
+                </span>
               </div>
             </div>
           )}
-        </Card>
+        </section>
       )}
     </div>
   );

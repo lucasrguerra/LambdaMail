@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
+import { Badge } from "../../../../components/ui/Badge";
+import { Button } from "../../../../components/ui/Button";
 
 /**
  * The outbound queue, read from the database.
@@ -33,11 +35,17 @@ interface QueueSummary {
   recent: QueueJob[];
 }
 
-/** Only failure states earn a warning colour; the rest are ordinary progress. */
-function statusClass(status: string): string {
-  if (status === "BOUNCED" || status === "FROZEN") return "badge-danger";
-  if (status === "DEFERRED") return "badge-warning";
-  return "badge-verified";
+/**
+ * Only failure states earn a warning colour; the rest are ordinary progress.
+ *
+ * These used to return "badge-danger", "badge-warning" and "badge-verified" -
+ * three class names no stylesheet in this project ever defined, so every status
+ * rendered as unstyled text. They are Badge variants now, which exist.
+ */
+function statusVariant(status: string): "danger" | "warning" | "neutral" {
+  if (status === "BOUNCED" || status === "FROZEN") return "danger";
+  if (status === "DEFERRED") return "warning";
+  return "neutral";
 }
 
 export default function AdminQueuePage() {
@@ -92,21 +100,16 @@ export default function AdminQueuePage() {
   const jobs = summary?.recent ?? [];
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white mb-1">{t("admin.queueTitle")}</h1>
-          <p className="text-xs text-slate-400">{t("admin.queueSubtitle")}</p>
+    <div className="mx-auto flex w-full max-w-[1060px] flex-col gap-[18px] px-5 pb-11 pt-7 sm:px-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-[25px] font-medium leading-tight text-slate-100">{t("admin.queueTitle")}</h1>
+          <p className="mt-1.5 text-[13.5px] text-slate-400">{t("admin.queueSubtitle")}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          className="flex items-center gap-2 self-start rounded-xl border border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-emerald-500/50 hover:text-white disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+        <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           <span>{t("common.refresh")}</span>
-        </button>
+        </Button>
       </div>
 
       {/* Counts per status, straight from the by_status aggregate. */}
@@ -115,80 +118,67 @@ export default function AdminQueuePage() {
           {Object.entries(summary.by_status).map(([status, count]) => (
             <span
               key={status}
-              className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-300"
+              className="flex items-center gap-2.5 rounded-xl bg-dark-panel px-3.5 py-2.5 shadow-edge"
             >
-              <span className="font-mono font-bold text-white">{count}</span> {status}
+              <span className="text-[19px] font-medium leading-none tabular-nums text-slate-100">{count}</span>
+              <span className="text-xs text-slate-400">{status}</span>
             </span>
           ))}
         </div>
       )}
 
       {message && (
-        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
-          {message}
-        </div>
+        <div className="rounded-xl bg-dark-card px-4 py-3 text-[12.5px] text-slate-200 shadow-edge">{message}</div>
       )}
       {error && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
-          {error}
-        </div>
+        <div className="rounded-xl bg-rose-900/60 px-4 py-3 text-[12.5px] text-rose-200 shadow-edge">{error}</div>
       )}
 
-      <div className="glass-panel rounded-2xl border border-slate-800 overflow-hidden">
-        <div className="p-4 border-b border-slate-800 bg-slate-900/60 font-bold text-xs text-slate-300">
-          {t("admin.queueTitle")} ({jobs.length})
-        </div>
-
+      <div className="rounded-2xl bg-dark-panel px-[18px] pb-3 pt-1.5 shadow-edge">
         {jobs.length === 0 && !loading ? (
-          <div className="p-8 text-center text-xs text-slate-500">{t("admin.queueEmpty")}</div>
+          <div className="p-8 text-center text-[13px] text-slate-400">{t("admin.queueEmpty")}</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="lm-table">
               <thead>
-                <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                  <th className="p-3">{t("ui.jobId")}</th>
-                  <th className="p-3">{t("ui.sender")}</th>
-                  <th className="p-3">{t("ui.recipient")}</th>
-                  <th className="p-3">{t("ui.destination")}</th>
-                  <th className="p-3">{t("ui.attempts")}</th>
-                  <th className="p-3">{t("ui.lastError")}</th>
-                  <th className="p-3">{t("common.status")}</th>
-                  <th className="p-3">{t("ui.actions")}</th>
+                <tr>
+                  <th className="pl-0">{t("ui.jobId")}</th>
+                  <th>{t("ui.sender")}</th>
+                  <th>{t("ui.recipient")}</th>
+                  <th>{t("ui.destination")}</th>
+                  <th>{t("ui.attempts")}</th>
+                  <th>{t("ui.lastError")}</th>
+                  <th>{t("common.status")}</th>
+                  <th className="pr-0 text-right">{t("ui.actions")}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 font-mono">
+              <tbody>
                 {jobs.map((j) => (
-                  <tr key={j.id} className="hover:bg-slate-900/30">
-                    <td className="p-3 font-bold text-slate-200">{j.id.slice(0, 8)}</td>
-                    <td className="p-3 text-slate-300">{j.envelope_from}</td>
-                    <td className="p-3 text-slate-300">{j.envelope_to}</td>
-                    <td className="p-3 text-emerald-400">{j.destination_domain}</td>
-                    <td className="p-3 text-slate-400">{j.attempt}</td>
-                    <td className="p-3 text-slate-400 truncate max-w-xs" title={j.last_error ?? ""}>
+                  <tr key={j.id}>
+                    <td className="pl-0 font-mono text-[12.5px] text-slate-100">{j.id.slice(0, 8)}</td>
+                    <td className="max-w-[180px] break-words text-[12.5px] text-slate-300">{j.envelope_from}</td>
+                    <td className="max-w-[180px] break-words text-[12.5px] text-slate-300">{j.envelope_to}</td>
+                    <td className="break-words text-[12.5px] text-slate-300">{j.destination_domain}</td>
+                    <td className="whitespace-nowrap text-[12.5px] tabular-nums text-slate-300">{j.attempt}</td>
+                    {/* The diagnostic wraps instead of being truncated: a queue
+                        screen exists to show why a message did not leave. */}
+                    <td className="max-w-[250px] text-xs leading-relaxed text-slate-400">
                       {j.last_error
                         ? `${j.last_smtp_code ? `${j.last_smtp_code} ` : ""}${j.last_error}`
                         : t("common.none")}
                     </td>
-                    <td className="p-3">
-                      <span className={`${statusClass(j.status)} px-2 py-0.5 rounded text-[10px]`}>
+                    <td>
+                      <Badge variant={statusVariant(j.status)} className="whitespace-nowrap">
                         {j.status}
-                      </span>
+                      </Badge>
                     </td>
-                    <td className="p-3 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void act(j.id, "retry")}
-                        className="px-2 py-1 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-[10px] font-bold"
-                      >
+                    <td className="whitespace-nowrap pr-0 text-right">
+                      <Button variant="secondary" size="sm" onClick={() => void act(j.id, "retry")}>
                         {t("admin.retryJob")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void act(j.id, "cancel")}
-                        className="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600/30 text-red-300 text-[10px] font-bold"
-                      >
+                      </Button>{" "}
+                      <Button variant="ghost" size="sm" onClick={() => void act(j.id, "cancel")}>
                         {t("admin.cancelJob")}
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}

@@ -18,7 +18,6 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
 import { Button } from "../../../../components/ui/Button";
 
 /** Splits a comma or semicolon separated field, dropping empty entries. */
@@ -178,32 +177,50 @@ export default function ComposePage({
     setSending(false);
   };
 
+  /** One row of the compose sheet: a fixed-width label beside the control. */
+  const fieldRow = "flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 shadow-[inset_0_-1px_0_0_rgba(233,233,237,0.07)]";
+  const fieldLabel = "w-14 flex-none text-[12.5px] leading-snug text-slate-400";
+  const bareInput =
+    "min-h-[30px] min-w-[160px] flex-1 border-0 bg-transparent text-sm text-slate-100 placeholder-slate-500 focus:outline-none";
+  const toolButton =
+    "flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition-colors hover:bg-white/[0.07] hover:text-slate-100";
+
   return (
-    <div className="flex-1 p-6 md:p-8 bg-dark-bg flex flex-col items-center overflow-y-auto">
-      <Card className="max-w-3xl w-full border border-slate-800 shadow-2xl space-y-5">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <h1 className="text-xl font-bold text-white flex items-center gap-2 tracking-tight">
-            <Send className="w-5 h-5 text-indigo-400" />
-            <span>{t("mail.compose")}</span>
-          </h1>
-          {draftStatus && (
-            <span className="text-xs text-emerald-400 font-mono flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              {draftStatus}
-            </span>
-          )}
+    <div className="flex-1 overflow-y-auto bg-dark-bg px-5 pb-11 pt-7 sm:px-8">
+      <form onSubmit={handleSend} className="mx-auto flex w-full max-w-[860px] flex-col gap-[18px]">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-[25px] font-medium leading-tight text-slate-100">{t("mail.compose")}</h1>
+            {draftStatus && (
+              <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-slate-400">
+                <CheckCircle2 className="h-3.5 w-3.5 flex-none text-indigo-500" />
+                {draftStatus}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/user/mail/inbox">
+              <Button variant="secondary" size="md">
+                {t("mail.discard")}
+              </Button>
+            </Link>
+            <Button type="submit" variant="primary" size="md" disabled={sending}>
+              <Send className="h-4 w-4" />
+              <span>{sending ? t("mail.sending") : t("mail.sendMessage")}</span>
+            </Button>
+          </div>
         </div>
 
         {sendError && (
-          <div className="p-4 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
+          <div className="rounded-xl bg-rose-900/60 px-4 py-3 text-xs leading-relaxed text-rose-200 shadow-edge">
             {sendError}
           </div>
         )}
 
         {undoSeconds !== null && (
-          <div className="p-4 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-between text-indigo-300 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-dark-card px-4 py-3 text-xs text-slate-200 shadow-edge">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-indigo-400 animate-spin" />
+              <Sparkles className="h-4 w-4 flex-none animate-spin text-indigo-500" />
               {/* The countdown is a placeholder inside the message, not text
                   bolted on after it. It used to be both: the bundle's own
                   "{seconds}" was never substituted and a second, hardcoded
@@ -212,217 +229,191 @@ export default function ComposePage({
               <span>{t("mail.undoSend", { seconds: undoSeconds })}</span>
             </div>
             <Button variant="primary" size="sm" onClick={handleUndo}>
-              <Undo2 className="w-3.5 h-3.5" />
+              <Undo2 className="h-3.5 w-3.5" />
               {t("mail.undoSendAction")}
             </Button>
           </div>
         )}
 
-        <form onSubmit={handleSend} className="space-y-4 text-xs">
-          <div>
-            <div className="flex justify-between items-center mb-1.5">
-              <label className="font-semibold text-slate-300">{t("ui.toRecipients")}</label>
-              <button
-                type="button"
-                onClick={() => setShowCcBcc(!showCcBcc)}
-                className="text-indigo-400 hover:text-indigo-300 font-medium hover:underline"
-              >
-                {showCcBcc ? t("mail.hideCcBcc") : t("mail.showCcBcc")}
-              </button>
-            </div>
+        {/* One sheet, the fields stacked as rows inside it, rather than a stack
+            of separately outlined inputs: the message is one object. */}
+        <div className="overflow-hidden rounded-2xl bg-dark-panel shadow-edge">
+          <div className={fieldRow}>
+            <label htmlFor="compose-to" className={fieldLabel}>
+              {t("ui.toRecipients")}
+            </label>
             <input
+              id="compose-to"
               type="text"
               value={to}
               onChange={(e) => setTo(e.target.value)}
               placeholder="recipient@example.com"
               required
               disabled={sending}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className={bareInput}
             />
+            <button
+              type="button"
+              onClick={() => setShowCcBcc(!showCcBcc)}
+              className="flex-none rounded-lg px-2 py-1 text-[12.5px] text-indigo-500 transition-colors hover:bg-indigo-500/10"
+            >
+              {showCcBcc ? t("mail.hideCcBcc") : t("mail.showCcBcc")}
+            </button>
           </div>
 
           {showCcBcc && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="font-semibold text-slate-300 mb-1 block">Cc</label>
+            <>
+              <div className={fieldRow}>
+                <label htmlFor="compose-cc" className={fieldLabel}>
+                  Cc
+                </label>
                 <input
+                  id="compose-cc"
                   type="text"
                   value={cc}
                   onChange={(e) => setCc(e.target.value)}
                   placeholder="cc@domain.com"
                   disabled={sending}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  className={bareInput}
                 />
               </div>
-              <div>
-                <label className="font-semibold text-slate-300 mb-1 block">Bcc</label>
+              <div className={fieldRow}>
+                <label htmlFor="compose-bcc" className={fieldLabel}>
+                  Bcc
+                </label>
                 <input
+                  id="compose-bcc"
                   type="text"
                   value={bcc}
                   onChange={(e) => setBcc(e.target.value)}
                   placeholder="bcc@domain.com"
                   disabled={sending}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  className={bareInput}
                 />
               </div>
-            </div>
+            </>
           )}
 
-          <div>
-            <label className="font-semibold text-slate-300 mb-1.5 block">{t("ui.subject")}</label>
+          <div className={fieldRow}>
+            <label htmlFor="compose-subject" className={fieldLabel}>
+              {t("ui.subject")}
+            </label>
             <input
+              id="compose-subject"
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder={t("ui.subject")}
               required
               disabled={sending}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              className={bareInput}
             />
           </div>
 
           {/* Formatting Toolbar */}
-          <div>
-            <label className="font-semibold text-slate-300 mb-1.5 block">{t("ui.messageBody")}</label>
-            <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-900/90">
-              <div className="flex items-center gap-1 p-2 bg-slate-950/80 border-b border-slate-800/80 flex-wrap text-slate-300">
-                <button
-                  type="button"
-                  onClick={() => executeFormat("bold")}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title={t("mail.bold")}
-                >
-                  <Bold className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => executeFormat("italic")}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title={t("mail.italic")}
-                >
-                  <Italic className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => executeFormat("underline")}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title={t("mail.underline")}
-                >
-                  <Underline className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => executeFormat("strikeThrough")}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title={t("mail.strikethrough")}
-                >
-                  <Strikethrough className="w-4 h-4" />
-                </button>
-                <span className="w-px h-4 bg-slate-800 mx-1" />
-                <button
-                  type="button"
-                  onClick={() => executeFormat("insertUnorderedList")}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title={t("mail.bulletList")}
-                >
-                  <List className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => executeFormat("insertOrderedList")}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
-                  title={t("mail.numberedList")}
-                >
-                  <ListOrdered className="w-4 h-4" />
-                </button>
-                <span className="w-px h-4 bg-slate-800 mx-1" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const url = prompt(t("mail.insertUrl"));
-                    if (url) executeFormat("createLink", url);
-                  }}
-                  className="p-1.5 hover:bg-slate-800 rounded-lg text-indigo-400 hover:text-indigo-300"
-                  title={t("mail.insertLink")}
-                >
-                  <LinkIcon className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div
-                ref={editorRef}
-                contentEditable
-                suppressContentEditableWarning
-                className="p-4 min-h-[220px] focus:outline-none text-white font-sans text-xs leading-relaxed"
-              />
-            </div>
+          <div className="flex flex-wrap items-center gap-0.5 px-3 py-2 shadow-[inset_0_-1px_0_0_rgba(233,233,237,0.07)]">
+            <button type="button" onClick={() => executeFormat("bold")} className={toolButton} title={t("mail.bold")}>
+              <Bold className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => executeFormat("italic")} className={toolButton} title={t("mail.italic")}>
+              <Italic className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => executeFormat("underline")}
+              className={toolButton}
+              title={t("mail.underline")}
+            >
+              <Underline className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => executeFormat("strikeThrough")}
+              className={toolButton}
+              title={t("mail.strikethrough")}
+            >
+              <Strikethrough className="h-4 w-4" />
+            </button>
+            <span className="mx-1.5 h-[18px] w-px bg-white/[0.14]" />
+            <button
+              type="button"
+              onClick={() => executeFormat("insertUnorderedList")}
+              className={toolButton}
+              title={t("mail.bulletList")}
+            >
+              <List className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => executeFormat("insertOrderedList")}
+              className={toolButton}
+              title={t("mail.numberedList")}
+            >
+              <ListOrdered className="h-4 w-4" />
+            </button>
+            <span className="mx-1.5 h-[18px] w-px bg-white/[0.14]" />
+            <button
+              type="button"
+              onClick={() => {
+                const url = prompt(t("mail.insertUrl"));
+                if (url) executeFormat("createLink", url);
+              }}
+              className={`${toolButton} text-indigo-500`}
+              title={t("mail.insertLink")}
+            >
+              <LinkIcon className="h-4 w-4" />
+            </button>
           </div>
 
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            aria-label={t("ui.messageBody")}
+            role="textbox"
+            aria-multiline="true"
+            className="min-h-[280px] px-[22px] py-5 font-sans text-[14.5px] leading-relaxed text-slate-200 focus:outline-none"
+          />
+
           {/* Attachment Selector & Display */}
-          <div className="pt-2">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold text-slate-300">{t("mail.attachments", { count: attachments.length })}</span>
-              <label className="cursor-pointer text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 font-medium">
-                <Paperclip className="w-3.5 h-3.5" />
-                <span>{t("mail.addFiles")}</span>
-                <input
-                  type="file"
-                  multiple
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </label>
-            </div>
+          <div className="flex flex-wrap items-center gap-2.5 px-4 py-3.5 shadow-[inset_0_1px_0_0_rgba(233,233,237,0.07)]">
+            <label className="flex flex-none cursor-pointer items-center gap-2 rounded-[10px] border border-white/[0.14] px-3 py-2 text-[13px] text-slate-200 transition-colors hover:bg-white/[0.07]">
+              <Paperclip className="h-[15px] w-[15px]" />
+              <span>{t("mail.addFiles")}</span>
+              <input type="file" multiple onChange={handleFileUpload} className="hidden" />
+            </label>
+
+            {attachments.map((file) => (
+              <div
+                key={file.id}
+                className="flex items-center gap-2 rounded-[10px] bg-dark-card px-3 py-2 text-[12.5px] text-slate-200 shadow-edge"
+              >
+                <Paperclip className="h-[15px] w-[15px] flex-none text-indigo-400" />
+                <span className="max-w-[160px] truncate">{file.name}</span>
+                <span className="text-[11px] text-slate-500">{(file.size / 1024).toFixed(1)} KB</span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(file.id)}
+                  className="text-slate-400 transition-colors hover:text-rose-400"
+                  aria-label={t("common.delete")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
 
             {/* Says so plainly rather than letting someone attach a contract
                 and watch it silently not arrive: /mail/send is handed the file
                 names only, because there is no upload endpoint behind this
                 picker yet. */}
             {attachments.length > 0 && (
-              <div className="mb-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-2.5 text-[11px] text-amber-300">
+              <span className="ml-auto text-[11.5px] leading-relaxed text-slate-400">
                 {t("mail.attachmentsUnsupported")}
-              </div>
-            )}
-
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {attachments.map((file) => (
-                  <div
-                    key={file.id}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200"
-                  >
-                    <Paperclip className="w-3 h-3 text-indigo-400" />
-                    <span className="font-medium max-w-[140px] truncate">{file.name}</span>
-                    <span className="text-[10px] text-slate-500">
-                      ({(file.size / 1024).toFixed(1)} KB)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeAttachment(file.id)}
-                      className="text-slate-400 hover:text-rose-400 ml-1"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+              </span>
             )}
           </div>
-
-          <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-            <Link href="/user/mail/inbox">
-              <Button variant="ghost" size="md">
-                {t("mail.discard")}
-              </Button>
-            </Link>
-
-            <Button type="submit" variant="primary" size="md" disabled={sending}>
-              <Send className="w-4 h-4" />
-              <span>{sending ? t("mail.sending") : t("mail.sendMessage")}</span>
-            </Button>
-          </div>
-        </form>
-      </Card>
+        </div>
+      </form>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { KeyRound, ShieldCheck, AlertCircle, Sliders } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { useAccount } from "../../../../lib/useAccount";
 import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
+import { Button } from "../../../../components/ui/Button";
 
 /**
  * Crossing from the webmail into the console.
@@ -92,23 +93,23 @@ export default function AdminStepUpPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-slate-950">
-      <div className="glass-panel p-8 rounded-2xl max-w-md w-full border border-emerald-900/40 shadow-2xl">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-            <Sliders className="w-5 h-5" />
+    <div className="flex min-h-screen items-center justify-center bg-dark-bg px-4">
+      <div className="w-full max-w-[400px] rounded-2xl bg-dark-panel p-7 shadow-edge">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-dark-card text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
+            <Sliders className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-white">{t("auth.stepUpTitle")}</h1>
-            <p className="text-xs text-slate-400 truncate">
+            <h1 className="text-lg font-medium leading-tight text-slate-100">{t("auth.stepUpTitle")}</h1>
+            <p className="mt-0.5 break-words text-[12.5px] leading-relaxed text-slate-400">
               {account?.email ? t("auth.stepUpSignedInAs", { email: account.email }) : t("common.loading")}
             </p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <div className="mb-4 flex items-start gap-2.5 rounded-xl bg-rose-900/60 p-3.5 text-xs leading-relaxed text-rose-200 shadow-edge">
+            <AlertCircle className="mt-px h-4 w-4 flex-none" />
             <span>{error}</span>
           </div>
         )}
@@ -120,27 +121,27 @@ export default function AdminStepUpPage() {
             continueLabel={t("common.continue")}
           />
         ) : (
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} className="flex flex-col gap-4">
             {enrolSecret ? (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-300">
+              <div className="flex flex-col gap-4">
+                <div className="rounded-xl bg-dark-card p-3.5 text-xs leading-relaxed text-slate-300 shadow-edge">
                   {t("auth.enrolmentIntro")}
                 </div>
                 <TotpEnrolment secret={enrolSecret} uri={enrolUri} />
               </div>
             ) : (
-              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300 flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2.5 rounded-xl bg-dark-card p-3.5 text-xs leading-relaxed text-slate-300 shadow-edge">
+                <ShieldCheck className="mt-px h-4 w-4 flex-none text-indigo-500" />
                 <span>{t("auth.stepUpIntro")}</span>
               </div>
             )}
 
             <div>
-              <label htmlFor="step-up-code" className="mb-1 block text-xs font-medium text-slate-300">
+              <label htmlFor="step-up-code" className="mb-1.5 block text-xs text-slate-400">
                 {t("auth.totpCodeLabel")}
               </label>
               <div className="relative">
-                <KeyRound className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-500" />
+                <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
                   id="step-up-code"
                   type="text"
@@ -151,26 +152,23 @@ export default function AdminStepUpPage() {
                   onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
                   placeholder="123456"
                   required
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 pl-10 pr-4 py-3 text-center font-mono text-lg tracking-widest text-white focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded-xl bg-dark-card py-3 pl-[38px] pr-3 text-center font-mono text-lg tracking-[0.3em] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent"
                 />
               </div>
               {/* A recovery code is the way in when the phone is gone, and
                   nothing on the old screens said so. */}
-              <p className="mt-1.5 text-[11px] text-slate-500">{t("auth.orRecoveryCode")}</p>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-slate-500">{t("auth.orRecoveryCode")}</p>
             </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shadow-lg shadow-emerald-600/20 disabled:opacity-50"
-            >
+            <Button type="submit" variant="primary" size="lg" className="w-full" disabled={loading}>
               {loading ? t("common.loading") : t("auth.verifyCodeButton")}
-            </button>
+            </Button>
           </form>
         )}
 
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
-          <Link href="/user/mail/inbox" className="text-xs text-slate-400 hover:text-slate-200 transition-colors">
+        <div className="mt-6 pt-4 text-center">
+          <div className="lm-rule mb-4" />
+          <Link href="/user/mail/inbox" className="text-xs text-slate-400 transition-colors hover:text-slate-200">
             {t("admin.backToWebmail")}
           </Link>
         </div>

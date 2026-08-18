@@ -11,13 +11,12 @@ import {
   Archive,
   AlertTriangle,
   Trash2,
-  Settings,
   PenSquare,
   LogOut,
   Mail,
   ShieldCheck,
   ShieldAlert,
-  Sliders,
+  SlidersHorizontal,
   Menu,
   X,
 } from "lucide-react";
@@ -26,6 +25,7 @@ import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 import { useAccount, isAdminRole } from "../../../lib/useAccount";
 import { useFolders } from "../../../lib/useFolders";
 import { badgeCount, folderMetrics } from "../../../lib/mailCounts";
+import { initialsFor } from "../../../lib/initials";
 
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations();
@@ -51,143 +51,160 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
     });
   };
 
+  const settingsActive = pathname === "/user/settings";
+
   const SidebarContent = (
-    <div className="flex flex-col justify-between h-full p-4">
-      <div>
-        {/* Webmail Surface Branding */}
-        <div className="flex items-center gap-3 px-2 mb-6">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 border border-indigo-400/30 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">
-            <Mail className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <div className="font-bold text-base text-white tracking-tight">LambdaMail</div>
-            <div className="text-[10px] text-indigo-400 uppercase tracking-widest font-mono font-semibold">
-              {t("common.userPortal")}
-            </div>
+    <div className="flex h-full flex-col gap-4 p-3">
+      {/* The brand mark. One mark for both surfaces - the line underneath is
+          the only thing that says which one you are in. */}
+      <div className="flex items-center gap-2.5 px-2 py-1">
+        <div className="flex h-8 w-8 flex-none items-center justify-center rounded-[10px] bg-dark-card text-[17px] leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
+          λ
+        </div>
+        <div className="min-w-0">
+          <div className="text-[15px] font-medium leading-tight">LambdaMail</div>
+          <div className="text-[10.5px] uppercase tracking-[0.08em] text-indigo-500">
+            {t("common.userPortal")}
           </div>
         </div>
-
-        {/* Compose Floating Button */}
-        <Link
-          href="/user/compose"
-          className="group relative flex items-center justify-center gap-2 w-full py-3 px-4 mb-6 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all duration-200 shadow-lg shadow-indigo-600/30 active:scale-[0.98]"
-        >
-          <PenSquare className="w-4 h-4 transition-transform group-hover:rotate-12" />
-          <span>{t("mail.compose")}</span>
-        </Link>
-
-        {/* Folder Navigation List */}
-        <nav className="space-y-1 text-sm font-medium">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href || (item.role === "inbox" && pathname === "/user/mail");
-            // Drafts counts what is waiting rather than what is unread; see
-            // badgeCount, which is where that rule is tested.
-            const badge = badgeCount(folders, item.role);
-            const { total } = folderMetrics(folders, item.role);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                title={total > 0 ? t("mail.messagesInFolder", { count: total }) : item.label}
-                className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all duration-150 ${
-                  isActive
-                    ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-sm"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent"
-                }`}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-indigo-400" : "text-slate-400"}`} />
-                  <span className="truncate">{item.label}</span>
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {/* The folder's size, shown quietly beside the badge: the
-                      sidebar reported unread only, so there was nowhere in the
-                      interface that said how much mail a folder holds. */}
-                  {total > 0 && (
-                    <span className="text-[10px] font-mono text-slate-500 tabular-nums">{total}</span>
-                  )}
-                  {badge > 0 && (
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full font-semibold tabular-nums ${
-                        isActive ? "bg-indigo-500/40 text-indigo-200" : "bg-indigo-500/20 text-indigo-300"
-                      }`}
-                    >
-                      {badge}
-                    </span>
-                  )}
-                </div>
-              </Link>
-            );
-          })}
-        </nav>
       </div>
 
-      {/* Footer Controls & User Settings */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/60 border border-slate-800/80">
-          <LanguageSwitcher />
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-700/80 text-xs font-medium text-slate-300 hover:text-rose-400 hover:border-rose-500/40 hover:bg-rose-500/10 transition-all"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>{t("settings.signOut")}</span>
-          </button>
-        </div>
+      <Link
+        href="/user/compose"
+        onClick={() => setMobileOpen(false)}
+        className="flex w-full items-center justify-center gap-2 rounded-[10px] border border-indigo-500 px-3 py-2.5 text-sm font-medium text-indigo-500 transition-colors hover:bg-indigo-500/[0.12] active:bg-indigo-500/[0.22]"
+      >
+        <PenSquare className="h-4 w-4 flex-none" />
+        <span className="min-w-0">{t("mail.compose")}</span>
+      </Link>
 
-        {/* The console is reachable from inside the app for the accounts that
-            may open it. It goes to the step-up rather than to the admin sign-in:
-            the admin audience is a separate token, so crossing over costs a
-            second factor - but not the password, which the session in hand
-            proved already. */}
+      {/* Folder navigation. Every row is a mark, an icon, a label that may wrap,
+          and its numbers - nothing is sized by the length of the label, which
+          is what clipped the Portuguese and Spanish names before. */}
+      <nav className="flex flex-col gap-0.5">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = pathname === item.href || (item.role === "inbox" && pathname === "/user/mail");
+          // Drafts counts what is waiting rather than what is unread; see
+          // badgeCount, which is where that rule is tested.
+          const badge = badgeCount(folders, item.role);
+          const { total } = folderMetrics(folders, item.role);
+
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={() => setMobileOpen(false)}
+              data-active={isActive}
+              title={total > 0 ? t("mail.messagesInFolder", { count: total }) : item.label}
+              className="lm-nav"
+            >
+              <span className="lm-nav-mark" />
+              <Icon className={`h-[17px] w-[17px] flex-none ${isActive ? "text-indigo-500" : "text-slate-400"}`} />
+              <span className="min-w-0 flex-1 text-[13.5px] leading-snug">{item.label}</span>
+              <span className="flex flex-none items-center gap-1.5">
+                {/* The folder's size, shown quietly beside the badge: the
+                    sidebar reported unread only, so there was nowhere in the
+                    interface that said how much mail a folder holds. */}
+                {total > 0 && badge > 0 && (
+                  <span className="text-[10.5px] tabular-nums text-slate-500">{total}</span>
+                )}
+                {badge > 0 ? (
+                  <span
+                    className={`text-[11.5px] tabular-nums ${isActive ? "text-indigo-300" : "text-slate-400"}`}
+                  >
+                    {badge}
+                  </span>
+                ) : (
+                  total > 0 && (
+                    <span className="text-[11.5px] tabular-nums text-slate-500">{total}</span>
+                  )
+                )}
+              </span>
+            </Link>
+          );
+        })}
+
+        <div className="lm-rule my-2.5" />
+
+        <Link
+          href="/user/settings"
+          onClick={() => setMobileOpen(false)}
+          data-active={settingsActive}
+          className="lm-nav"
+        >
+          <span className="lm-nav-mark" />
+          <SlidersHorizontal
+            className={`h-[17px] w-[17px] flex-none ${settingsActive ? "text-indigo-500" : "text-slate-400"}`}
+          />
+          <span className="min-w-0 flex-1 text-[13.5px] leading-snug">{t("settings.title")}</span>
+        </Link>
+      </nav>
+
+      <div className="mt-auto flex flex-col gap-2.5">
+        {/* The two surfaces as one control, so where you are and where else you
+            could be are the same question. The console goes to the step-up
+            rather than to the admin sign-in: the admin audience is a separate
+            token, so crossing over costs a second factor - but not the
+            password, which the session in hand proved already. */}
         {isAdminRole(account?.role) && (
-          <Link
-            href="/admin/step-up"
-            className="flex items-center gap-2.5 p-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/15 transition-all"
-          >
-            <Sliders className="w-4 h-4 flex-shrink-0" />
-            <span className="text-xs font-semibold truncate">{t("admin.openAdmin")}</span>
-          </Link>
+          <div className="flex gap-[3px] rounded-[10px] bg-dark-panel p-[3px] shadow-edge">
+            <span className="flex flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-dark-card px-2 py-1.5 text-[12px] leading-snug text-indigo-500 shadow-edge-accent">
+              <Mail className="h-3.5 w-3.5 flex-none" />
+              <span className="min-w-0 truncate">{t("common.userPortal")}</span>
+            </span>
+            <Link
+              href="/admin/step-up"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[12px] leading-snug text-slate-400 transition-colors hover:bg-white/[0.05] hover:text-slate-100"
+            >
+              <ShieldCheck className="h-3.5 w-3.5 flex-none" />
+              <span className="min-w-0 truncate">{t("admin.openAdmin")}</span>
+            </Link>
+          </div>
         )}
 
         <Link
           href="/user/settings"
-          className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
-            pathname === "/user/settings"
-              ? "bg-indigo-600/15 border-indigo-500/30 text-slate-100"
-              : "bg-slate-900/80 border-slate-800 hover:border-slate-700 text-slate-300"
-          }`}
+          onClick={() => setMobileOpen(false)}
+          className="flex items-center gap-2.5 rounded-xl bg-dark-panel p-2.5 shadow-edge transition-colors hover:bg-dark-card"
         >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-500 text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-sm uppercase">
-              {account?.email?.[0] ?? "?"}
-            </div>
-            <div className="truncate">
-              <div className="text-xs font-semibold text-slate-200 truncate">
-                {account?.email ?? t("common.loading")}
-              </div>
-              {/* Reports what is actually configured. The old fixed "2FA
-                  active" reassured accounts that had no second factor at all. */}
-              <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                {account?.mfa_enrolled ? (
-                  <>
-                    <ShieldCheck className="w-3 h-3 text-emerald-400 inline" />
-                    {t("settings.mfaEnabled")}
-                  </>
-                ) : (
-                  <>
-                    <ShieldAlert className="w-3 h-3 text-amber-400 inline" />
-                    {t("settings.mfaDisabled")}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-          <Settings className="w-4 h-4 text-slate-400 hover:text-slate-200 transition-colors" />
+          <span className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-indigo-900 text-[12px] uppercase text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]">
+            {initialsFor(account?.email)}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block break-words text-[12.5px] leading-tight">
+              {account?.email ?? t("common.loading")}
+            </span>
+            {/* Reports what is actually configured. The old fixed "2FA
+                active" reassured accounts that had no second factor at all. */}
+            <span className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
+              {account?.mfa_enrolled ? (
+                <>
+                  <ShieldCheck className="h-3 w-3 flex-none text-indigo-500" />
+                  {t("settings.mfaEnabled")}
+                </>
+              ) : (
+                <>
+                  <ShieldAlert className="h-3 w-3 flex-none text-amber-400" />
+                  {t("settings.mfaDisabled")}
+                </>
+              )}
+            </span>
+          </span>
         </Link>
+
+        <div className="flex items-center gap-1.5">
+          <LanguageSwitcher />
+          <button
+            type="button"
+            onClick={handleLogout}
+            title={t("settings.signOut")}
+            aria-label={t("settings.signOut")}
+            className="flex h-8 w-8 flex-none items-center justify-center rounded-[9px] border border-white/[0.14] text-slate-300 transition-colors hover:bg-white/[0.07] hover:text-rose-400"
+          >
+            <LogOut className="h-[15px] w-[15px]" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -195,25 +212,25 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
   return (
     <div className="flex h-screen overflow-hidden bg-dark-bg text-slate-100">
       {/* Mobile Top Header */}
-      <div className="md:hidden flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/90 z-20 w-full fixed top-0 left-0">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">
-            <Mail className="w-4 h-4" />
+      <div className="fixed left-0 top-0 z-20 flex w-full items-center justify-between bg-dark-rail px-4 py-3 shadow-[inset_0_-1px_0_0_rgba(233,233,237,0.09)] md:hidden">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-dark-card text-[17px] leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
+            λ
           </div>
-          <span className="font-bold text-slate-100">LambdaMail</span>
+          <span className="font-medium text-slate-100">LambdaMail</span>
         </div>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
           aria-label={t("ui.toggleMenu")}
           aria-expanded={mobileOpen}
-          className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+          className="flex h-9 w-9 items-center justify-center rounded-[10px] text-slate-300 transition-colors hover:bg-white/[0.07] hover:text-slate-100"
         >
-          {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
       </div>
 
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex w-64 border-r border-slate-800/80 bg-slate-900/60 backdrop-blur-xl flex-col flex-shrink-0">
+      {/* Desktop rail */}
+      <aside className="hidden w-[244px] flex-none flex-col bg-dark-rail shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:flex">
         {SidebarContent}
       </aside>
 
@@ -225,7 +242,7 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 200 }}
-            className="fixed inset-0 z-30 bg-slate-950 w-72 border-r border-slate-800 pt-16 md:hidden"
+            className="fixed inset-y-0 left-0 z-30 w-[280px] overflow-y-auto bg-dark-rail pt-14 shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:hidden"
           >
             {SidebarContent}
           </motion.aside>
@@ -233,7 +250,7 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
       </AnimatePresence>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden pt-16 md:pt-0 bg-dark-bg relative">
+      <main className="relative flex flex-1 flex-col overflow-hidden bg-dark-bg pt-14 md:pt-0">
         {children}
       </main>
     </div>

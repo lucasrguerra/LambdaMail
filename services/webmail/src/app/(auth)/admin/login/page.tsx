@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useTranslations } from "../../../../i18n/provider";
 import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
+import { Button } from "../../../../components/ui/Button";
 
 export default function AdminLoginPage() {
   const t = useTranslations();
@@ -94,21 +95,29 @@ export default function AdminLoginPage() {
     }
   };
 
+  const field =
+    "w-full min-h-[38px] rounded-xl bg-dark-card px-3 py-2.5 text-[13.5px] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent";
+  const codeField = `${field} text-center font-mono text-lg tracking-[0.3em]`;
+  const fieldLabel = "mb-1.5 block text-xs text-slate-400";
+
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-slate-950">
-      <div className="glass-panel p-8 rounded-2xl max-w-md w-full border border-emerald-900/40 shadow-2xl">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-xl">
-            &#9881;
+    <div className="flex min-h-screen items-center justify-center bg-dark-bg px-4">
+      <div className="w-full max-w-[400px] rounded-2xl bg-dark-panel p-7 shadow-edge">
+        {/* The console sign-in wears the same mark as the webmail. It used to be
+            green over green, which made the second surface look like a
+            different product. */}
+        <div className="mb-6 flex items-center gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-dark-card text-xl leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
+            λ
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-white">{t("auth.adminLoginTitle")}</h1>
-            <p className="text-xs text-slate-400">{t("auth.adminStepUpNote")}</p>
+          <div className="min-w-0">
+            <h1 className="text-lg font-medium leading-tight text-slate-100">{t("auth.adminLoginTitle")}</h1>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-slate-400">{t("auth.adminStepUpNote")}</p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+          <div className="mb-4 rounded-xl bg-rose-900/60 p-3.5 text-xs leading-relaxed text-rose-200 shadow-edge">
             {error}
           </div>
         )}
@@ -124,87 +133,102 @@ export default function AdminLoginPage() {
             continueLabel={t("auth.signInButton")}
           />
         ) : (
-        <form onSubmit={handleLogin} className="space-y-4">
-          {enrolSecret ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-indigo-300">
-                {t("auth.enrolmentIntro")}
+          <form onSubmit={handleLogin} className="flex flex-col gap-4">
+            {enrolSecret ? (
+              <div className="flex flex-col gap-4">
+                <div className="rounded-xl bg-dark-card p-3.5 text-xs leading-relaxed text-slate-300 shadow-edge">
+                  {t("auth.enrolmentIntro")}
+                </div>
+                <TotpEnrolment secret={enrolSecret} uri={enrolUri} />
+                <div>
+                  <label htmlFor="admin-enrol-code" className={fieldLabel}>
+                    {t("auth.totpCodeLabel")}
+                  </label>
+                  <input
+                    id="admin-enrol-code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    maxLength={7}
+                    required
+                    className={codeField}
+                  />
+                </div>
               </div>
-              <TotpEnrolment secret={enrolSecret} uri={enrolUri} />
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-300">{t("auth.totpCodeLabel")}</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={mfaCode}
-                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  maxLength={7}
-                  required
-                  className="w-full rounded-lg border border-slate-800 bg-slate-900 px-4 py-2.5 text-center font-mono text-lg tracking-widest text-white focus:border-emerald-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          ) : !challengeToken ? (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.emailLabel")}</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@domain.com"
-                  required
-                  className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
-                />
-              </div>
+            ) : !challengeToken ? (
+              <>
+                <div>
+                  <label htmlFor="admin-email" className={fieldLabel}>
+                    {t("auth.emailLabel")}
+                  </label>
+                  <input
+                    id="admin-email"
+                    type="email"
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="admin@domain.com"
+                    required
+                    className={field}
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.passwordLabel")}</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="************"
-                  required
-                  className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
-                />
+                <div>
+                  <label htmlFor="admin-password" className={fieldLabel}>
+                    {t("auth.passwordLabel")}
+                  </label>
+                  <input
+                    id="admin-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="************"
+                    required
+                    className={field}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="rounded-xl bg-dark-card p-3.5 text-xs leading-relaxed text-slate-300 shadow-edge">
+                  {t("auth.mfaRequired")}
+                </div>
+                <div>
+                  <label htmlFor="admin-mfa-code" className={fieldLabel}>
+                    {t("auth.totpCodeLabel")}
+                  </label>
+                  <input
+                    id="admin-mfa-code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={mfaCode}
+                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="123456"
+                    maxLength={7}
+                    required
+                    className={codeField}
+                  />
+                </div>
               </div>
-            </>
-          ) : (
-            <div>
-              <div className="p-3 mb-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
-                {t("auth.mfaRequired")}
-              </div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">{t("auth.totpCodeLabel")}</label>
-              <input
-                type="text"
-                value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="123456"
-                maxLength={7}
-                required
-                className="w-full px-4 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-center tracking-widest text-lg font-mono focus:outline-none focus:border-emerald-500 transition-colors"
-              />
-            </div>
-          )}
+            )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors shadow-lg shadow-emerald-600/20 disabled:opacity-50"
-          >
-            {loading
-              ? t("common.loading")
-              : challengeToken || enrolSecret
-                ? t("auth.verifyCodeButton")
-                : t("auth.signInButton")}
-          </button>
-        </form>
+            <Button type="submit" variant="primary" size="lg" className="mt-1 w-full" disabled={loading}>
+              {loading
+                ? t("common.loading")
+                : challengeToken || enrolSecret
+                  ? t("auth.verifyCodeButton")
+                  : t("auth.signInButton")}
+            </Button>
+          </form>
         )}
 
-        <div className="mt-6 pt-4 border-t border-slate-800 text-center">
-          <Link href="/user/mail/inbox" className="text-xs text-slate-400 hover:text-slate-200 transition-colors">
+        <div className="mt-6 pt-4 text-center">
+          <div className="lm-rule mb-4" />
+          <Link href="/user/mail/inbox" className="text-xs text-slate-400 transition-colors hover:text-slate-200">
             {t("admin.backToWebmail")}
           </Link>
         </div>

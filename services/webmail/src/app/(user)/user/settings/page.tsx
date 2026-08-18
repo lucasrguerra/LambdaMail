@@ -12,12 +12,13 @@ import {
   Trash2,
   Plus,
   Lock,
+  Languages,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card } from "../../../../components/ui/Card";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
 import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
+import { LanguageSwitcher } from "../../../../i18n/LanguageSwitcher";
 
 interface SieveRule {
   id: string;
@@ -44,8 +45,11 @@ interface WebSession {
   current: boolean;
 }
 
+type SettingsTab = "security" | "filters" | "vacation" | "signature" | "language";
+
 export default function UserSettingsPage() {
   const t = useTranslations();
+  const [activeTab, setActiveTab] = useState<SettingsTab>("security");
 
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [qrSecret, setQrSecret] = useState<string | null>(null);
@@ -241,396 +245,551 @@ export default function UserSettingsPage() {
     }
   };
 
+  /* The screen was one long scroll of eight panels, so the two things people
+     come here to do - turn on a second factor, and write a filter - were
+     separated by everything else. The same panels now sit behind a tab strip,
+     in the order the redesign groups them. */
+  const tabs = [
+    { id: "security" as const, label: t("settings.security"), icon: Shield },
+    { id: "filters" as const, label: t("settings.sieveTitle"), icon: Filter },
+    { id: "vacation" as const, label: t("settings.vacationTitle"), icon: Palmtree },
+    { id: "signature" as const, label: t("settings.signatureTitle"), icon: FileText },
+    { id: "language" as const, label: t("settings.language"), icon: Languages },
+  ];
+
+  const input =
+    "w-full min-h-[36px] rounded-[10px] bg-dark-card px-3 py-2 text-[13.5px] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent";
+  const fieldLabel = "mb-1.5 block text-xs text-slate-400";
+  const panel = "flex flex-col gap-4 rounded-2xl bg-dark-panel p-5 shadow-edge";
+  const panelTitle = "text-[17px] font-medium leading-tight text-slate-100";
+  const panelIntro = "mt-1 text-[13px] leading-relaxed text-slate-400";
+  const tile = "flex flex-wrap items-center gap-3 rounded-xl bg-dark-card px-3.5 py-3 text-[13px] shadow-edge";
+
   return (
-    <div className="flex-1 p-6 md:p-8 bg-dark-bg overflow-y-auto">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="flex-1 overflow-y-auto bg-dark-bg px-5 pb-11 pt-7 sm:px-8">
+      <div className="mx-auto flex w-full max-w-[900px] flex-col gap-5">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-            {t("settings.title")}
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">{t("settings.subtitle")}</p>
+          <h1 className="text-[25px] font-medium leading-tight text-slate-100">{t("settings.title")}</h1>
+          <p className="mt-1.5 text-[13.5px] text-slate-400">{t("settings.subtitle")}</p>
+        </div>
+
+        {/* Tabs wrap rather than scroll, so a longer translation never pushes
+            one out of reach. */}
+        <div className="lm-tabstrip self-start">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                data-active={activeTab === tab.id}
+                aria-pressed={activeTab === tab.id}
+                className="lm-tab"
+              >
+                <Icon className="h-[15px] w-[15px] flex-none" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {message && (
-          <div className="p-4 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-indigo-400" />
+          <div className="flex items-center gap-2 rounded-xl bg-dark-card px-4 py-3 text-[12.5px] text-slate-200 shadow-edge">
+            <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
             <span>{message}</span>
           </div>
         )}
 
-        {/* 2FA TOTP SECTION */}
-        <Card className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Shield className="w-5 h-5 text-indigo-400" />
-                {t("ui.twoFactorSection")}
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">{t("settings.twoFactorIntro")}</p>
-            </div>
-            <Badge variant={mfaEnabled ? "success" : "warning"}>
-              {mfaEnabled ? t("settings.mfaEnabled") : t("settings.mfaDisabled")}
-            </Badge>
-          </div>
+        {activeTab === "security" && (
+          <div className="flex flex-col gap-4">
+            {/* 2FA TOTP SECTION */}
+            <section className={panel}>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-[260px] flex-1">
+                  <h2 className={panelTitle}>{t("ui.twoFactorSection")}</h2>
+                  <p className={panelIntro}>{t("settings.twoFactorIntro")}</p>
+                </div>
+                <Badge variant={mfaEnabled ? "success" : "warning"} className="flex-none">
+                  {mfaEnabled ? t("settings.mfaEnabled") : t("settings.mfaDisabled")}
+                </Badge>
+              </div>
 
-          {!mfaEnabled && !qrSecret && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={async () => {
-                const res = await fetch("/api/v1/user/mfa/totp/enroll", { method: "POST" });
-                const data = await res.json();
-                setQrSecret(data.secret);
-                setQrUri(data.uri);
-              }}
-            >
-              <span>{t("settings.enableMfa")}</span>
-            </Button>
-          )}
-
-          {qrSecret && (
-            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-4 text-xs">
-              <TotpEnrolment secret={qrSecret} uri={qrUri} />
-              {/* Enrolment resumes rather than restarting, so this code is the
-                  same one already scanned. Anyone who removed the entry from
-                  their app needs a way to ask for a different secret. */}
-              <button
-                type="button"
-                onClick={async () => {
-                  const res = await fetch("/api/v1/user/mfa/totp/enroll?reset=1", { method: "POST" });
-                  const data = await res.json().catch(() => ({}));
-                  if (res.ok) {
+              {!mfaEnabled && !qrSecret && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="self-start"
+                  onClick={async () => {
+                    const res = await fetch("/api/v1/user/mfa/totp/enroll", { method: "POST" });
+                    const data = await res.json();
                     setQrSecret(data.secret);
                     setQrUri(data.uri);
-                    setTotpCode("");
-                  }
-                }}
-                className="text-[11px] text-slate-400 underline hover:text-slate-200"
-              >
-                {t("settings.startOverMfa")}
-              </button>
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  const res = await fetch("/api/v1/user/mfa/totp/confirm", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ secret: qrSecret, code: totpCode }),
-                  });
-                  const data = await res.json().catch(() => ({}));
-                  if (res.ok) {
-                    setMfaEnabled(true);
-                    setRecoveryCodes(data.recovery_codes ?? []);
-                    setQrSecret(null);
-                    setTotpCode("");
-                  } else {
-                    setMessage(data.message ?? t("auth.verificationFailed"));
-                  }
-                }}
-                className="pt-2 flex items-center gap-3"
-              >
+                  }}
+                >
+                  <span>{t("settings.enableMfa")}</span>
+                </Button>
+              )}
+
+              {qrSecret && (
+                <div className="flex flex-col gap-4 rounded-xl bg-dark-card p-4 text-xs shadow-edge">
+                  <TotpEnrolment secret={qrSecret} uri={qrUri} />
+                  {/* Enrolment resumes rather than restarting, so this code is the
+                      same one already scanned. Anyone who removed the entry from
+                      their app needs a way to ask for a different secret. */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const res = await fetch("/api/v1/user/mfa/totp/enroll?reset=1", { method: "POST" });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok) {
+                        setQrSecret(data.secret);
+                        setQrUri(data.uri);
+                        setTotpCode("");
+                      }
+                    }}
+                    className="self-start text-[11.5px] text-slate-400 underline underline-offset-4 hover:text-slate-200"
+                  >
+                    {t("settings.startOverMfa")}
+                  </button>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const res = await fetch("/api/v1/user/mfa/totp/confirm", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ secret: qrSecret, code: totpCode }),
+                      });
+                      const data = await res.json().catch(() => ({}));
+                      if (res.ok) {
+                        setMfaEnabled(true);
+                        setRecoveryCodes(data.recovery_codes ?? []);
+                        setQrSecret(null);
+                        setTotpCode("");
+                      } else {
+                        setMessage(data.message ?? t("auth.verificationFailed"));
+                      }
+                    }}
+                    className="flex flex-wrap items-center gap-3"
+                  >
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={totpCode}
+                      onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder={t("settings.sixDigitCode")}
+                      maxLength={7}
+                      required
+                      className="min-h-[36px] w-[150px] rounded-[10px] bg-dark-rail px-3 py-2 text-center font-mono text-[13.5px] tracking-[0.2em] text-slate-100 shadow-edge focus:outline-none focus-visible:shadow-edge-accent"
+                    />
+                    <Button type="submit" variant="primary" size="sm">
+                      {t("common.confirm")}
+                    </Button>
+                  </form>
+                </div>
+              )}
+
+              {recoveryCodes && (
+                <RecoveryCodes
+                  codes={recoveryCodes}
+                  onContinue={() => setRecoveryCodes(null)}
+                  continueLabel={t("common.continue")}
+                />
+              )}
+            </section>
+
+            {/* APP PASSWORDS */}
+            <section className={panel}>
+              <div>
+                <h2 className={panelTitle}>{t("ui.appPasswordsSection")}</h2>
+              </div>
+
+              {generatedAppPass && (
+                <div className="flex flex-col gap-2 rounded-xl bg-dark-card p-4 text-xs shadow-edge">
+                  <div className="text-slate-100">{t("ui.appPasswordGenerated")}</div>
+                  <code className="lm-code block break-all p-2.5 text-sm">{generatedAppPass}</code>
+                  <div className="text-[11px] text-amber-400">{t("ui.copyPasswordNow")}</div>
+                </div>
+              )}
+
+              <form onSubmit={createAppPassword} className="flex flex-wrap gap-2">
                 <input
                   type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder={t("settings.sixDigitCode")}
-                  maxLength={7}
-                  required
-                  className="px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs font-mono text-center focus:outline-none focus:border-indigo-500"
+                  value={newAppPassLabel}
+                  onChange={(e) => setNewAppPassLabel(e.target.value)}
+                  placeholder={t("settings.appPasswordPlaceholder")}
+                  className={`${input} min-w-[220px] flex-1`}
                 />
-                <Button type="submit" variant="primary" size="sm">
-                  {t("common.confirm")}
+                <Button type="submit" variant="primary" size="md" className="flex-none">
+                  {t("settings.generateAppPassword")}
                 </Button>
               </form>
-            </div>
-          )}
 
-          {recoveryCodes && (
-            <RecoveryCodes
-              codes={recoveryCodes}
-              onContinue={() => setRecoveryCodes(null)}
-              continueLabel={t("common.continue")}
-            />
-          )}
-        </Card>
-
-        {/* VISUAL SIEVE RULES BUILDER */}
-        <Card className="space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Filter className="w-5 h-5 text-indigo-400" />
-              {t("settings.sieveTitle")}
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">{t("settings.sieveIntro")}</p>
-          </div>
-
-          <form onSubmit={addSieveRule} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 text-xs bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-            <select
-              value={newField}
-              onChange={(e) => setNewField(e.target.value as "From" | "Subject" | "Header")}
-              className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-            >
-              <option value="Subject">{t("settings.fieldSubject")}</option>
-              <option value="From">{t("settings.fieldFrom")}</option>
-              <option value="Header">{t("settings.fieldHeader")}</option>
-            </select>
-
-            <select
-              value={newMatch}
-              onChange={(e) => setNewMatch(e.target.value as "contains" | "equals" | "matches")}
-              className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-            >
-              <option value="contains">{t("settings.matchContains")}</option>
-              <option value="equals">{t("settings.matchEquals")}</option>
-              <option value="matches">{t("settings.matchRegex")}</option>
-            </select>
-
-            <input
-              type="text"
-              value={newValue}
-              onChange={(e) => setNewValue(e.target.value)}
-              placeholder={t("settings.valuePlaceholder")}
-              required
-              className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-            />
-
-            <select
-              value={newAction}
-              onChange={(e) => setNewAction(e.target.value as "move" | "flag" | "discard" | "redirect")}
-              className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-            >
-              <option value="move">{t("settings.actionMove")}</option>
-              <option value="flag">{t("settings.actionFlag")}</option>
-              <option value="discard">{t("settings.actionDiscard")}</option>
-            </select>
-
-            <Button type="submit" variant="primary" size="sm" className="w-full">
-              <Plus className="w-4 h-4" />
-              <span>{t("settings.addRule")}</span>
-            </Button>
-          </form>
-
-          <div className="space-y-2 text-xs">
-            {rules.map((r) => (
-              <div key={r.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-                <span className="font-mono text-slate-200">
-                  {t("settings.ruleIf")} <strong>{r.field}</strong> {r.match} &quot;{r.value}&quot; &rarr;{" "}
-                  {t("settings.ruleThen")} {r.action.toUpperCase()}
-                </span>
-                <button
-                  onClick={() => removeSieveRule(r.id)}
-                  className="text-rose-400 hover:text-rose-300 transition-colors p-1"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* VACATION AUTO-RESPONDER */}
-        <Card className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <Palmtree className="w-5 h-5 text-indigo-400" />
-                {t("settings.vacationTitle")}
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">{t("settings.vacationIntro")}</p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={vacationEnabled}
-                onChange={(e) => setVacationEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600" />
-            </label>
-          </div>
-
-          {vacationSaved && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>{t("settings.settingsSaved")}</span>
-            </div>
-          )}
-
-          {vacationEnabled && (
-            <form onSubmit={saveVacationResponder} className="space-y-3 text-xs">
-              <div>
-                <label className="font-semibold text-slate-300 mb-1.5 block">{t("settings.vacationSubjectLabel")}</label>
-                <input
-                  type="text"
-                  value={vacationSubject}
-                  onChange={(e) => setVacationSubject(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="font-semibold text-slate-300 mb-1.5 block">{t("settings.vacationBodyLabel")}</label>
-                <textarea
-                  rows={4}
-                  value={vacationBody}
-                  onChange={(e) => setVacationBody(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <Button type="submit" variant="primary" size="sm">
-                {t("settings.saveAutoReply")}
-              </Button>
-            </form>
-          )}
-        </Card>
-
-        {/* EMAIL SIGNATURE MANAGER */}
-        <Card className="space-y-4 text-xs">
-          <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <FileText className="w-5 h-5 text-indigo-400" />
-              {t("settings.signatureTitle")}
-            </h2>
-            <p className="text-slate-400 mt-0.5">{t("settings.signatureIntro")}</p>
-          </div>
-
-          {sigSaved && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>{t("settings.signatureSaved")}</span>
-            </div>
-          )}
-
-          <textarea
-            rows={4}
-            value={signature}
-            onChange={(e) => setSignature(e.target.value)}
-            placeholder={t("settings.signaturePlaceholder")}
-            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-          />
-
-          <Button onClick={saveSignature} variant="primary" size="sm">
-            {t("common.save")}
-          </Button>
-        </Card>
-
-        {/* APP PASSWORDS */}
-        <Card className="space-y-4">
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <KeyRound className="w-5 h-5 text-indigo-400" />
-            {t("ui.appPasswordsSection")}
-          </h2>
-
-          {generatedAppPass && (
-            <div className="p-4 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs space-y-1">
-              <div className="font-bold">{t("ui.appPasswordGenerated")}</div>
-              <code className="block font-mono text-sm text-white break-all bg-slate-950 p-2 rounded-lg border border-slate-800">
-                {generatedAppPass}
-              </code>
-              <div className="text-[10px] text-emerald-400">{t("ui.copyPasswordNow")}</div>
-            </div>
-          )}
-
-          <form onSubmit={createAppPassword} className="flex gap-2">
-            <input
-              type="text"
-              value={newAppPassLabel}
-              onChange={(e) => setNewAppPassLabel(e.target.value)}
-              placeholder={t("settings.appPasswordPlaceholder")}
-              className="flex-1 px-3.5 py-2 text-xs rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-            />
-            <Button type="submit" variant="primary" size="sm">
-              {t("settings.generateAppPassword")}
-            </Button>
-          </form>
-
-          <div className="space-y-2">
-            {appPasswords.length === 0 ? (
-              <div className="text-xs text-slate-500 italic">{t("ui.noAppPasswords")}</div>
-            ) : (
-              appPasswords.map((ap) => (
-                <div key={ap.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
-                  <div>
-                    <span className="font-bold text-slate-200">{ap.label}</span>
-                    <span className="text-[10px] text-slate-500 ml-2">
-                      {ap.created_at ? new Date(ap.created_at).toLocaleDateString() : ""}
-                    </span>
-                  </div>
-                  <button type="button" onClick={() => void revokeAppPassword(ap.id)} className="text-rose-400 hover:text-rose-300 p-1">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        {/* ACTIVE SESSIONS */}
-        <Card className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Monitor className="w-5 h-5 text-indigo-400" />
-              {t("ui.activeSessions")}
-            </h2>
-            <Button variant="ghost" size="sm" onClick={() => void revokeOtherSessions()}>
-              {t("ui.signOutOthers")}
-            </Button>
-          </div>
-
-          <div className="space-y-2">
-            {sessions.map((session) => (
-              <div key={session.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs">
-                <div className="min-w-0">
-                  <div className="text-slate-200 truncate font-mono">
-                    {session.ip_address ?? "-"}
-                    <span className="text-[10px] text-slate-500 ml-2 uppercase font-sans font-bold">{session.surface}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 truncate">{session.user_agent ?? ""}</div>
-                </div>
-                {session.current ? (
-                  <Badge variant="success">{t("ui.currentSession")}</Badge>
+              <div className="flex flex-col gap-2">
+                {appPasswords.length === 0 ? (
+                  <div className="text-[13px] text-slate-400">{t("ui.noAppPasswords")}</div>
                 ) : (
-                  <button type="button" onClick={() => void revokeSession(session.id)} className="text-rose-400 hover:text-rose-300 p-1">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  appPasswords.map((ap) => (
+                    <div key={ap.id} className={tile}>
+                      <div className="min-w-0 flex-1">
+                        <div className="break-words text-[13.5px] text-slate-100">{ap.label}</div>
+                        <div className="mt-0.5 text-[11.5px] text-slate-400">
+                          {ap.created_at ? new Date(ap.created_at).toLocaleDateString() : ""}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void revokeAppPassword(ap.id)}
+                        aria-label={t("common.delete")}
+                        className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-rose-400"
+                      >
+                        <Trash2 className="h-[15px] w-[15px]" />
+                      </button>
+                    </div>
+                  ))
                 )}
               </div>
-            ))}
-          </div>
-        </Card>
+            </section>
 
-        {/* PASSWORD CHANGE */}
-        <Card className="space-y-4">
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Lock className="w-5 h-5 text-indigo-400" />
-            {t("ui.changePassword")}
-          </h2>
-          <form onSubmit={changePassword} className="space-y-3">
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder={t("ui.currentPassword")}
-              required
-              className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-            />
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder={t("ui.newPassword")}
-              minLength={12}
-              required
-              className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
-            />
-            <Button type="submit" variant="primary" size="sm">
-              {t("common.save")}
-            </Button>
-          </form>
-        </Card>
+            {/* ACTIVE SESSIONS */}
+            <section className={panel}>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <h2 className={panelTitle}>{t("ui.activeSessions")}</h2>
+                <Button variant="secondary" size="sm" onClick={() => void revokeOtherSessions()}>
+                  {t("ui.signOutOthers")}
+                </Button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {sessions.map((session) => (
+                  <div key={session.id} className={tile}>
+                    <Monitor className="h-5 w-5 flex-none text-slate-400" />
+                    <div className="min-w-0 flex-1">
+                      <div className="break-all font-mono text-[13px] text-slate-100">
+                        {session.ip_address ?? "-"}
+                        <span className="ml-2 font-sans text-[10.5px] uppercase tracking-[0.08em] text-slate-400">
+                          {session.surface}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 break-all text-[11.5px] text-slate-400">{session.user_agent ?? ""}</div>
+                    </div>
+                    {session.current ? (
+                      <Badge variant="info" className="flex-none">
+                        {t("ui.currentSession")}
+                      </Badge>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void revokeSession(session.id)}
+                        aria-label={t("common.delete")}
+                        className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-rose-400"
+                      >
+                        <Trash2 className="h-[15px] w-[15px]" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* PASSWORD CHANGE */}
+            <section className={panel}>
+              <div className="flex items-center gap-2">
+                <Lock className="h-[17px] w-[17px] flex-none text-indigo-500" />
+                <h2 className={panelTitle}>{t("ui.changePassword")}</h2>
+              </div>
+              <form onSubmit={changePassword} className="flex flex-col gap-3">
+                <div>
+                  <label htmlFor="current-password" className={fieldLabel}>
+                    {t("ui.currentPassword")}
+                  </label>
+                  <input
+                    id="current-password"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    required
+                    className={input}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="new-password" className={fieldLabel}>
+                    {t("ui.newPassword")}
+                  </label>
+                  <input
+                    id="new-password"
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    minLength={12}
+                    required
+                    className={input}
+                  />
+                </div>
+                <Button type="submit" variant="primary" size="md" className="self-start">
+                  {t("common.save")}
+                </Button>
+              </form>
+            </section>
+          </div>
+        )}
+
+        {/* VISUAL SIEVE RULES BUILDER */}
+        {activeTab === "filters" && (
+          <div className="flex flex-col gap-4">
+            <section className={panel}>
+              <div>
+                <h2 className={panelTitle}>{t("settings.sieveTitle")}</h2>
+                <p className={panelIntro}>{t("settings.sieveIntro")}</p>
+              </div>
+
+              {/* The rule reads as a sentence: IF <field> <match> <value> THEN
+                  <action>. Each control keeps its own label, so the row still
+                  makes sense when it wraps on a narrow window. */}
+              <form onSubmit={addSieveRule} className="flex flex-wrap items-end gap-2.5">
+                <div className="pb-2.5 text-xs uppercase tracking-[0.08em] text-slate-400">
+                  {t("settings.ruleIf")}
+                </div>
+                <div className="min-w-[150px] flex-1">
+                  <label htmlFor="rule-field" className={fieldLabel}>
+                    {t("ui.eventAction")}
+                  </label>
+                  <select
+                    id="rule-field"
+                    value={newField}
+                    onChange={(e) => setNewField(e.target.value as "From" | "Subject" | "Header")}
+                    className={input}
+                  >
+                    <option value="Subject">{t("settings.fieldSubject")}</option>
+                    <option value="From">{t("settings.fieldFrom")}</option>
+                    <option value="Header">{t("settings.fieldHeader")}</option>
+                  </select>
+                </div>
+
+                <div className="min-w-[150px] flex-1">
+                  <label htmlFor="rule-match" className={fieldLabel}>
+                    {t("common.status")}
+                  </label>
+                  <select
+                    id="rule-match"
+                    value={newMatch}
+                    onChange={(e) => setNewMatch(e.target.value as "contains" | "equals" | "matches")}
+                    className={input}
+                  >
+                    <option value="contains">{t("settings.matchContains")}</option>
+                    <option value="equals">{t("settings.matchEquals")}</option>
+                    <option value="matches">{t("settings.matchRegex")}</option>
+                  </select>
+                </div>
+
+                <div className="min-w-[200px] flex-[2]">
+                  <label htmlFor="rule-value" className={fieldLabel}>
+                    {t("settings.valuePlaceholder")}
+                  </label>
+                  <input
+                    id="rule-value"
+                    type="text"
+                    value={newValue}
+                    onChange={(e) => setNewValue(e.target.value)}
+                    placeholder={t("settings.valuePlaceholder")}
+                    required
+                    className={input}
+                  />
+                </div>
+
+                <div className="pb-2.5 text-xs uppercase tracking-[0.08em] text-slate-400">
+                  {t("settings.ruleThen")}
+                </div>
+                <div className="min-w-[170px] flex-1">
+                  <label htmlFor="rule-action" className={fieldLabel}>
+                    {t("ui.actions")}
+                  </label>
+                  <select
+                    id="rule-action"
+                    value={newAction}
+                    onChange={(e) => setNewAction(e.target.value as "move" | "flag" | "discard" | "redirect")}
+                    className={input}
+                  >
+                    <option value="move">{t("settings.actionMove")}</option>
+                    <option value="flag">{t("settings.actionFlag")}</option>
+                    <option value="discard">{t("settings.actionDiscard")}</option>
+                  </select>
+                </div>
+
+                <Button type="submit" variant="primary" size="md" className="flex-none">
+                  <Plus className="h-[15px] w-[15px]" />
+                  <span>{t("settings.addRule")}</span>
+                </Button>
+              </form>
+            </section>
+
+            {rules.length > 0 && (
+              <section className={panel}>
+                <div className="flex flex-col gap-2">
+                  {rules.map((r, index) => (
+                    <div key={r.id} className={tile}>
+                      <span className="flex h-[22px] w-[22px] flex-none items-center justify-center rounded-[7px] bg-indigo-900 text-[11px] text-indigo-300">
+                        {index + 1}
+                      </span>
+                      <span className="min-w-[200px] flex-1 break-words font-mono text-[13px] leading-relaxed text-slate-200">
+                        {t("settings.ruleIf")} <strong className="font-medium">{r.field}</strong> {r.match} &quot;
+                        {r.value}&quot; &rarr; {t("settings.ruleThen")} {r.action.toUpperCase()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeSieveRule(r.id)}
+                        aria-label={t("common.delete")}
+                        className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-rose-400"
+                      >
+                        <Trash2 className="h-[15px] w-[15px]" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* VACATION AUTO-RESPONDER */}
+        {activeTab === "vacation" && (
+          <section className={panel}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-[240px] flex-1">
+                <h2 className={panelTitle}>{t("settings.vacationTitle")}</h2>
+                <p className={panelIntro}>{t("settings.vacationIntro")}</p>
+              </div>
+              {/* A segmented pair rather than an unlabelled switch: a toggle
+                  with nothing written on it says neither which state it is in
+                  nor what turning it on would do. */}
+              <div className="flex flex-none gap-[3px] rounded-[10px] bg-dark-card p-[3px] shadow-edge">
+                {[
+                  { on: true, label: t("ui.active") },
+                  { on: false, label: t("settings.mfaDisabled") },
+                ].map((option) => (
+                  <button
+                    key={String(option.on)}
+                    type="button"
+                    onClick={() => setVacationEnabled(option.on)}
+                    aria-pressed={vacationEnabled === option.on}
+                    className={`rounded-lg px-3 py-1.5 text-[12.5px] leading-snug transition-colors ${
+                      vacationEnabled === option.on
+                        ? "text-indigo-500 shadow-edge-accent"
+                        : "text-slate-400 hover:text-slate-100"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {vacationSaved && (
+              <div className="flex items-center gap-2 rounded-xl bg-dark-card px-3.5 py-3 text-[12.5px] text-slate-200 shadow-edge">
+                <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
+                <span>{t("settings.settingsSaved")}</span>
+              </div>
+            )}
+
+            {vacationEnabled && (
+              <form onSubmit={saveVacationResponder} className="flex flex-col gap-3">
+                <div>
+                  <label htmlFor="vacation-subject" className={fieldLabel}>
+                    {t("settings.vacationSubjectLabel")}
+                  </label>
+                  <input
+                    id="vacation-subject"
+                    type="text"
+                    value={vacationSubject}
+                    onChange={(e) => setVacationSubject(e.target.value)}
+                    className={input}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="vacation-body" className={fieldLabel}>
+                    {t("settings.vacationBodyLabel")}
+                  </label>
+                  <textarea
+                    id="vacation-body"
+                    rows={5}
+                    value={vacationBody}
+                    onChange={(e) => setVacationBody(e.target.value)}
+                    className={`${input} leading-relaxed`}
+                  />
+                </div>
+
+                <Button type="submit" variant="primary" size="md" className="self-start">
+                  {t("settings.saveAutoReply")}
+                </Button>
+              </form>
+            )}
+          </section>
+        )}
+
+        {/* EMAIL SIGNATURE MANAGER */}
+        {activeTab === "signature" && (
+          <div className="flex flex-wrap gap-4">
+            <section className={`${panel} min-w-[320px] flex-1`}>
+              <div>
+                <h2 className={panelTitle}>{t("settings.signatureTitle")}</h2>
+                <p className={panelIntro}>{t("settings.signatureIntro")}</p>
+              </div>
+
+              {sigSaved && (
+                <div className="flex items-center gap-2 rounded-xl bg-dark-card px-3.5 py-3 text-[12.5px] text-slate-200 shadow-edge">
+                  <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
+                  <span>{t("settings.signatureSaved")}</span>
+                </div>
+              )}
+
+              <div>
+                <label htmlFor="signature-text" className={fieldLabel}>
+                  {t("ui.messageBody")}
+                </label>
+                <textarea
+                  id="signature-text"
+                  rows={7}
+                  value={signature}
+                  onChange={(e) => setSignature(e.target.value)}
+                  placeholder={t("settings.signaturePlaceholder")}
+                  className={`${input} leading-relaxed`}
+                />
+              </div>
+
+              <Button onClick={saveSignature} variant="primary" size="md" className="self-start">
+                {t("common.save")}
+              </Button>
+            </section>
+
+            {/* What the signature will actually look like under a reply, so it
+                is not written blind into a textarea. */}
+            <section className={`${panel} min-w-[280px] flex-1`}>
+              <div className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                {t("admin.csvPreview")}
+              </div>
+              <div className="rounded-xl bg-dark-card p-4 text-[13.5px] leading-relaxed text-slate-300">
+                <div className="lm-rule my-2.5" />
+                <pre className="whitespace-pre-wrap break-words font-sans">
+                  {signature || t("settings.signaturePlaceholder")}
+                </pre>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {activeTab === "language" && (
+          <section className={panel}>
+            <div>
+              <h2 className={panelTitle}>{t("settings.language")}</h2>
+              <p className={panelIntro}>{t("settings.subtitle")}</p>
+            </div>
+            <div className="max-w-[280px]">
+              <LanguageSwitcher />
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

@@ -3,7 +3,6 @@
 import React, { useState } from "react";
 import { Mail, Lock, AlertCircle } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card } from "../../../../components/ui/Card";
 import { Button } from "../../../../components/ui/Button";
 
 export default function UserLoginPage() {
@@ -49,37 +48,41 @@ export default function UserLoginPage() {
     }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-dark-bg relative overflow-hidden">
-      {/* Background Ambient Glow */}
-      <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-cyan-600/20 rounded-full blur-3xl pointer-events-none" />
+  const field =
+    "w-full min-h-[38px] rounded-xl bg-dark-card py-2.5 pl-[38px] pr-3 text-[13.5px] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent";
 
-      <Card className="max-w-md w-full border border-slate-800 shadow-2xl p-8 z-10">
-        <div className="flex items-center gap-3.5 mb-6">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-indigo-600 to-cyan-500 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">
-            <Mail className="w-6 h-6" />
+  return (
+    /* No ambient glow behind the card any more: two blurred coloured circles
+       under a sign-in form are decoration that costs a full-viewport paint and
+       says nothing. Nocturne's depth is the surface and its edge. */
+    <div className="flex min-h-screen items-center justify-center bg-dark-bg px-4">
+      <div className="w-full max-w-[400px] rounded-2xl bg-dark-panel p-7 shadow-edge">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-dark-card text-xl leading-none text-indigo-500 shadow-[inset_0_0_0_1px_#9184d9]">
+            λ
           </div>
-          <div>
-            <h1 className="text-xl font-extrabold text-white tracking-tight">{t("auth.userLoginTitle")}</h1>
-            <p className="text-xs text-slate-400">{t("common.appName")} &middot; {t("common.userPortal")}</p>
+          <div className="min-w-0">
+            <h1 className="text-lg font-medium leading-tight text-slate-100">{t("auth.userLoginTitle")}</h1>
+            <p className="mt-0.5 text-[12.5px] text-slate-400">
+              {t("common.appName")} &middot; {t("common.userPortal")}
+            </p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-5 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+          <div className="mb-5 flex items-start gap-2.5 rounded-xl bg-rose-900/60 p-3.5 text-xs leading-relaxed text-rose-200 shadow-edge">
+            <AlertCircle className="mt-px h-4 w-4 flex-none" />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-4 text-xs">
+        <form onSubmit={handleLogin} className="flex flex-col gap-4">
           <div>
-            <label htmlFor="login-email" className="block font-semibold text-slate-300 mb-1.5">
+            <label htmlFor="login-email" className="mb-1.5 block text-xs text-slate-400">
               {t("auth.emailLabel")}
             </label>
             <div className="relative">
-              <Mail className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 id="login-email"
                 type="email"
@@ -88,17 +91,17 @@ export default function UserLoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="user@domain.com"
                 required
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                className={field}
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor="login-password" className="block font-semibold text-slate-300 mb-1.5">
+            <label htmlFor="login-password" className="mb-1.5 block text-xs text-slate-400">
               {t("auth.passwordLabel")}
             </label>
             <div className="relative">
-              <Lock className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+              <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 id="login-password"
                 type="password"
@@ -107,17 +110,16 @@ export default function UserLoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="************"
                 required
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                className={field}
               />
             </div>
           </div>
 
-          <Button type="submit" variant="primary" size="lg" className="w-full mt-2" disabled={loading}>
+          <Button type="submit" variant="primary" size="lg" className="mt-1 w-full" disabled={loading}>
             {loading ? t("common.loading") : t("auth.signInButton")}
           </Button>
         </form>
-
-      </Card>
+      </div>
     </div>
   );
 }

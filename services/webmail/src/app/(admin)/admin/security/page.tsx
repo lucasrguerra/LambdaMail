@@ -11,7 +11,6 @@ import {
   Shield,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
 
@@ -172,123 +171,97 @@ export default function AdminSecurityPage() {
     }
   };
 
+  const securityTabs = [
+    { id: "readiness" as const, label: t("admin.tabReadiness"), icon: ShieldCheck },
+    { id: "tls" as const, label: t("admin.tabTls"), icon: Lock },
+    { id: "rspamd" as const, label: t("admin.tabRspamd"), icon: Sliders },
+    { id: "audit" as const, label: t("admin.tabAudit"), icon: ListOrdered },
+  ];
+
+  const panel = "flex flex-col gap-4 rounded-2xl bg-dark-panel p-[18px] shadow-edge";
+  const input =
+    "w-full min-h-[36px] rounded-[10px] bg-dark-card px-3 py-2 text-[13.5px] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent";
+  const fieldLabel = "mb-1.5 block text-xs text-slate-400";
+
   return (
-    <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="mx-auto flex w-full max-w-[1060px] flex-col gap-[18px] px-5 pb-11 pt-7 sm:px-8">
       {/* Header & Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight flex items-center gap-3">
-            {t("admin.securityTitle")}
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">{t("admin.securitySubtitle")}</p>
-        </div>
-
-        {/* Tab Selector Controls */}
-        <div className="flex bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 text-xs font-medium self-start md:self-auto overflow-x-auto">
-          <button
-            onClick={() => setActiveTab("readiness")}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
-              activeTab === "readiness"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>{t("admin.tabReadiness")}</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("tls")}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
-              activeTab === "tls"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Lock className="w-3.5 h-3.5" />
-            <span>{t("admin.tabTls")}</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("rspamd")}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
-              activeTab === "rspamd"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Sliders className="w-3.5 h-3.5" />
-            <span>{t("admin.tabRspamd")}</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("audit")}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${
-              activeTab === "audit"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <ListOrdered className="w-3.5 h-3.5" />
-            <span>{t("admin.tabAudit")}</span>
-          </button>
-        </div>
+      <div>
+        <h1 className="text-[25px] font-medium leading-tight text-slate-100">{t("admin.securityTitle")}</h1>
+        <p className="mt-1.5 text-[13.5px] text-slate-400">{t("admin.securitySubtitle")}</p>
       </div>
 
-      {/* TAB 1: 10/10 READINESS SCORECARD */}
+      {/* Tab Selector Controls */}
+      <div className="lm-tabstrip self-start">
+        {securityTabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              data-active={activeTab === tab.id}
+              aria-pressed={activeTab === tab.id}
+              className="lm-tab"
+            >
+              <Icon className="h-[15px] w-[15px] flex-none" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* TAB 1: READINESS SCORECARD */}
       {activeTab === "readiness" && (
-        <div className="space-y-6">
+        <div className="flex flex-col gap-3.5">
           {/* The score is counted from the checks that came back. It used to
               read a hardcoded "10 / 10" with an "all checks passed" badge
               regardless of what the preflight endpoint reported - including
               when it reported failures, or nothing at all. */}
-          <Card className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6">
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Shield className="w-5 h-5 text-emerald-400" />
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-dark-panel p-[18px] shadow-edge">
+            <div className="min-w-[260px] flex-1">
+              <h2 className="flex items-center gap-2 text-[17px] font-medium leading-tight text-slate-100">
+                <Shield className="h-[17px] w-[17px] flex-none text-indigo-500" />
                 {t("admin.preflightTitle")}
               </h2>
-              <p className="text-xs text-slate-400 mt-1">{t("admin.readinessIntro")}</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-slate-400">{t("admin.readinessIntro")}</p>
             </div>
             {readiness && readiness.length > 0 ? (
               (() => {
                 const passed = readiness.filter((c) => c.status === "PASSED").length;
                 const total = readiness.length;
                 return (
-                  <div className="flex items-center gap-3">
-                    <span
-                      className={`text-3xl font-black font-mono ${
-                        passed === total ? "text-emerald-400" : "text-amber-400"
-                      }`}
-                    >
+                  <div className="flex flex-none items-center gap-3">
+                    <span className="font-mono text-[30px] font-medium leading-none tabular-nums text-slate-100">
                       {passed} / {total}
                     </span>
                     <Badge variant={passed === total ? "success" : "warning"}>
-                      {passed === total
-                        ? t("ui.allChecksPassed")
-                        : t("admin.checksPassed", { passed, total })}
+                      {passed === total ? t("ui.allChecksPassed") : t("admin.checksPassed", { passed, total })}
                     </Badge>
                   </div>
                 );
               })()
             ) : (
-              <span className="text-xs text-slate-500">{t("admin.noChecks")}</span>
+              <span className="text-[13px] text-slate-400">{t("admin.noChecks")}</span>
             )}
-          </Card>
+          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {(readiness ?? []).map((chk) => (
-              <Card key={chk.id} hoverable className="space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-100">
+              <div key={chk.id} className="flex flex-col gap-2 rounded-2xl bg-dark-panel p-4 shadow-edge">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0 text-[13.5px] text-slate-100">
                     #{chk.id}: {chk.name}
                   </span>
-                  <Badge variant={chk.status === "PASSED" ? "success" : chk.status === "FAILED" ? "danger" : "warning"}>
+                  <Badge
+                    variant={chk.status === "PASSED" ? "success" : chk.status === "FAILED" ? "danger" : "warning"}
+                    className="flex-none"
+                  >
                     {chk.status}
                   </Badge>
                 </div>
-                <div className="text-xs text-slate-400 leading-relaxed font-mono">{chk.details}</div>
-              </Card>
+                <div className="break-words text-[12.5px] leading-relaxed text-slate-400">{chk.details}</div>
+              </div>
             ))}
           </div>
         </div>
@@ -296,204 +269,223 @@ export default function AdminSecurityPage() {
 
       {/* TAB 2: TLS - read from the protocols service cert watcher */}
       {activeTab === "tls" && (
-        <div className="space-y-6 text-xs">
-          <Card className="space-y-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Lock className="w-5 h-5 text-indigo-400" />
-              {t("admin.tlsTitle")}
-            </h2>
+        <section className={panel}>
+          <h2 className="flex items-center gap-2 text-[17px] font-medium leading-tight text-slate-100">
+            <Lock className="h-[17px] w-[17px] flex-none text-indigo-500" />
+            {t("admin.tlsTitle")}
+          </h2>
 
-            {tlsStatus ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
-                  <div className="text-slate-400 font-medium">{t("admin.certificateState")}</div>
-                  <div
-                    className={`font-bold text-sm ${
-                      tlsStatus.state === "OK" ? "text-emerald-400" : "text-amber-400"
-                    }`}
-                  >
-                    {String(tlsStatus.state ?? "UNKNOWN")}
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    {typeof tlsStatus.expires_in_days === "number"
-                      ? t("admin.expiresInDays", { days: tlsStatus.expires_in_days })
-                      : t("admin.noCertificate")}
-                  </div>
+          {tlsStatus ? (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className="flex flex-col gap-1 rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <div className="text-xs text-slate-400">{t("admin.certificateState")}</div>
+                <div
+                  className={`text-[15px] font-medium ${
+                    tlsStatus.state === "OK" ? "text-indigo-400" : "text-amber-400"
+                  }`}
+                >
+                  {String(tlsStatus.state ?? "UNKNOWN")}
                 </div>
-
-                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
-                  <div className="text-slate-400 font-medium">{t("admin.mailHost")}</div>
-                  <div className="text-slate-100 font-bold text-sm break-all">
-                    {String(tlsStatus.mail_host ?? "-")}
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    {t("admin.tlsMode")}: {String(tlsStatus.tls_mode ?? "-")}
-                  </div>
-                </div>
-
-                <div className="p-4 bg-slate-900/90 rounded-xl border border-slate-800 space-y-1">
-                  <div className="text-slate-400 font-medium">{t("admin.watcherHealthy")}</div>
-                  <div
-                    className={`font-bold text-sm ${
-                      tlsStatus.watcher_healthy ? "text-emerald-400" : "text-amber-400"
-                    }`}
-                  >
-                    {tlsStatus.watcher_healthy ? t("ui.healthy") : t("common.unavailable")}
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    {t("admin.lastReload")}:{" "}
-                    {tlsStatus.last_reload
-                      ? new Date(String(tlsStatus.last_reload)).toLocaleString()
-                      : t("common.never")}
-                  </div>
+                <div className="text-[11.5px] text-slate-500">
+                  {typeof tlsStatus.expires_in_days === "number"
+                    ? t("admin.expiresInDays", { days: tlsStatus.expires_in_days })
+                    : t("admin.noCertificate")}
                 </div>
               </div>
-            ) : (
-              <div className="p-6 text-center text-slate-500">{t("errors.loadFailed")}</div>
-            )}
-          </Card>
-        </div>
+
+              <div className="flex flex-col gap-1 rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <div className="text-xs text-slate-400">{t("admin.mailHost")}</div>
+                <div className="break-all text-[15px] font-medium text-slate-100">
+                  {String(tlsStatus.mail_host ?? "-")}
+                </div>
+                <div className="text-[11.5px] text-slate-500">
+                  {t("admin.tlsMode")}: {String(tlsStatus.tls_mode ?? "-")}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1 rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <div className="text-xs text-slate-400">{t("admin.watcherHealthy")}</div>
+                <div
+                  className={`text-[15px] font-medium ${
+                    tlsStatus.watcher_healthy ? "text-indigo-400" : "text-amber-400"
+                  }`}
+                >
+                  {tlsStatus.watcher_healthy ? t("ui.healthy") : t("common.unavailable")}
+                </div>
+                <div className="text-[11.5px] text-slate-500">
+                  {t("admin.lastReload")}:{" "}
+                  {tlsStatus.last_reload
+                    ? new Date(String(tlsStatus.last_reload)).toLocaleString()
+                    : t("common.never")}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-6 text-center text-[13px] text-slate-400">{t("errors.loadFailed")}</div>
+          )}
+        </section>
       )}
 
       {/* TAB 3: RSPAMD ANTI-SPAM THRESHOLDS */}
       {activeTab === "rspamd" && (
-        <Card className="space-y-6 text-xs max-w-3xl">
+        <section className={`${panel} max-w-[620px]`}>
           <div>
-            <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-              <Sliders className="w-5 h-5 text-indigo-400" />
+            <h2 className="flex items-center gap-2 text-[17px] font-medium leading-tight text-slate-100">
+              <Sliders className="h-[17px] w-[17px] flex-none text-indigo-500" />
               {t("admin.tabRspamd")}
             </h2>
-            <p className="text-slate-400">{t("admin.rspamdIntro")}</p>
+            <p className="mt-1 text-[13px] leading-relaxed text-slate-400">{t("admin.rspamdIntro")}</p>
           </div>
 
           {rspamdSaved && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <div className="flex items-center gap-2 rounded-xl bg-dark-card px-3.5 py-3 text-[12.5px] text-slate-200 shadow-edge">
+              <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
               <span>{t("admin.rspamdSaved")}</span>
             </div>
           )}
 
-          <form onSubmit={handleSaveRspamd} className="space-y-4">
+          <form onSubmit={handleSaveRspamd} className="flex flex-col gap-3">
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.greylistScore")}</label>
+              <label htmlFor="greylist-score" className={fieldLabel}>
+                {t("admin.greylistScore")}
+              </label>
               <input
+                id="greylist-score"
                 type="number"
                 step="0.5"
                 value={greylistScore}
                 onChange={(e) => setGreylistScore(parseFloat(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
+                className={`${input} font-mono`}
               />
             </div>
 
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.headerScore")}</label>
+              <label htmlFor="header-score" className={fieldLabel}>
+                {t("admin.headerScore")}
+              </label>
               <input
+                id="header-score"
                 type="number"
                 step="0.5"
                 value={addHeaderScore}
                 onChange={(e) => setAddHeaderScore(parseFloat(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
+                className={`${input} font-mono`}
               />
             </div>
 
             <div>
-              <label className="font-semibold text-slate-300 mb-1.5 block">{t("admin.rejectScore")}</label>
+              <label htmlFor="reject-score" className={fieldLabel}>
+                {t("admin.rejectScore")}
+              </label>
               <input
+                id="reject-score"
                 type="number"
                 step="0.5"
                 value={rejectScore}
                 onChange={(e) => setRejectScore(parseFloat(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono focus:outline-none focus:border-emerald-500"
+                className={`${input} font-mono`}
               />
             </div>
 
-            <Button type="submit" variant="primary" size="md">
+            <Button type="submit" variant="primary" size="md" className="self-start">
               {t("admin.saveThresholds")}
             </Button>
           </form>
-        </Card>
+        </section>
       )}
 
       {/* TAB 4: AUDIT LOG & QUEUE ID TRANSACTION TRACE */}
       {activeTab === "audit" && (
-        <div className="space-y-6 text-xs">
+        <div className="flex flex-col gap-3.5">
           {/* Queue ID Search Box */}
-          <Card className="space-y-4">
+          <section className={panel}>
             <div>
-              <h2 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-                <Search className="w-5 h-5 text-indigo-400" />
+              <h2 className="flex items-center gap-2 text-[17px] font-medium leading-tight text-slate-100">
+                <Search className="h-[17px] w-[17px] flex-none text-indigo-500" />
                 {t("admin.traceTitle")}
               </h2>
-              <p className="text-slate-400">{t("admin.tracePlaceholder")}</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-slate-400">{t("admin.tracePlaceholder")}</p>
             </div>
 
-            <form onSubmit={handleSearchQueueId} className="flex gap-3">
+            <form onSubmit={handleSearchQueueId} className="flex flex-wrap gap-2">
               <input
                 type="text"
                 value={searchQueueId}
                 onChange={(e) => setSearchQueueId(e.target.value)}
                 placeholder={t("admin.tracePlaceholder")}
+                aria-label={t("admin.traceTitle")}
                 required
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white font-mono placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                className={`${input} min-w-[240px] flex-1 font-mono`}
               />
-              <Button type="submit" variant="primary" size="md">
+              <Button type="submit" variant="primary" size="md" className="flex-none">
                 {t("admin.traceTitle")}
               </Button>
             </form>
 
             {tracedSteps && (
-              <div className="mt-4 border border-slate-800 rounded-xl overflow-hidden bg-slate-950 p-4 space-y-3">
-                <h3 className="font-bold text-white">Resultado do Rastreamento para {searchQueueId}</h3>
-                <div className="space-y-2">
-                  {tracedSteps.map((st) => (
-                    <div key={st.step} className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between">
-                      <div>
-                        <div className="font-bold text-slate-200">Etapa {st.step}: {st.title}</div>
-                        <div className="text-[11px] text-slate-400 font-mono mt-0.5">{st.detail}</div>
+              <div className="flex flex-col gap-2">
+                {/* These two lines were literal Portuguese, so an interface
+                    running in English still said "Resultado do Rastreamento"
+                    and "Etapa". */}
+                <h3 className="break-all text-[13.5px] text-slate-100">
+                  {t("admin.traceResultFor", { id: searchQueueId })}
+                </h3>
+                {tracedSteps.map((st) => (
+                  <div
+                    key={st.step}
+                    className="flex flex-wrap items-center gap-3 rounded-xl bg-dark-card px-3.5 py-3 shadow-edge"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="break-words text-[13.5px] text-slate-100">
+                        {t("admin.traceStep", { n: st.step })}: {st.title}
                       </div>
-                      <Badge variant="success">{st.status}</Badge>
+                      <div className="mt-0.5 break-words text-[11.5px] text-slate-400">{st.detail}</div>
                     </div>
-                  ))}
-                </div>
+                    <Badge variant="info" className="flex-none">
+                      {st.status}
+                    </Badge>
+                  </div>
+                ))}
               </div>
             )}
-          </Card>
+          </section>
 
           {/* Immutable System Audit Log Table */}
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-800 bg-slate-900/80 font-bold text-xs text-slate-300">
-              {t("admin.auditLog")}
-            </div>
-
+          <div className="rounded-2xl bg-dark-panel px-[18px] pb-3 pt-1.5 shadow-edge">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="lm-table">
                 <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                    <th className="p-3.5">{t("ui.timestamp")}</th>
-                    <th className="p-3.5">Queue ID</th>
-                    <th className="p-3.5">{t("ui.actor")}</th>
-                    <th className="p-3.5">{t("ui.eventAction")}</th>
-                    <th className="p-3.5">{t("ui.targetObject")}</th>
-                    <th className="p-3.5">{t("ui.clientIp")}</th>
+                  <tr>
+                    <th className="pl-0">{t("ui.timestamp")}</th>
+                    <th>{t("ui.jobId")}</th>
+                    <th>{t("ui.actor")}</th>
+                    <th>{t("ui.eventAction")}</th>
+                    <th>{t("ui.targetObject")}</th>
+                    <th className="pr-0 text-right">{t("ui.clientIp")}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody>
                   {auditEntries.map((aud) => (
-                    <tr key={aud.id} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="p-3.5 text-slate-400">{aud.timestamp}</td>
-                      <td className="p-3.5 text-indigo-400 font-bold">{aud.queueId}</td>
-                      <td className="p-3.5 font-bold text-slate-200">{aud.actor}</td>
-                      <td className="p-3.5 font-bold">
-                        <Badge variant="success">{aud.action}</Badge>
+                    <tr key={aud.id}>
+                      <td className="whitespace-nowrap pl-0 text-[12.5px] text-slate-400">{aud.timestamp}</td>
+                      <td className="font-mono text-[12.5px] text-slate-200">{aud.queueId}</td>
+                      <td className="break-words text-[13px] text-slate-100">{aud.actor}</td>
+                      <td>
+                        <Badge variant="info" className="whitespace-nowrap">
+                          {aud.action}
+                        </Badge>
                       </td>
-                      <td className="p-3.5 text-slate-300">{aud.target}</td>
-                      <td className="p-3.5 text-slate-500">{aud.ip}</td>
+                      <td className="break-words text-[13px] text-slate-300">{aud.target}</td>
+                      <td className="pr-0 text-right font-mono text-[12.5px] text-slate-500">{aud.ip}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Card>
+            {auditEntries.length === 0 && (
+              <div className="p-8 text-center text-[13px] text-slate-400">{t("ui.noData")}</div>
+            )}
+          </div>
         </div>
       )}
     </div>

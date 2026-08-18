@@ -16,8 +16,8 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
-import { Card, CardHeader, CardTitle } from "../../../../components/ui/Card";
 import { Badge } from "../../../../components/ui/Badge";
+import { initialsFor } from "../../../../lib/initials";
 import { Button } from "../../../../components/ui/Button";
 
 interface Mailbox {
@@ -213,12 +213,12 @@ export default function AdminMailboxesPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setCsvSuccessMessage(`Imported ${data.imported ?? csvPreview.length} mailboxes.`);
+        setCsvSuccessMessage(t("admin.csvImported", { count: data.imported ?? csvPreview.length }));
         setCsvText("");
         setCsvPreview([]);
         await load();
       } else {
-        setError(data.message ?? "Falha ao importar CSV");
+        setError(data.message ?? t("admin.csvImportFailed"));
       }
     } catch {
       setError(t("errors.serverError"));
@@ -226,367 +226,392 @@ export default function AdminMailboxesPage() {
     setTimeout(() => setCsvSuccessMessage(null), 4000);
   };
 
+  /* The tab labels, the lock buttons and the two-factor and lock states used to
+     be literal strings - some Portuguese, some English - so half this screen
+     stayed in one language whatever the interface was set to. They all come
+     from the bundle now. */
+  const tabs = [
+    { id: "mailboxes" as const, label: `${t("admin.tabAccounts")} (${mailboxes.length})`, icon: Users },
+    { id: "aliases" as const, label: `${t("admin.tabAliases")} (${aliases.length})`, icon: Mail },
+    { id: "csv" as const, label: t("admin.tabCsv"), icon: FileSpreadsheet },
+  ];
+
+  const mfaPolicies = [
+    { id: "optional" as const, label: t("admin.mfaOptional") },
+    { id: "required_admins" as const, label: t("admin.mfaAdmins") },
+    { id: "required_all" as const, label: t("admin.mfaEveryone") },
+  ];
+
+  const panel = "flex flex-col gap-4 rounded-2xl bg-dark-panel p-[18px] shadow-edge";
+  const input =
+    "w-full min-h-[36px] rounded-[10px] bg-dark-card px-3 py-2 text-[13.5px] text-slate-100 placeholder-slate-500 shadow-edge transition-shadow focus:outline-none focus-visible:shadow-edge-accent";
+  const fieldLabel = "mb-1.5 block text-xs text-slate-400";
+  const iconButton =
+    "flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-slate-100";
+
   return (
-    <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
+    <div className="mx-auto flex w-full max-w-[1060px] flex-col gap-[18px] px-5 pb-11 pt-7 sm:px-8">
       {/* Header & Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
-            {t("admin.mailboxesTitle")}
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            {t("admin.mailboxesSubtitle")}
-          </p>
-        </div>
+      <div>
+        <h1 className="text-[25px] font-medium leading-tight text-slate-100">{t("admin.mailboxesTitle")}</h1>
+        <p className="mt-1.5 text-[13.5px] text-slate-400">{t("admin.mailboxesSubtitle")}</p>
+      </div>
 
-        {/* Tab Selection Navigation */}
-        <div className="flex bg-slate-900/90 p-1.5 rounded-xl border border-slate-800 text-xs font-medium self-start md:self-auto">
-          <button
-            onClick={() => setActiveTab("mailboxes")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-              activeTab === "mailboxes"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Contas ({mailboxes.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("aliases")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-              activeTab === "aliases"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Mail className="w-3.5 h-3.5" />
-            <span>Aliases ({aliases.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("csv")}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg transition-all ${
-              activeTab === "csv"
-                ? "bg-emerald-600 text-white shadow-sm"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>CSV</span>
-          </button>
-        </div>
+      <div className="lm-tabstrip self-start">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              data-active={activeTab === tab.id}
+              aria-pressed={activeTab === tab.id}
+              className="lm-tab"
+            >
+              <Icon className="h-[15px] w-[15px] flex-none" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+        <div className="flex items-center gap-2.5 rounded-xl bg-rose-900/60 px-4 py-3 text-[12.5px] leading-relaxed text-rose-200 shadow-edge">
+          <AlertCircle className="h-4 w-4 flex-none" />
           <span>{error}</span>
         </div>
       )}
 
       {/* Domain MFA Policy Panel */}
-      <Card>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              {t("admin.mfaPolicyTitle")}
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {t("admin.mfaPolicyIntro")}
-            </p>
+      <div className="flex flex-wrap items-center gap-3.5 rounded-2xl bg-dark-panel px-[18px] py-4 shadow-edge">
+        <div className="min-w-[240px] flex-1">
+          <div className="flex items-center gap-2 text-[15px] font-medium leading-snug text-slate-100">
+            <ShieldCheck className="h-4 w-4 flex-none text-indigo-500" />
+            {t("admin.mfaPolicyTitle")}
           </div>
-
-          <div className="flex gap-2 text-xs">
-            <button
-              onClick={() => setMfaPolicy("optional")}
-              className={`px-3 py-1.5 rounded-lg border font-medium transition-all ${
-                mfaPolicy === "optional"
-                  ? "bg-slate-800 border-slate-600 text-white"
-                  : "border-slate-800 text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {t("admin.mfaOptional")}
-            </button>
-            <button
-              onClick={() => setMfaPolicy("required_admins")}
-              className={`px-3 py-1.5 rounded-lg border font-medium transition-all ${
-                mfaPolicy === "required_admins"
-                  ? "bg-emerald-600/20 border-emerald-500 text-emerald-300"
-                  : "border-slate-800 text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {t("admin.mfaAdmins")}
-            </button>
-            <button
-              onClick={() => setMfaPolicy("required_all")}
-              className={`px-3 py-1.5 rounded-lg border font-medium transition-all ${
-                mfaPolicy === "required_all"
-                  ? "bg-indigo-600/20 border-indigo-500 text-indigo-300"
-                  : "border-slate-800 text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {t("admin.mfaEveryone")}
-            </button>
-          </div>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-slate-400">{t("admin.mfaPolicyIntro")}</p>
         </div>
-      </Card>
+
+        {/* One segmented control instead of three buttons in three different
+            colours: these are three values of one setting, not three actions. */}
+        <div className="flex flex-none flex-wrap gap-[3px] rounded-[10px] bg-dark-card p-[3px] shadow-edge">
+          {mfaPolicies.map((policy) => (
+            <button
+              key={policy.id}
+              type="button"
+              onClick={() => setMfaPolicy(policy.id)}
+              aria-pressed={mfaPolicy === policy.id}
+              className={`rounded-lg px-3 py-1.5 text-[12.5px] leading-snug transition-colors ${
+                mfaPolicy === policy.id
+                  ? "text-indigo-500 shadow-edge-accent"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              {policy.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* TAB 1: MAILBOXES */}
       {activeTab === "mailboxes" && (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <Plus className="w-4 h-4 text-emerald-400" />
-                {t("ui.provisionMailbox")}
-              </CardTitle>
-            </CardHeader>
-            <form onSubmit={handleCreateMailbox} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
-              <input
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="nova.conta@domain.com"
-                required
-                className="px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder={t("ui.newPassword")}
-                minLength={12}
-                required
-                className="px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <select
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value)}
-                className="px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
-              >
-                <option value="USER">USER</option>
-                <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
-                <option value="SUPER_ADMIN">SUPER_ADMIN</option>
-              </select>
-              <input
-                type="number"
-                value={newQuota}
-                onChange={(e) => setNewQuota(parseInt(e.target.value, 10))}
-                placeholder={t("ui.storageQuota")}
-                className="px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white focus:outline-none focus:border-emerald-500"
-              />
-              <Button type="submit" variant="primary" size="md">
-                {t("admin.createAccount")}
+        <div className="flex flex-col gap-3.5">
+          <section className={panel}>
+            <h2 className="text-[17px] font-medium leading-tight text-slate-100">
+              {t("ui.provisionMailbox")}
+            </h2>
+            <form onSubmit={handleCreateMailbox} className="flex flex-wrap items-end gap-2.5">
+              <div className="min-w-[220px] flex-[2]">
+                <label htmlFor="new-email" className={fieldLabel}>
+                  {t("ui.emailAddress")}
+                </label>
+                <input
+                  id="new-email"
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="nova.conta@domain.com"
+                  required
+                  className={input}
+                />
+              </div>
+              <div className="min-w-[180px] flex-1">
+                <label htmlFor="new-mailbox-password" className={fieldLabel}>
+                  {t("ui.newPassword")}
+                </label>
+                <input
+                  id="new-mailbox-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  minLength={12}
+                  required
+                  className={input}
+                />
+              </div>
+              <div className="min-w-[160px] flex-1">
+                <label htmlFor="new-role" className={fieldLabel}>
+                  {t("ui.role")}
+                </label>
+                <select
+                  id="new-role"
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                  className={input}
+                >
+                  <option value="USER">USER</option>
+                  <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
+                  <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                </select>
+              </div>
+              <div className="min-w-[130px] flex-1">
+                <label htmlFor="new-quota" className={fieldLabel}>
+                  {t("admin.quotaMb")}
+                </label>
+                <input
+                  id="new-quota"
+                  type="number"
+                  value={newQuota}
+                  onChange={(e) => setNewQuota(parseInt(e.target.value, 10))}
+                  className={input}
+                />
+              </div>
+              <Button type="submit" variant="primary" size="md" className="flex-none">
+                <Plus className="h-4 w-4" />
+                <span>{t("admin.createAccount")}</span>
               </Button>
             </form>
-          </Card>
+          </section>
 
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-800 bg-slate-900/80 font-bold text-xs text-slate-300 flex items-center justify-between">
-              <span>Contas Cadastradas ({mailboxes.length})</span>
-            </div>
-
+          <div className="rounded-2xl bg-dark-panel px-[18px] pb-3 pt-1.5 shadow-edge">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="lm-table">
                 <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                    <th className="p-3.5">{t("ui.emailAddress")}</th>
-                    <th className="p-3.5">{t("ui.accountStatus")}</th>
-                    <th className="p-3.5">{t("ui.storageQuota")}</th>
-                    <th className="p-3.5">{t("ui.twoFactorSection")}</th>
-                    <th className="p-3.5">{t("ui.accountStatus")}</th>
-                    <th className="p-3.5">{t("ui.actions")}</th>
+                  <tr>
+                    <th className="pl-0">{t("ui.emailAddress")}</th>
+                    <th>{t("ui.role")}</th>
+                    <th>{t("ui.storageQuota")}</th>
+                    <th>{t("ui.twoFactorSection")}</th>
+                    <th>{t("ui.accountStatus")}</th>
+                    <th className="pr-0 text-right">{t("ui.actions")}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody>
                   {mailboxes.map((mb) => (
-                    <tr key={mb.id} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="p-3.5 font-bold text-slate-100">{mb.email}</td>
-                      <td className="p-3.5 text-slate-300">
-                        <Badge variant="neutral">{mb.role}</Badge>
+                    <tr key={mb.id}>
+                      <td className="pl-0">
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-indigo-900 text-[11px] uppercase text-indigo-300">
+                            {initialsFor(mb.email)}
+                          </span>
+                          <span className="break-words text-[13.5px] text-slate-100">{mb.email}</span>
+                        </div>
                       </td>
-                      <td className="p-3.5">
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-emerald-500 rounded-full"
-                              style={{ width: `${Math.min((mb.storageUsedMb / (mb.quotaMb || 1)) * 100, 100)}%` }}
+                      <td>
+                        <Badge variant="neutral" className="whitespace-nowrap">
+                          {mb.role}
+                        </Badge>
+                      </td>
+                      <td>
+                        <div className="flex min-w-[150px] items-center gap-2.5">
+                          <span className="block h-1.5 flex-1 overflow-hidden rounded-full bg-dark-card">
+                            <span
+                              className="block h-full rounded-full bg-indigo-500"
+                              style={{
+                                width: `${Math.min((mb.storageUsedMb / (mb.quotaMb || 1)) * 100, 100)}%`,
+                              }}
                             />
-                          </div>
-                          <span className="text-[10px] text-slate-400">
-                            {mb.storageUsedMb}MB / {mb.quotaMb}MB
+                          </span>
+                          <span className="whitespace-nowrap text-[11.5px] tabular-nums text-slate-400">
+                            {mb.storageUsedMb} / {mb.quotaMb} MB
                           </span>
                         </div>
                       </td>
-                      <td className="p-3.5">
-                        <Badge variant={mb.mfaEnabled ? "success" : "warning"}>
-                          {mb.mfaEnabled ? "TOTP ATIVO" : "SEM 2FA"}
+                      <td>
+                        <Badge variant={mb.mfaEnabled ? "success" : "warning"} className="whitespace-nowrap">
+                          {mb.mfaEnabled ? t("ui.mfaActive") : t("ui.mfaNone")}
                         </Badge>
                       </td>
-                      <td className="p-3.5">
-                        <Badge variant={mb.locked ? "danger" : "success"}>
-                          {mb.locked ? "BLOQUEADA" : t("ui.active")}
+                      <td>
+                        <Badge variant={mb.locked ? "danger" : "info"} className="whitespace-nowrap">
+                          {mb.locked ? t("ui.accountLocked") : t("ui.active")}
                         </Badge>
                       </td>
-                      <td className="p-3.5 flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
+                      <td className="whitespace-nowrap pr-0 text-right">
+                        <button
+                          type="button"
                           onClick={() => void handleToggleLock(mb.id, mb.locked)}
+                          title={mb.locked ? t("admin.unlockAccount") : t("admin.lockAccount")}
+                          aria-label={mb.locked ? t("admin.unlockAccount") : t("admin.lockAccount")}
+                          className={`${iconButton} inline-flex`}
                         >
-                          {mb.locked ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                          <span>{mb.locked ? "Desbloquear" : "Bloquear"}</span>
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
+                          {mb.locked ? <Unlock className="h-[15px] w-[15px]" /> : <Lock className="h-[15px] w-[15px]" />}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void handleDeleteMailbox(mb.id)}
+                          title={t("common.delete")}
+                          aria-label={t("common.delete")}
+                          className={`${iconButton} inline-flex hover:text-rose-400`}
                         >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
+                          <Trash2 className="h-[15px] w-[15px]" />
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </div>
         </div>
       )}
 
       {/* TAB 2: ALIASES */}
       {activeTab === "aliases" && (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <Plus className="w-4 h-4 text-emerald-400" />
-                {t("admin.createAlias")}
-              </CardTitle>
-            </CardHeader>
-            <form onSubmit={handleCreateAlias} className="flex flex-col sm:flex-row gap-3 text-xs">
-              <input
-                type="email"
-                value={newAliasAddr}
-                onChange={(e) => setNewAliasAddr(e.target.value)}
-                placeholder="alias@domain.com"
-                required
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <input
-                type="email"
-                value={newTargetAddr}
-                onChange={(e) => setNewTargetAddr(e.target.value)}
-                placeholder="destino@domain.com"
-                required
-                className="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-              />
-              <Button type="submit" variant="primary" size="md">
+        <div className="flex flex-col gap-3.5">
+          <section className={panel}>
+            <h2 className="text-[17px] font-medium leading-tight text-slate-100">{t("admin.createAlias")}</h2>
+            <form onSubmit={handleCreateAlias} className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[220px] flex-1">
+                <label htmlFor="new-alias" className={fieldLabel}>
+                  {t("admin.aliasesTitle")}
+                </label>
+                <input
+                  id="new-alias"
+                  type="email"
+                  value={newAliasAddr}
+                  onChange={(e) => setNewAliasAddr(e.target.value)}
+                  placeholder="alias@domain.com"
+                  required
+                  className={input}
+                />
+              </div>
+              <ArrowRight className="mb-2.5 h-[18px] w-[18px] flex-none text-slate-500" />
+              <div className="min-w-[220px] flex-1">
+                <label htmlFor="new-alias-target" className={fieldLabel}>
+                  {t("admin.aliasTarget")}
+                </label>
+                <input
+                  id="new-alias-target"
+                  type="email"
+                  value={newTargetAddr}
+                  onChange={(e) => setNewTargetAddr(e.target.value)}
+                  placeholder="destino@domain.com"
+                  required
+                  className={input}
+                />
+              </div>
+              <Button type="submit" variant="primary" size="md" className="flex-none">
                 {t("admin.addAlias")}
               </Button>
             </form>
-          </Card>
+          </section>
 
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-800 bg-slate-900/80 font-bold text-xs text-slate-300">
-              Aliases de Roteamento ({aliases.length})
-            </div>
-
+          <div className="rounded-2xl bg-dark-panel px-[18px] pb-3 pt-1.5 shadow-edge">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="lm-table">
                 <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/40 text-slate-400">
-                    <th className="p-3.5">{t("ui.emailAddress")}</th>
-                    <th className="p-3.5">{t("ui.destination")}</th>
-                    <th className="p-3.5">{t("admin.domainsTitle")}</th>
-                    <th className="p-3.5">{t("ui.actions")}</th>
+                  <tr>
+                    <th className="pl-0">{t("admin.aliasesTitle")}</th>
+                    <th>{t("ui.destination")}</th>
+                    <th>{t("admin.domainsTitle")}</th>
+                    <th className="pr-0 text-right">{t("ui.actions")}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono">
+                <tbody>
                   {aliases.map((al) => (
-                    <tr key={al.id} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="p-3.5 font-bold text-emerald-400">{al.aliasAddress}</td>
-                      <td className="p-3.5 text-slate-200 flex items-center gap-2">
-                        <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
-                        <span>{al.targetAddress}</span>
-                      </td>
-                      <td className="p-3.5 text-slate-400">{al.domain}</td>
-                      <td className="p-3.5">
-                        <Button
-                          variant="danger"
-                          size="sm"
+                    <tr key={al.id}>
+                      <td className="break-words pl-0 text-[13.5px] text-slate-100">{al.aliasAddress}</td>
+                      <td className="break-words text-[13px] text-slate-300">{al.targetAddress}</td>
+                      <td className="text-[13px] text-slate-400">{al.domain}</td>
+                      <td className="pr-0 text-right">
+                        <button
+                          type="button"
                           onClick={() => void handleDeleteAlias(al.id)}
+                          title={t("common.delete")}
+                          aria-label={t("common.delete")}
+                          className={`${iconButton} inline-flex hover:text-rose-400`}
                         >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
+                          <Trash2 className="h-[15px] w-[15px]" />
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Card>
+          </div>
         </div>
       )}
 
       {/* TAB 3: CSV BULK IMPORT */}
       {activeTab === "csv" && (
-        <Card className="space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2 mb-1">
-              <Upload className="w-5 h-5 text-indigo-400" />
-              Bulk mailbox import (CSV)
-            </h2>
-            <p className="text-xs text-slate-400">
-              Paste CSV to provision several accounts with their RFC 6154 folders. Format: <code>email, role, quota_mb</code>
-            </p>
-          </div>
-
-          {csvSuccessMessage && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>{csvSuccessMessage}</span>
+        <div className="flex flex-wrap gap-3.5">
+          <section className={`${panel} min-w-[320px] flex-1`}>
+            <div>
+              <h2 className="flex items-center gap-2 text-[17px] font-medium leading-tight text-slate-100">
+                <Upload className="h-[17px] w-[17px] flex-none text-indigo-500" />
+                {t("admin.csvTitle")}
+              </h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-slate-400">{t("admin.csvIntro")}</p>
             </div>
-          )}
 
-          <textarea
-            rows={6}
-            value={csvText}
-            onChange={(e) => setCsvText(e.target.value)}
-            placeholder={`email,role,quota_mb\nalice@example.com,USER,5000\nbob@example.com,DOMAIN_ADMIN,2000`}
-            className="w-full px-4 py-3 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-          />
-
-          <div className="flex gap-3">
-            <Button variant="secondary" size="md" onClick={handleParseCsv}>
-              {t("admin.csvPreview")}
-            </Button>
-
-            {csvPreview.length > 0 && (
-              <Button variant="primary" size="md" onClick={handleExecuteCsvImport}>
-                Run import ({csvPreview.length} Contas)
-              </Button>
+            {csvSuccessMessage && (
+              <div className="flex items-center gap-2 rounded-xl bg-dark-card px-3.5 py-3 text-[12.5px] text-slate-200 shadow-edge">
+                <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
+                <span>{csvSuccessMessage}</span>
+              </div>
             )}
-          </div>
+
+            <textarea
+              rows={8}
+              value={csvText}
+              onChange={(e) => setCsvText(e.target.value)}
+              aria-label={t("admin.csvTitle")}
+              placeholder={`email,role,quota_mb\nalice@example.com,USER,5000\nbob@example.com,DOMAIN_ADMIN,2000`}
+              className="lm-code w-full px-4 py-3 text-slate-200 placeholder-slate-600 focus:outline-none focus-visible:shadow-edge-accent"
+            />
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="md" onClick={handleParseCsv}>
+                {t("admin.csvPreview")}
+              </Button>
+              {csvPreview.length > 0 && (
+                <Button variant="primary" size="md" onClick={handleExecuteCsvImport}>
+                  {t("admin.csvRun")} ({csvPreview.length})
+                </Button>
+              )}
+            </div>
+          </section>
 
           {csvPreview.length > 0 && (
-            <div className="mt-4 border border-slate-800 rounded-xl overflow-hidden bg-slate-950 p-4 space-y-2">
-              <h3 className="font-bold text-xs text-white">Preview ({csvPreview.length} linhas)</h3>
-              <div className="divide-y divide-slate-800/80 font-mono text-[11px]">
+            <section className={`${panel} min-w-[300px] flex-1`}>
+              <div className="flex items-center justify-between gap-2.5">
+                <h3 className="text-[17px] font-medium leading-tight text-slate-100">
+                  {t("admin.csvPreview")}
+                </h3>
+                <Badge variant="neutral">{csvPreview.length}</Badge>
+              </div>
+              <div className="flex flex-col gap-2">
                 {csvPreview.map((row, idx) => (
-                  <div key={idx} className="py-2 flex justify-between items-center">
-                    <span className="text-emerald-400">{row.email}</span>
-                    <Badge variant="neutral">{row.role}</Badge>
-                    <span className="text-slate-400">Cota: {row.quotaMb} MB</span>
+                  <div
+                    key={idx}
+                    className="flex flex-wrap items-center gap-2.5 rounded-xl bg-dark-card px-3 py-2.5 shadow-edge"
+                  >
+                    <span className="min-w-0 flex-1 break-words text-[13px] text-slate-100">{row.email}</span>
+                    <Badge variant="neutral" className="flex-none whitespace-nowrap">
+                      {row.role}
+                    </Badge>
+                    <span className="flex-none whitespace-nowrap text-[11.5px] tabular-nums text-slate-400">
+                      {row.quotaMb} MB
+                    </span>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           )}
-        </Card>
+        </div>
       )}
     </div>
   );

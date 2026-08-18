@@ -80,13 +80,13 @@ export function TotpEnrolment({ secret, uri }: { secret: string; uri: string | n
       <div className="space-y-1.5">
         <p className="text-xs text-slate-400">{t("auth.cantScanQr")}</p>
         <div className="flex items-center gap-2">
-          <code className="flex-1 break-all rounded-lg border border-slate-800 bg-slate-950 p-2.5 font-mono text-xs text-indigo-300">
+          <code className="lm-code min-w-0 flex-1 break-all p-2.5">
             {secret}
           </code>
           <button
             type="button"
             onClick={() => void copySecret()}
-            className="flex-shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-indigo-500/50 hover:text-white"
+            className="flex-none rounded-[10px] border border-white/[0.14] px-3 py-2 text-xs text-slate-200 transition-colors hover:bg-white/[0.07] hover:text-slate-100"
           >
             {copied ? t("common.copied") : t("common.copy")}
           </button>
@@ -127,12 +127,12 @@ export function RecoveryCodes({
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-300">
-        <div className="mb-1 font-bold">{t("settings.recoveryCodesTitle")}</div>
-        <p className="mb-3">{t("settings.saveRecoveryCodes")}</p>
-        <div className="grid grid-cols-2 gap-1.5 rounded-lg border border-slate-800 bg-slate-950 p-3 text-center font-mono text-[11px] text-white sm:grid-cols-3">
+      <div className="rounded-xl bg-dark-card p-3.5 text-xs text-slate-300 shadow-edge">
+        <div className="mb-1 text-[13.5px] font-medium text-slate-100">{t("settings.recoveryCodesTitle")}</div>
+        <p className="mb-3 leading-relaxed">{t("settings.saveRecoveryCodes")}</p>
+        <div className="lm-code grid grid-cols-2 gap-1.5 p-3 text-center text-[11px] sm:grid-cols-3">
           {codes.map((code) => (
-            <span key={code} className="rounded border border-slate-800 p-1">
+            <span key={code} className="rounded bg-white/[0.05] p-1">
               {code}
             </span>
           ))}
@@ -143,14 +143,14 @@ export function RecoveryCodes({
         <button
           type="button"
           onClick={() => void copyAll()}
-          className="flex-1 rounded-xl border border-slate-700 py-2.5 text-sm font-medium text-slate-200 transition-colors hover:border-emerald-500/50 hover:text-white"
+          className="flex-1 rounded-[10px] border border-white/[0.14] py-2.5 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.07]"
         >
           {copied ? t("common.copied") : t("common.copy")}
         </button>
         <button
           type="button"
           onClick={onContinue}
-          className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-emerald-500"
+          className="flex-1 rounded-[10px] border border-indigo-500 py-2.5 text-sm font-medium text-indigo-500 transition-colors hover:bg-indigo-500/[0.12] active:bg-indigo-500/[0.22]"
         >
           {continueLabel}
         </button>

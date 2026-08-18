@@ -28,7 +28,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang={locale} className="dark">
-      <body className="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+      <body className="min-h-screen bg-dark-bg font-sans text-slate-100 antialiased">
         <I18nProvider locale={locale}>{children}</I18nProvider>
       </body>
     </html>
