@@ -10,6 +10,29 @@ import DOMPurify from "dompurify";
  * a regex cannot parse HTML. DOMPurify parses, which is why it is the only
  * thing here.
  */
+/**
+ * The data: URIs a message body may carry: raster images only.
+ *
+ * DOMPurify allows data: on an image source from its own built-in list, which
+ * includes image/svg+xml, and that list is consulted instead of
+ * ALLOWED_URI_REGEXP - so tightening the regexp alone does not exclude an SVG.
+ * The hook below is what actually refuses it, and an SVG has to be refused: it
+ * is a document that carries script, not a picture.
+ */
+const ALLOWED_DATA_IMAGE = /^data:image\/(?:png|gif|jpe?g|webp|bmp|x-icon|vnd\.microsoft\.icon);/i;
+
+let hookInstalled = false;
+
+function installDataUriHook(): void {
+  if (hookInstalled) return;
+  DOMPurify.addHook("uponSanitizeAttribute", (_node, data) => {
+    if (/^\s*data:/i.test(data.attrValue) && !ALLOWED_DATA_IMAGE.test(data.attrValue.trim())) {
+      data.keepAttr = false;
+    }
+  });
+  hookInstalled = true;
+}
+
 export function sanitizeEmailHtml(rawHtml: string): string {
   if (!rawHtml) return "";
 
@@ -19,6 +42,8 @@ export function sanitizeEmailHtml(rawHtml: string): string {
   if (typeof window === "undefined" || !DOMPurify.isSupported) {
     return "";
   }
+
+  installDataUriHook();
 
   return DOMPurify.sanitize(rawHtml, {
     ALLOWED_TAGS: [
@@ -37,8 +62,12 @@ export function sanitizeEmailHtml(rawHtml: string): string {
     FORBID_TAGS: ["script", "iframe", "object", "embed", "form", "input", "button", "style", "link", "meta", "base"],
     FORBID_ATTR: ["srcset", "formaction", "ping", "id"],
     ALLOW_DATA_ATTR: false,
-    // data: is how an anchor smuggles a document onto this origin.
-    ALLOWED_URI_REGEXP: /^(?:https?|mailto|cid|tel):/i,
+    // data: is how an anchor smuggles a document onto this origin, so only the
+    // raster image types are let through - which is how this app delivers a
+    // message's own inline parts, and rejecting them stripped the src from
+    // every embedded picture. image/svg+xml is deliberately absent: an SVG is
+    // a document that carries script.
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|cid|tel):|data:image\/(?:png|gif|jpe?g|webp|bmp|x-icon|vnd\.microsoft\.icon);)/i,
   });
 }
 

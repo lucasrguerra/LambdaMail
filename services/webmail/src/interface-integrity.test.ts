@@ -137,10 +137,13 @@ describe("surface routing", () => {
     }
   });
 
+  // The destination is the step-up rather than the admin sign-in: the console
+  // costs a second factor, but not the password the session in hand just
+  // proved. mail-state-integrity.test.ts covers the rest of that crossing.
   it("offers the console from inside the app, gated on the account's role", () => {
     const layout = readFileSync(resolve(process.cwd(), "src/app/(user)/user/layout.tsx"), "utf8");
     expect(layout).toContain("isAdminRole");
-    expect(layout).toContain("/admin/login");
+    expect(layout).toContain("/admin/step-up");
   });
 
   it("offers a plain way back to webmail from the console", () => {

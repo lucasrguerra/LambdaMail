@@ -3,6 +3,13 @@ import crypto from "node:crypto";
 import { generateTotpSecret, generateTotpUri } from "./totp.js";
 import { generateRecoveryCodes, generateAppPassword } from "./mfaHelpers.js";
 import { createJwt, verifyJwt, isSurfaceAuthorized, type SessionTokenPayload } from "./session.js";
+import {
+  secondFactorRequired,
+  surfacesGrantedBy,
+  cookieNameFor,
+  stepUpNeedsSecondFactor,
+  type Surface,
+} from "./surfaceAccess.js";
 import * as repo from "./repository.js";
 
 const CHALLENGE_TTL_SECONDS = 300;
@@ -125,6 +132,10 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url === "/api/v1/auth/user/login" && method === "POST") return login(req, res, "user");
     if (url === "/api/v1/auth/admin/login" && method === "POST") return login(req, res, "admin");
     if (url === "/api/v1/auth/mfa/verify" && method === "POST") return mfaVerify(req, res);
+    // Under /auth/ rather than /admin/: the caller does not hold an admin
+    // session yet - obtaining one is the whole point - so the admin guard above
+    // must not stand in front of it.
+    if (url === "/api/v1/auth/admin/step-up" && method === "POST") return adminStepUp(req, res);
     if (url === "/api/v1/auth/logout" && method === "POST") return logout(res);
 
     if (url === "/api/v1/user/me" && method === "GET") return me(res, session!);
@@ -230,30 +241,35 @@ async function login(req: IncomingMessage, res: ServerResponse, surface: "user" 
 
   const { mailbox, mfaRequired } = outcome;
 
-  // An admin whose second factor is not enrolled must not fall through to a
-  // full session: the admin surface requires MFA unconditionally.
-  if (surface === "admin" && !(await repo.hasConfirmedTotp(mailbox.id))) {
-    const enrolmentToken = createJwt(
-      {
-        sub: mailbox.id,
-        email: mailbox.email_address,
-        role: mailbox.role,
-        domainId: mailbox.domain_id,
-        surface: "user",
-        aud: "lambdamail:user",
-        mfaSatisfied: false,
-        purpose: "mfa_enrollment",
-      },
-      ENROLMENT_TTL_SECONDS,
-    );
+  // The console is for the roles that may operate it. This checked the password
+  // and the second factor and never the role, so an ordinary account that had
+  // enrolled a factor - which any account may do from its own settings - was
+  // handed an admin-audience session, and the routes that do not re-check the
+  // role opened for it. Refused before the challenge, so no token exists that
+  // could be verified into one.
+  if (surface === "admin" && mailbox.role !== "SUPER_ADMIN" && mailbox.role !== "DOMAIN_ADMIN") {
     return sendJson(res, 403, {
-      error: "MFA_ENROLLMENT_REQUIRED",
-      message: "The admin console requires a second factor. Enrol one to continue.",
-      enrollment_token: enrolmentToken,
+      error: "FORBIDDEN",
+      message: "This account may not open the admin console",
     });
   }
 
-  if (mfaRequired) {
+  // An admin whose second factor is not enrolled must not fall through to a
+  // full session: the admin surface requires MFA unconditionally.
+  if (surface === "admin" && !(await repo.hasConfirmedTotp(mailbox.id))) {
+    return sendJson(res, 403, {
+      error: "MFA_ENROLLMENT_REQUIRED",
+      message: "The admin console requires a second factor. Enrol one to continue.",
+      enrollment_token: enrolmentGrant(mailbox),
+    });
+  }
+
+  // Only the console collects a second factor at sign-in. The webmail is one
+  // account's own mail behind that account's own password, and demanding a code
+  // to read it made every message cost a phone - while the surface that can
+  // rewrite other people's mailboxes is the one that needs it. An enrolled
+  // factor is still asked for on the way into the console, by step-up.
+  if (mfaRequired && secondFactorRequired(surface)) {
     const challengeToken = createJwt(
       {
         sub: mailbox.id,
@@ -270,48 +286,144 @@ async function login(req: IncomingMessage, res: ServerResponse, surface: "user" 
     return sendJson(res, 200, { mfa_required: true, challenge_token: challengeToken });
   }
 
-  // No factor enrolled yet. The session is issued so the user can reach the
-  // settings screen and enroll; when policy obliges them to, the response says
-  // so and the UI keeps them on that screen.
+  // The session is issued so the user can reach the settings screen and enroll;
+  // when policy obliges them to, the response says so and the UI keeps them on
+  // that screen.
   await issueSession(req, res, mailbox, surface, repo.isMfaEnrollmentRequired(mailbox));
 }
 
+/**
+ * Crosses a signed-in webmail session over into the console.
+ *
+ * The password is not asked for again: the session presented here already
+ * proved it, minutes ago. What the console adds over the webmail is the second
+ * factor, so that is all this collects. Without this endpoint the only way over
+ * was the admin sign-in form, which is why crossing surfaces used to mean
+ * typing the password a second time.
+ */
+async function adminStepUp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const token = extractToken(req, "/api/v1/user/");
+  if (!stepUpNeedsSecondFactor(token)) {
+    return sendJson(res, 401, { error: "UNAUTHORIZED", message: "A signed-in webmail session is required" });
+  }
+  const payload = verifyJwt(token)!;
+
+  const mailbox = await repo.findMailboxByEmail(payload.email);
+  if (!mailbox || !mailbox.is_active) {
+    return sendJson(res, 401, { error: "INVALID_CREDENTIALS", message: "Account unavailable" });
+  }
+  // Role is read from the database rather than from the token: a role changed
+  // since sign-in must take effect on the surface that acts on it.
+  if (mailbox.role !== "SUPER_ADMIN" && mailbox.role !== "DOMAIN_ADMIN") {
+    return sendJson(res, 403, { error: "FORBIDDEN", message: "This account may not open the admin console" });
+  }
+
+  // No factor to ask for yet. The same grant the admin sign-in hands out is
+  // returned, so the caller can enrol one and come straight back.
+  if (!(await repo.hasConfirmedTotp(mailbox.id))) {
+    return sendJson(res, 403, {
+      error: "MFA_ENROLLMENT_REQUIRED",
+      message: "The admin console requires a second factor. Enrol one to continue.",
+      enrollment_token: enrolmentGrant(mailbox),
+    });
+  }
+
+  const body = await parseJsonBody(req);
+  const code = typeof body?.code === "string" ? body.code.trim() : "";
+  if (!code) {
+    return sendJson(res, 400, { error: "CODE_REQUIRED", message: "Verification code required" });
+  }
+
+  const accepted = /^\d{6}$/.test(code)
+    ? await repo.verifyTotpForLogin(mailbox.id, code)
+    : await repo.consumeRecoveryCode(mailbox.id, code, clientIp(req));
+  if (!accepted) {
+    return sendJson(res, 401, { error: "INVALID_MFA_CODE", message: "Invalid verification code" });
+  }
+
+  await issueSession(req, res, mailbox, "admin");
+}
+
+/** The short-lived grant that permits enrolling a factor and nothing else. */
+function enrolmentGrant(mailbox: repo.MailboxRecord): string {
+  return createJwt(
+    {
+      sub: mailbox.id,
+      email: mailbox.email_address,
+      role: mailbox.role,
+      domainId: mailbox.domain_id,
+      surface: "user",
+      aud: "lambdamail:user",
+      mfaSatisfied: false,
+      purpose: "mfa_enrollment",
+    },
+    ENROLMENT_TTL_SECONDS,
+  );
+}
+
+/**
+ * Issues the sessions a sign-in on `surface` earns, and sets their cookies.
+ *
+ * An admin sign-in yields a webmail session as well. The two audiences are
+ * separate tokens - a token minted for the console is refused by every /user
+ * route, by design - so granting both means minting both. Doing so is what
+ * turns leaving the console into a plain link: whoever proved a password and a
+ * second factor has more than the webmail asks for, and being sent back to a
+ * password prompt on the way out was the app forgetting that.
+ *
+ * mfaSatisfied records what was actually proven, so it is true only where a
+ * factor was collected. isSurfaceAuthorized requires it for the console alone.
+ */
 async function issueSession(
   req: IncomingMessage,
   res: ServerResponse,
   mailbox: repo.MailboxRecord,
-  surface: "user" | "admin",
+  surface: Surface,
   enrollmentRequired = false,
+  // Whether a second factor was actually collected on the way here. It defaults
+  // to what the surface demands; mfaVerify passes it explicitly, because
+  // recording a proven factor as unproven would make isStepUpMfaRequired fire
+  // straight away.
+  factorProven = secondFactorRequired(surface),
 ): Promise<void> {
-  const sessionToken = createJwt({
-    sub: mailbox.id,
-    email: mailbox.email_address,
-    role: mailbox.role,
-    domainId: mailbox.domain_id,
-    surface,
-    aud: surface === "admin" ? "lambdamail:admin" : "lambdamail:user",
-    mfaSatisfied: true,
-    mfaSatisfiedAt: Date.now(),
-    purpose: "session",
-  });
+  const cookies: string[] = [];
+  let primaryToken = "";
 
-  await repo.recordSession(
-    mailbox.id,
-    surface,
-    crypto.createHash("sha256").update(sessionToken).digest("hex"),
-    new Date(Date.now() + SESSION_TTL_SECONDS * 1000),
-    clientIp(req),
-    req.headers["user-agent"] ?? null,
-  );
+  for (const granted of surfacesGrantedBy(surface)) {
+    const token = createJwt({
+      sub: mailbox.id,
+      email: mailbox.email_address,
+      role: mailbox.role,
+      domainId: mailbox.domain_id,
+      surface: granted,
+      aud: granted === "admin" ? "lambdamail:admin" : "lambdamail:user",
+      mfaSatisfied: factorProven,
+      ...(factorProven ? { mfaSatisfiedAt: Date.now() } : {}),
+      purpose: "session",
+    });
+    if (!primaryToken) primaryToken = token;
 
-  const cookieName = surface === "admin" ? "lm_admin_session" : "lm_user_session";
-  res.setHeader("Set-Cookie", sessionCookie(cookieName, sessionToken, SESSION_TTL_SECONDS, isSecureRequest()));
+    // Each token is recorded separately, or "sign out this device" would revoke
+    // one audience and leave the other working.
+    await repo.recordSession(
+      mailbox.id,
+      granted,
+      crypto.createHash("sha256").update(token).digest("hex"),
+      new Date(Date.now() + SESSION_TTL_SECONDS * 1000),
+      clientIp(req),
+      req.headers["user-agent"] ?? null,
+    );
+
+    cookies.push(sessionCookie(cookieNameFor(granted), token, SESSION_TTL_SECONDS, isSecureRequest()));
+  }
+
+  res.setHeader("Set-Cookie", cookies);
   sendJson(res, 200, {
-    token: sessionToken,
+    token: primaryToken,
     surface,
     role: mailbox.role,
     locale: mailbox.locale,
-    mfa_satisfied: true,
+    mfa_satisfied: factorProven,
     mfa_enrollment_required: enrollmentRequired,
   });
 }
@@ -349,7 +461,7 @@ async function mfaVerify(req: IncomingMessage, res: ServerResponse): Promise<voi
     return sendJson(res, 401, { error: "INVALID_CREDENTIALS", message: "Account unavailable" });
   }
 
-  await issueSession(req, res, mailbox, payload.surface);
+  await issueSession(req, res, mailbox, payload.surface, false, true);
 }
 
 function logout(res: ServerResponse): void {

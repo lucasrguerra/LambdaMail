@@ -168,12 +168,16 @@ describeDb("auth API against a real database", () => {
   });
 
   // The second headline regression: any non-empty MFA code used to work.
+  // The challenge comes from the admin sign-in, which is the surface that
+  // collects a second factor. The webmail no longer does - reading your own
+  // mail is behind your own password - so this used to obtain its challenge
+  // from a path that has none.
   it("rejects a wrong TOTP code and accepts only the real one", { timeout: 60000 }, async () => {
-    const login = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
-    const secret = await enrollTotp(USER_ID, login.body.token as unknown as string);
+    const login = await post("/api/v1/auth/user/login", { email: adminEmail(), password: PASSWORD });
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [ADMIN_ID]);
+    const secret = await enrollTotp(ADMIN_ID, login.body.token as unknown as string);
 
-    // With a factor enrolled, login now demands it.
-    const challenge = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
+    const challenge = await post("/api/v1/auth/admin/login", { email: adminEmail(), password: PASSWORD });
     expect(challenge.body.mfa_required).toBe(true);
 
     const wrong = await post("/api/v1/auth/mfa/verify", {
@@ -306,7 +310,11 @@ describeDb("auth API against a real database", () => {
   }, 90000);
 
   it("grants the admin console after a real second factor", { timeout: 60000 }, async () => {
-    // Enrollment happens on the user surface, which the admin also owns.
+    // Enrollment happens on the user surface, which the admin also owns. The
+    // existing factor is cleared first, as adminSession does: enrolling over a
+    // confirmed one leaves two secrets on the account and the code generated
+    // here is then checked against the wrong one.
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [ADMIN_ID]);
     const userLogin = await post("/api/v1/auth/user/login", { email: adminEmail(), password: PASSWORD });
     const secret = await enrollTotp(ADMIN_ID, userLogin.body.token as unknown as string);
 
@@ -360,12 +368,14 @@ describeDb("auth API against a real database", () => {
     expect(res.body.error).toBe("ACCOUNT_LOCKED");
   });
 
+  // Redeemed at the admin sign-in, which is where a second factor is collected
+  // now. The account is an admin for the same reason.
   it("consumes a recovery code exactly once", { timeout: 60000 }, async () => {
     const email = `rec@authtest-${DOMAIN_ID}.invalid`;
     const id = crypto.randomUUID();
     await query(
-      `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash)
-       VALUES ($1, $2, 'rec', $3, $4)`,
+      `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash, role)
+       VALUES ($1, $2, 'rec', $3, $4, 'SUPER_ADMIN')`,
       [id, DOMAIN_ID, email, await hashPassword(PASSWORD)],
     );
 
@@ -378,14 +388,14 @@ describeDb("auth API against a real database", () => {
     const confirmed = await post("/api/v1/user/mfa/totp/confirm", { code }, login.body.token);
     const recoveryCode = (confirmed.body.recovery_codes as unknown as string[])[0];
 
-    const challenge = await post("/api/v1/auth/user/login", { email, password: PASSWORD });
+    const challenge = await post("/api/v1/auth/admin/login", { email, password: PASSWORD });
     const first = await post("/api/v1/auth/mfa/verify", {
       challenge_token: challenge.body.challenge_token,
       code: recoveryCode,
     });
     expect(first.status).toBe(200);
 
-    const challenge2 = await post("/api/v1/auth/user/login", { email, password: PASSWORD });
+    const challenge2 = await post("/api/v1/auth/admin/login", { email, password: PASSWORD });
     const second = await post("/api/v1/auth/mfa/verify", {
       challenge_token: challenge2.body.challenge_token,
       code: recoveryCode,
@@ -661,6 +671,191 @@ describe("surface routing", () => {
     const res = { setHeader() {}, end() {} } as never;
     expect(handler(req, res)).toBe(false);
   });
+});
+
+/**
+ * What each surface costs to open, and what a session grants once opened.
+ *
+ * Two rules made the app tiresome in a way no unit test could see. Reading your
+ * own mail demanded a second factor, which the mailbox does not require - only
+ * the console does. And a session issued at the admin sign-in carried the admin
+ * audience alone, so leaving the console landed on the webmail's login screen,
+ * asking for a password from somebody who had just proven a password and a
+ * second factor a moment earlier.
+ */
+describeDb("moving between the surfaces", () => {
+  const stepUpEmail = () => `stepup@authtest-${DOMAIN_ID}.invalid`;
+  const plainEmail = () => `plainuser@authtest-${DOMAIN_ID}.invalid`;
+  let stepUpId = "";
+
+  /** Reads the Set-Cookie headers, which is where the two sessions land. */
+  async function postForCookies(path: string, body: unknown, token?: string) {
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    return {
+      status: res.status,
+      cookies: res.headers.getSetCookie(),
+      body: (await res.json().catch(() => ({}))) as Record<string, never>,
+    };
+  }
+
+  const cookieNames = (cookies: string[]) => cookies.map((c) => c.split("=")[0]).sort();
+
+  /**
+   * One session per account, taken once.
+   *
+   * Every login costs an Argon2 verify, and this service deliberately bounds
+   * how many of those run at a time, so a test file that signs in per assertion
+   * spends its time queueing behind itself. A session does not expire during
+   * the run, so reusing it tests the same thing and leaves the budget for the
+   * assertions that need a fresh sign-in.
+   */
+  let stepUpToken = "";
+  let plainToken = "";
+  let plainId = "";
+
+  beforeAll(async () => {
+    await startServer();
+    await seed();
+    const hash = await hashPassword(PASSWORD);
+    for (const [local, role] of [["stepup", "SUPER_ADMIN"], ["plainuser", "USER"]] as const) {
+      await query(
+        `INSERT INTO mailboxes (domain_id, local_part, email_address, password_hash, role)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (domain_id, local_part) DO NOTHING`,
+        [DOMAIN_ID, local, `${local}@authtest-${DOMAIN_ID}.invalid`, hash, role],
+      );
+    }
+    stepUpId = (await query<{ id: string }>(
+      `SELECT id FROM mailboxes WHERE email_address = $1`, [stepUpEmail()]))[0].id;
+    plainId = (await query<{ id: string }>(
+      `SELECT id FROM mailboxes WHERE email_address = $1`, [plainEmail()]))[0].id;
+
+    stepUpToken = (await post("/api/v1/auth/user/login",
+      { email: stepUpEmail(), password: PASSWORD })).body.token as unknown as string;
+    plainToken = (await post("/api/v1/auth/user/login",
+      { email: plainEmail(), password: PASSWORD })).body.token as unknown as string;
+  }, 120000);
+
+  afterAll(async () => {
+    server?.close();
+    await query(`DELETE FROM domains WHERE id = $1`, [DOMAIN_ID]).catch(() => undefined);
+    await closePool();
+  });
+
+  // The mailbox is one account's own mail behind that account's own password.
+  // Demanding a code as well meant an enrolled account could not read its mail
+  // without its phone.
+  it("opens the webmail on the password alone, even with a factor enrolled", async () => {
+    await enrollTotp(stepUpId, stepUpToken);
+
+    const login = await post("/api/v1/auth/user/login", { email: stepUpEmail(), password: PASSWORD });
+    expect(login.status).toBe(200);
+    expect(login.body.mfa_required).toBeUndefined();
+    expect(login.body.token).toBeDefined();
+
+    // And the session it hands out is one the API actually accepts.
+    expect((await get("/api/v1/user/me", login.body.token)).status).toBe(200);
+  }, 120000);
+
+  // A webmail session is still not an admin session; that is the isolation the
+  // whole audience split exists for.
+  it("does not let the webmail session open the console by itself", async () => {
+    expect((await get("/api/v1/admin/dashboard", stepUpToken)).status).toBe(401);
+  });
+
+  // The sign-in checked the password and the second factor and never the role,
+  // so an ordinary account that had enrolled a factor - which any account may
+  // do from its own settings - could sign in at /admin/login and be handed an
+  // admin-audience session. The step-up checks the role; this path did not.
+  it("refuses an ordinary account at the admin sign-in, factor or no factor", async () => {
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [plainId]);
+    const secret = await enrollTotp(plainId, plainToken);
+
+    const attempt = await post("/api/v1/auth/admin/login", { email: plainEmail(), password: PASSWORD });
+    expect(attempt.status).toBe(403);
+    expect(attempt.body.error).toBe("FORBIDDEN");
+
+    // And no challenge came back that could be verified into one anyway.
+    expect(attempt.body.challenge_token).toBeUndefined();
+    void secret;
+  }, 120000);
+
+  it("refuses a step-up without a webmail session behind it", async () => {
+    expect((await post("/api/v1/auth/admin/step-up", { code: "123456" })).status).toBe(401);
+  });
+
+  it("refuses a step-up with the wrong code, and never on the password alone", async () => {
+    const res = await post("/api/v1/auth/admin/step-up", { code: "000000" }, stepUpToken);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("INVALID_MFA_CODE");
+  });
+
+  // The role is read from the database rather than from the token, so an
+  // ordinary account cannot cross over however valid its session is.
+  it("refuses a step-up from an account that may not open the console", async () => {
+    const res = await post("/api/v1/auth/admin/step-up", { code: "123456" }, plainToken);
+    expect(res.status).toBe(403);
+  });
+
+  // The point of the step-up: the second factor, and not the password, which
+  // the session in hand proved already.
+  it("crosses into the console on the second factor alone", async () => {
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [stepUpId]);
+    const secret = await enrollTotp(stepUpId, stepUpToken);
+
+    const stepUp = await postForCookies(
+      "/api/v1/auth/admin/step-up",
+      { code: generateHotp(base32Decode(secret), getCurrentStep()) },
+      stepUpToken,
+    );
+    expect(stepUp.status).toBe(200);
+    expect((await get("/api/v1/admin/dashboard", stepUp.body.token)).status).toBe(200);
+
+    // Both sessions come back, which is what makes leaving the console free.
+    expect(cookieNames(stepUp.cookies)).toEqual(["lm_admin_session", "lm_user_session"]);
+  }, 120000);
+
+  // Proving a password and a second factor is strictly more than the webmail
+  // asks for, so it must not leave the operator without a webmail session.
+  it("issues a webmail session at the admin sign-in too", async () => {
+    await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [stepUpId]);
+    const secret = await enrollTotp(stepUpId, stepUpToken);
+
+    const challenge = await post("/api/v1/auth/admin/login", { email: stepUpEmail(), password: PASSWORD });
+    expect(challenge.body.mfa_required).toBe(true);
+
+    const verified = await postForCookies("/api/v1/auth/mfa/verify", {
+      challenge_token: challenge.body.challenge_token,
+      code: generateHotp(base32Decode(secret), getCurrentStep()),
+    });
+    expect(verified.status).toBe(200);
+    expect(cookieNames(verified.cookies)).toEqual(["lm_admin_session", "lm_user_session"]);
+
+    // The webmail cookie has to be a webmail token, not the admin one copied
+    // across: an admin-audience token is refused by every /user route.
+    const userCookie = verified.cookies.find((c) => c.startsWith("lm_user_session="))!;
+    const userToken = userCookie.slice("lm_user_session=".length).split(";")[0];
+    expect((await get("/api/v1/user/me", userToken)).status).toBe(200);
+  }, 120000);
+
+  // Signing in twice in the same second produced a byte-identical token, which
+  // collided with the unique index on web_sessions.refresh_token_hash and
+  // answered 500 to a correct password. A double-clicked sign-in was enough.
+  it("survives two sign-ins in the same second", async () => {
+    const [first, second] = await Promise.all([
+      post("/api/v1/auth/user/login", { email: plainEmail(), password: PASSWORD }),
+      post("/api/v1/auth/user/login", { email: plainEmail(), password: PASSWORD }),
+    ]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body.token).not.toBe(second.body.token);
+  }, 60000);
 });
 
 if (!hasDatabase) {

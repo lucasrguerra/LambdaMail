@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { surfaceGateFor } from "./lib/surfaceGate";
 
 /**
  * Gate for the two web surfaces.
@@ -52,14 +53,16 @@ function isUsable(claims: JwtClaims | null, expectedAud: string): boolean {
 export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
-  const isAdminArea = pathname.startsWith("/admin") && !pathname.startsWith("/admin/login");
-  const isUserArea = pathname.startsWith("/user") && !pathname.startsWith("/user/login");
-  if (!isAdminArea && !isUserArea) {
+  // Which session this path needs is decided by surfaceGateFor, where it is
+  // tested. It is not always the surface the path sits under: /admin/step-up
+  // exists to turn a webmail session into an admin one, so requiring the admin
+  // session would make it unreachable.
+  const surface = surfaceGateFor(pathname);
+  if (!surface) {
     return NextResponse.next();
   }
 
-  const surface = isAdminArea ? "admin" : "user";
-  const cookieName = isAdminArea ? ADMIN_COOKIE : USER_COOKIE;
+  const cookieName = surface === "admin" ? ADMIN_COOKIE : USER_COOKIE;
   const claims = readClaims(req.cookies.get(cookieName)?.value);
 
   if (isUsable(claims, `lambdamail:${surface}`)) {

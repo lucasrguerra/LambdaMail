@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"strings"
 
@@ -15,6 +16,12 @@ import (
 // an out-of-memory kill.
 const maxRenderedPartBytes = 2 << 20 // 2 MiB
 
+// maxInlineImageBytes bounds one inline image. Inline parts travel to the
+// browser as data: URIs inside the JSON body, so an unbounded one would be
+// held in memory here, base64-expanded on the wire and held again in the tab.
+// Past this size the reader shows the alt text, which beats a stalled pane.
+const maxInlineImageBytes = 2 << 20 // 2 MiB
+
 // RenderedMessage is a message prepared for display: headers the reader shows
 // and the two body flavours, already decoded from their transfer encoding.
 type RenderedMessage struct {
@@ -27,6 +34,15 @@ type RenderedMessage struct {
 	Text        string   `json:"text"`
 	HTML        string   `json:"html"`
 	Attachments []string `json:"attachments"`
+	// InlineImages maps a part's Content-ID - without the angle brackets, the
+	// way the HTML body spells it in src="cid:..." - to a self-contained
+	// data: URI.
+	//
+	// Without this the reader had nothing to resolve cid: against, so every
+	// message written by a normal mail client displayed broken images. They
+	// are inlined rather than served from an endpoint so that the reader pane
+	// stays a sandboxed frame with no network identity of its own.
+	InlineImages map[string]string `json:"inline_images"`
 }
 
 // RenderMessage turns raw RFC 5322 bytes into what the reader pane needs.
@@ -37,7 +53,10 @@ type RenderedMessage struct {
 // still yields its raw text rather than an error - unreadable formatting beats
 // an inbox that refuses to open a message.
 func RenderMessage(raw []byte, uid uint32) RenderedMessage {
-	out := RenderedMessage{UID: uid, To: []string{}, Cc: []string{}, Attachments: []string{}}
+	out := RenderedMessage{
+		UID: uid, To: []string{}, Cc: []string{},
+		Attachments: []string{}, InlineImages: map[string]string{},
+	}
 
 	entity, err := message.Read(bytes.NewReader(raw))
 	if err != nil {
@@ -89,8 +108,25 @@ func collectParts(entity *message.Entity, out *RenderedMessage) {
 		mediaType = "text/plain"
 	}
 
-	if disposition, params, err := entity.Header.ContentDisposition(); err == nil && disposition == "attachment" {
-		name := params["filename"]
+	disposition, dispParams, dispErr := entity.Header.ContentDisposition()
+	if dispErr != nil {
+		disposition = ""
+	}
+
+	// An inline image is part of the body, not a file to download: it is
+	// resolved into the HTML and deliberately left out of the attachment list,
+	// or every message with a logo in its signature grows a download chip.
+	if isInlineImageCandidate(disposition, mediaType, entity.Header.Get("Content-ID")) {
+		if collectInlineImage(entity, mediaType, out) {
+			return
+		}
+	}
+
+	// "inline" counts as an attachment for anything that is not an inline
+	// image: a client that attaches a PDF without saying "attachment" still
+	// sent a file the reader has to be able to fetch.
+	if disposition == "attachment" || (disposition == "inline" && dispParams["filename"] != "") {
+		name := dispParams["filename"]
 		if name == "" {
 			name = "attachment"
 		}
@@ -109,6 +145,42 @@ func collectParts(entity *message.Entity, out *RenderedMessage) {
 	case strings.EqualFold(mediaType, "text/html") && out.HTML == "":
 		out.HTML = string(body)
 	}
+}
+
+// isInlineImageCandidate reports whether this part is an image the body can
+// reference. A Content-ID is what makes it referenceable; image/svg+xml is
+// excluded because an SVG is a document that carries script, and it is the one
+// image type a data: URI must never smuggle into the reader pane.
+func isInlineImageCandidate(disposition, mediaType, contentID string) bool {
+	if contentID == "" && disposition != "inline" {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+		return false
+	}
+	return !strings.EqualFold(mediaType, "image/svg+xml")
+}
+
+// collectInlineImage records one part as a data: URI, and reports whether it
+// took ownership of the part. An image too large to inline is claimed as well:
+// falling through would list it as an attachment, which is not what the sender
+// meant by embedding it in the body.
+func collectInlineImage(entity *message.Entity, mediaType string, out *RenderedMessage) bool {
+	contentID := strings.Trim(strings.TrimSpace(entity.Header.Get("Content-ID")), "<>")
+	if contentID == "" {
+		return false
+	}
+
+	// One byte past the limit is read so that an oversized part is recognised
+	// as oversized rather than silently truncated into a corrupt image.
+	body, err := io.ReadAll(io.LimitReader(entity.Body, maxInlineImageBytes+1))
+	if err != nil || len(body) > maxInlineImageBytes {
+		return true
+	}
+
+	out.InlineImages[contentID] = "data:" + strings.ToLower(mediaType) + ";base64," +
+		base64.StdEncoding.EncodeToString(body)
+	return true
 }
 
 // ExtractAttachment walks the MIME tree and returns bytes and content-type for a named attachment.

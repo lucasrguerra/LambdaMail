@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -24,29 +24,17 @@ import {
 import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 import { useAccount, isAdminRole } from "../../../lib/useAccount";
-
-interface FolderCount {
-  special_use: string;
-  name: string;
-  unread_count: number;
-}
+import { useFolders } from "../../../lib/useFolders";
+import { badgeCount, folderMetrics } from "../../../lib/mailCounts";
 
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations();
   const pathname = usePathname();
-  const [folders, setFolders] = useState<FolderCount[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
   const account = useAccount("user");
-
-  useEffect(() => {
-    void fetch("/api/v1/mail/folders")
-      .then((res) => (res.ok ? res.json() : []))
-      .then(setFolders)
-      .catch(() => undefined);
-  }, []);
-
-  const unreadFor = (role: string) =>
-    folders.find((f) => f.special_use === role || f.name.toLowerCase() === role)?.unread_count ?? 0;
+  // Live, not fetched once: these badges used to freeze at the value they had
+  // when the tab was opened.
+  const { folders } = useFolders();
 
   const navItems = [
     { href: "/user/mail/inbox", label: t("mail.inbox"), icon: Inbox, role: "inbox" },
@@ -93,31 +81,43 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || (item.role === "inbox" && pathname === "/user/mail");
-            const unread = unreadFor(item.role);
+            // Drafts counts what is waiting rather than what is unread; see
+            // badgeCount, which is where that rule is tested.
+            const badge = badgeCount(folders, item.role);
+            const { total } = folderMetrics(folders, item.role);
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                title={total > 0 ? t("mail.messagesInFolder", { count: total }) : item.label}
                 className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all duration-150 ${
                   isActive
                     ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-sm"
                     : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent"
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <Icon className={`w-4 h-4 ${isActive ? "text-indigo-400" : "text-slate-400"}`} />
-                  <span>{item.label}</span>
+                <div className="flex items-center gap-3 min-w-0">
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-indigo-400" : "text-slate-400"}`} />
+                  <span className="truncate">{item.label}</span>
                 </div>
-                {unread > 0 && (
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                      isActive ? "bg-indigo-500/40 text-indigo-200" : "bg-slate-800 text-slate-300"
-                    }`}
-                  >
-                    {unread}
-                  </span>
-                )}
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  {/* The folder's size, shown quietly beside the badge: the
+                      sidebar reported unread only, so there was nowhere in the
+                      interface that said how much mail a folder holds. */}
+                  {total > 0 && (
+                    <span className="text-[10px] font-mono text-slate-500 tabular-nums">{total}</span>
+                  )}
+                  {badge > 0 && (
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-semibold tabular-nums ${
+                        isActive ? "bg-indigo-500/40 text-indigo-200" : "bg-indigo-500/20 text-indigo-300"
+                      }`}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </div>
               </Link>
             );
           })}
@@ -139,13 +139,13 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
         </div>
 
         {/* The console is reachable from inside the app for the accounts that
-            may open it, which is why there is no longer a surface chooser in
-            front of the sign-in. It is a plain link to the admin sign-in, not a
-            direct jump: the admin audience is a separate token, so crossing
-            over means proving the second factor again. */}
+            may open it. It goes to the step-up rather than to the admin sign-in:
+            the admin audience is a separate token, so crossing over costs a
+            second factor - but not the password, which the session in hand
+            proved already. */}
         {isAdminRole(account?.role) && (
           <Link
-            href="/admin/login"
+            href="/admin/step-up"
             className="flex items-center gap-2.5 p-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/15 transition-all"
           >
             <Sliders className="w-4 h-4 flex-shrink-0" />

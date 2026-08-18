@@ -16,6 +16,14 @@ export interface SessionTokenPayload {
   // exists yet. It permits enrolling one and nothing else, which is what turns
   // the admin console's "enroll first" from a dead end into a step.
   purpose: "mfa_challenge" | "mfa_enrollment" | "session";
+  // A unique identity per token (RFC 7519 "jti").
+  //
+  // Without it nothing in the payload varied below one second - iat and exp
+  // are in seconds - so signing in twice in the same second produced the
+  // identical token, which hashes to the identical value and collides with the
+  // unique index on web_sessions.refresh_token_hash. A correct password
+  // answered 500, and a double-clicked sign-in was enough to do it.
+  jti: string;
   iat: number;
   exp: number;
 }
@@ -51,11 +59,17 @@ function base64UrlDecode(str: string): string {
   return Buffer.from(base64, "base64").toString("utf8");
 }
 
-export function createJwt(payload: Omit<SessionTokenPayload, "iat" | "exp">, expiresInSeconds = 28800): string {
+export function createJwt(
+  payload: Omit<SessionTokenPayload, "jti" | "iat" | "exp">,
+  expiresInSeconds = 28800,
+): string {
   const header = { alg: "HS256", typ: "JWT" };
   const now = Math.floor(Date.now() / 1000);
   const fullPayload: SessionTokenPayload = {
     ...payload,
+    // Minted here rather than by each caller, so no path can forget it and
+    // reintroduce the collision described on the field.
+    jti: crypto.randomUUID(),
     iat: now,
     exp: now + expiresInSeconds,
   };
