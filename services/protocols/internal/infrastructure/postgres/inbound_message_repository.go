@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -99,23 +101,39 @@ func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessage
 		return 0, fmt.Errorf("find folder %q for mailbox %s: %w", targetFolder, input.MailboxID, err)
 	}
 
+	// A copy the user wrote themselves arrives already read, so it must not
+	// raise the unread counter. Incrementing unconditionally is what left the
+	// Sent and Drafts folders advertising unread mail forever: nothing ever
+	// opens your own outgoing copy, so the counter had no way back down.
+	unreadDelta := 1
+	if input.AlreadySeen {
+		unreadDelta = 0
+	}
+
 	var modseq int64
 	if err := tx.QueryRow(ctx, `
-		UPDATE folders SET uid_next = uid_next + 1, highest_modseq = highest_modseq + 1, unread_count = unread_count + 1, total_count = total_count + 1
+		UPDATE folders SET uid_next = uid_next + 1, highest_modseq = highest_modseq + 1,
+		       unread_count = unread_count + $2, total_count = total_count + 1
 		WHERE id = $1
 		RETURNING highest_modseq
-	`, folderID).Scan(&modseq); err != nil {
+	`, folderID, unreadDelta).Scan(&modseq); err != nil {
 		return 0, fmt.Errorf("advance uid_next, highest_modseq and folder counters: %w", err)
 	}
 
 	// email_messages.id defaults to gen_random_uuid() per the migration - no explicit value needed.
-	_, err = tx.Exec(ctx, `
+	// id and received_at come back because message_flags is keyed on both:
+	// email_messages is partitioned by received_at, so the flag rows cannot be
+	// written without the same timestamp the row landed on.
+	var messageID uuid.UUID
+	var receivedAt time.Time
+	err = tx.QueryRow(ctx, `
 		INSERT INTO email_messages (
 			mailbox_id, folder_id, uid, modseq, blob_id,
 			sender_address, recipient_addresses, size_bytes,
 			subject, snippet, from_display_name, message_id_header, has_attachments,
 			spf_result, dkim_result, dmarc_result
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		RETURNING id, received_at
 	`, input.MailboxID, folderID, uid, modseq, input.Blob.ID,
 		input.SenderAddress, []string{input.RecipientAddress}, input.Blob.SizeBytes,
 		nullIfEmpty(input.Subject), nullIfEmpty(input.Snippet), nullIfEmpty(input.FromDisplayName),
@@ -129,9 +147,22 @@ func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessage
 		// Sent copy and drafts have no authentication results by definition -
 		// and it failed the whole insert. Sent stayed empty because that write
 		// is deliberately non-fatal, and saving a draft reported an error.
-		nullIfEmpty(input.SPFResult), nullIfEmpty(input.DKIMResult), nullIfEmpty(input.DMARCResult))
+		nullIfEmpty(input.SPFResult), nullIfEmpty(input.DKIMResult), nullIfEmpty(input.DMARCResult)).
+		Scan(&messageID, &receivedAt)
 	if err != nil {
 		return 0, fmt.Errorf("insert email_messages: %w", err)
+	}
+
+	// The flags that describe what this copy is. Without \Seen on an outgoing
+	// copy the unread counters never settle; without \Draft an IMAP client
+	// shows a half-written message as ordinary mail and offers to reply to it.
+	for _, flag := range messageFlagsFor(input, targetFolder) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO message_flags (message_id, received_at, flag)
+			VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
+		`, messageID, receivedAt, flag); err != nil {
+			return 0, fmt.Errorf("set flag %s: %w", flag, err)
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `UPDATE message_blobs SET ref_count = ref_count + 1 WHERE id = $1`, input.Blob.ID); err != nil {
@@ -150,4 +181,16 @@ func persistOne(ctx context.Context, tx pgx.Tx, input port.PersistInboundMessage
 	}
 
 	return uid, nil
+}
+
+// messageFlagsFor returns the IMAP flags a newly filed copy is born with.
+func messageFlagsFor(input port.PersistInboundMessageInput, folder string) []string {
+	flags := []string{}
+	if input.AlreadySeen {
+		flags = append(flags, `\Seen`)
+	}
+	if strings.EqualFold(folder, "Drafts") {
+		flags = append(flags, `\Draft`)
+	}
+	return flags
 }

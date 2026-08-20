@@ -259,6 +259,37 @@ func (m *mailAPI) handleSend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]bool{"queued": true})
 }
 
+// handleDelete removes one message: to Trash from anywhere else, and for good
+// from Trash itself.
+func (m *mailAPI) handleDelete(w http.ResponseWriter, r *http.Request) {
+	session, ok := m.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Folder string `json:"folder"`
+		UID    uint32 `json:"uid"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
+		return
+	}
+	if body.Folder == "" {
+		body.Folder = "inbox"
+	}
+	if body.UID == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_UID", "Message UID is required")
+		return
+	}
+
+	if err := m.useCase.Delete(r.Context(), session.Email, body.Folder, body.UID); err != nil {
+		m.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
 // handleSaveDraft stores the message being composed in the Drafts folder.
 func (m *mailAPI) handleSaveDraft(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.authenticate(w, r)
@@ -299,6 +330,9 @@ func (m *mailAPI) decodeCompose(
 		// previous shape - still sends a readable message rather than a blank
 		// one. Only used when neither text nor html is present.
 		LegacyBody string `json:"body"`
+		// DraftUID is the autosaved draft this message came from, so sending
+		// can clear it. Without it the draft outlived the message it became.
+		DraftUID uint32 `json:"draft_uid"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxComposeBytes)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
@@ -314,13 +348,14 @@ func (m *mailAPI) decodeCompose(
 	// letting the body choose From is how a webmail becomes an open relay for
 	// spoofed mail.
 	return usecase.ComposeInput{
-		From:    sender,
-		To:      body.To,
-		Cc:      body.Cc,
-		Bcc:     body.Bcc,
-		Subject: body.Subject,
-		Text:    text,
-		HTML:    body.HTML,
+		From:     sender,
+		To:       body.To,
+		Cc:       body.Cc,
+		Bcc:      body.Bcc,
+		Subject:  body.Subject,
+		Text:     text,
+		HTML:     body.HTML,
+		DraftUID: body.DraftUID,
 	}, true
 }
 

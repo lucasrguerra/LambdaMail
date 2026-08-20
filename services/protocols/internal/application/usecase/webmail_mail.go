@@ -138,6 +138,13 @@ type ComposeInput struct {
 	// that cannot or will not render HTML still has something to show.
 	Text string
 	HTML string
+	// DraftUID is the autosaved draft this message grew out of, or 0 when it
+	// was composed without one ever being stored.
+	//
+	// Sending used to ignore it entirely, so a message that had been autosaved
+	// went out and its draft stayed in Drafts: a duplicate of mail already on
+	// its way, which no screen in the webmail could then delete.
+	DraftUID uint32
 }
 
 // ErrNoRecipients rejects a submission with nobody to deliver to, before it
@@ -185,7 +192,44 @@ func (uc *WebmailUseCase) Send(ctx context.Context, input ComposeInput) error {
 	if err := uc.fileLocalCopy(ctx, account.ID, account.EmailAddress, "Sent", payload); err != nil {
 		log.Printf("webmail: could not file the Sent copy for %s: %v", account.EmailAddress, err)
 	}
+
+	// The draft this message grew out of has been superseded by the real
+	// thing. Swallowed like the Sent copy above and for the same reason: the
+	// mail is already queued, and failing the request now would only invite a
+	// second copy to be sent.
+	if input.DraftUID != 0 {
+		if mailboxID, idErr := uc.mailboxID(ctx, account.EmailAddress); idErr == nil {
+			if err := uc.repo.Expunge(ctx, mailboxID, "Drafts", input.DraftUID); err != nil {
+				log.Printf("webmail: could not discard the sent draft %d: %v", input.DraftUID, err)
+			}
+		}
+	}
 	return nil
+}
+
+// Delete removes one message the way a mail client does: from any ordinary
+// folder it goes to Trash, and from Trash it is really expunged.
+//
+// The webmail had no delete at all. Expunge existed but was reachable only
+// when an autosave superseded a draft, so anything the user wanted rid of -
+// most visibly the draft left behind by a sent message - stayed put.
+func (uc *WebmailUseCase) Delete(ctx context.Context, address, folder string, uid uint32) error {
+	mailboxID, err := uc.mailboxID(ctx, address)
+	if err != nil {
+		return err
+	}
+
+	_, err = uc.repo.MoveToTrash(ctx, mailboxID, folder, uid)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, port.ErrAlreadyInTrash), errors.Is(err, port.ErrNoTrashFolder):
+		// Already in Trash, or nowhere to move it to. Either way the second
+		// press is the one that removes it for good.
+		return uc.repo.Expunge(ctx, mailboxID, folder, uid)
+	default:
+		return err
+	}
 }
 
 // fileLocalCopy stores a message the user themselves composed into one of
@@ -213,6 +257,7 @@ func (uc *WebmailUseCase) fileLocalCopy(
 		FromDisplayName:  headers.FromDisplayName,
 		MessageIDHeader:  headers.MessageID,
 		HasAttachments:   headers.HasAttachments,
+		AlreadySeen:      true,
 	}})
 	return err
 }
@@ -261,6 +306,7 @@ func (uc *WebmailUseCase) SaveDraft(ctx context.Context, input ComposeInput, rep
 		FromDisplayName:  headers.FromDisplayName,
 		MessageIDHeader:  headers.MessageID,
 		HasAttachments:   headers.HasAttachments,
+		AlreadySeen:      true,
 	}})
 	if err != nil {
 		return 0, err

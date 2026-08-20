@@ -22,7 +22,12 @@ type PersistInboundMessageInput struct {
 	FromDisplayName string
 	MessageIDHeader string
 	HasAttachments  bool
-	SPFResult       string
+	// AlreadySeen marks a copy the user themselves composed - their own Sent
+	// copy, or a draft. It is not unread mail, and counting it as such is why
+	// the Sent folder carried an unread badge that nothing could clear: no
+	// reader ever opens their own outgoing copy, so the flag was never set.
+	AlreadySeen bool
+	SPFResult   string
 	DKIMResult      string
 	DMARCResult     string
 }

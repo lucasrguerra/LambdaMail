@@ -40,13 +40,35 @@ func (r *WebmailRepository) FindMailboxIDByAddress(ctx context.Context, address 
 }
 
 func (r *WebmailRepository) ListFolders(ctx context.Context, mailboxID string) ([]port.WebmailFolder, error) {
+	// The counts are derived from the messages themselves rather than read out
+	// of folders.unread_count/total_count.
+	//
+	// Those columns are a denormalised cache maintained by every write path,
+	// and once any one of them was wrong nothing brought it back: the number
+	// the user saw stayed wrong through a reload, a logout and a fresh login,
+	// because the wrongness was stored. Deriving here is authoritative and
+	// self-healing - a folder can only ever report what is actually in it.
+	//
+	// The columns stay maintained for IMAP's sake (STATUS answers from them),
+	// so this is a correction at the read side, not their removal.
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, name, COALESCE(special_use, ''), unread_count, total_count
-		  FROM folders WHERE mailbox_id = $1
-		 ORDER BY CASE special_use
+		SELECT f.id::text, f.name, COALESCE(f.special_use, ''),
+		       COUNT(e.id) FILTER (
+		         WHERE NOT EXISTS (SELECT 1 FROM message_flags mf
+		                            WHERE mf.message_id = e.id
+		                              AND mf.received_at = e.received_at
+		                              AND mf.flag = '\Seen')
+		       )::int AS unread_count,
+		       COUNT(e.id)::int AS total_count
+		  FROM folders f
+		  LEFT JOIN email_messages e
+		         ON e.folder_id = f.id AND e.expunged_at IS NULL
+		 WHERE f.mailbox_id = $1
+		 GROUP BY f.id, f.name, f.special_use
+		 ORDER BY CASE f.special_use
 		            WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sent' THEN 2
 		            WHEN 'archive' THEN 3 WHEN 'junk' THEN 4 WHEN 'trash' THEN 5
-		            ELSE 6 END, name
+		            ELSE 6 END, f.name
 	`, mailboxID)
 	if err != nil {
 		return nil, fmt.Errorf("list folders: %w", err)
@@ -224,7 +246,9 @@ func (r *WebmailRepository) Expunge(
 	err = tx.QueryRow(ctx, `
 		SELECT e.id, f.id::text,
 		       NOT EXISTS (SELECT 1 FROM message_flags mf
-		                    WHERE mf.message_id = e.id AND mf.flag = '\Seen')
+		                    WHERE mf.message_id = e.id
+		                      AND mf.received_at = e.received_at
+		                      AND mf.flag = '\Seen')
 		  FROM email_messages e
 		  JOIN folders f ON f.id = e.folder_id
 		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
@@ -259,4 +283,111 @@ func (r *WebmailRepository) Expunge(
 	}
 
 	return tx.Commit(ctx)
+}
+
+// MoveToTrash relocates one message into the mailbox's Trash folder and
+// returns the UID it was given there.
+//
+// This is what "delete" means in a mail client, and the webmail had no way to
+// do it at all: the only removal in the codebase was Expunge, reachable solely
+// when an autosave superseded a draft. A message the user wanted rid of - the
+// empty draft left behind by a sent message, most visibly - could not be
+// removed from any screen.
+//
+// The message keeps its identity and its blob; only the folder and the UID
+// change, because a UID is meaningful only within one folder. Deleting from
+// Trash itself is Expunge's job, not this one's.
+func (r *WebmailRepository) MoveToTrash(
+	ctx context.Context, mailboxID, folderName string, uid uint32,
+) (uint32, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var messageID uuid.UUID
+	var sourceFolderID string
+	var wasUnread bool
+	err = tx.QueryRow(ctx, `
+		SELECT e.id, f.id::text,
+		       NOT EXISTS (SELECT 1 FROM message_flags mf
+		                    WHERE mf.message_id = e.id
+		                      AND mf.received_at = e.received_at
+		                      AND mf.flag = '\Seen')
+		  FROM email_messages e
+		  JOIN folders f ON f.id = e.folder_id
+		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
+		   AND e.uid = $3 AND e.expunged_at IS NULL
+	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &sourceFolderID, &wasUnread)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrMessageNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	// Deleting something already in Trash has no further destination, so the
+	// caller is told to expunge instead of the message being moved onto itself.
+	var trashFolderID string
+	var trashUID int64
+	err = tx.QueryRow(ctx, `
+		SELECT id::text, uid_next FROM folders
+		 WHERE mailbox_id = $1 AND (special_use = 'trash' OR LOWER(name) = 'trash')
+		 ORDER BY special_use IS NOT NULL DESC
+		 LIMIT 1
+		 FOR UPDATE
+	`, mailboxID).Scan(&trashFolderID, &trashUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, port.ErrNoTrashFolder
+	}
+	if err != nil {
+		return 0, err
+	}
+	if trashFolderID == sourceFolderID {
+		return 0, port.ErrAlreadyInTrash
+	}
+
+	var modseq int64
+	if err := tx.QueryRow(ctx, `
+		UPDATE folders SET uid_next = uid_next + 1, highest_modseq = highest_modseq + 1,
+		       total_count = total_count + 1, unread_count = unread_count + $2
+		 WHERE id = $1
+		 RETURNING highest_modseq
+	`, trashFolderID, boolToInt(wasUnread)).Scan(&modseq); err != nil {
+		return 0, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE email_messages SET folder_id = $2, uid = $3, modseq = $4
+		 WHERE id = $1
+	`, messageID, trashFolderID, trashUID, modseq); err != nil {
+		return 0, err
+	}
+
+	unreadDelta := 0
+	if wasUnread {
+		unreadDelta = -1
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE folders
+		   SET total_count = GREATEST(0, total_count - 1),
+		       unread_count = GREATEST(0, unread_count + $2),
+		       highest_modseq = highest_modseq + 1
+		 WHERE id = $1
+	`, sourceFolderID, unreadDelta); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return uint32(trashUID), nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

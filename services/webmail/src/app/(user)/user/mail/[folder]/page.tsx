@@ -15,6 +15,7 @@ import {
   MailOpen,
   Download,
   RefreshCw,
+  Trash2,
   X,
 } from "lucide-react";
 import { useI18n } from "../../../../../i18n/provider";
@@ -202,6 +203,39 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
     [folder]
   );
 
+  /**
+   * Deletes one message: to Trash from an ordinary folder, and for good from
+   * Trash itself, which is what the server does with the same call.
+   *
+   * The webmail had no delete at all - no button and no route behind one - so
+   * anything the user wanted rid of stayed. The draft a sent message left
+   * behind was the case that made it impossible to ignore.
+   */
+  const deleteMessage = useCallback(
+    async (uid: number) => {
+      // Removed from the list first so the row goes at the moment of the
+      // click; the reload below is what makes the server's answer final.
+      setMessages((current) => current.filter((m) => m.uid !== uid));
+      setSelected((current) => (current?.uid === uid ? null : current));
+      try {
+        const res = await fetch("/api/v1/mail/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder, uid }),
+        });
+        if (!res.ok) throw new Error(t("errors.serverError"));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t("errors.serverError"));
+        // The optimistic removal was wrong, so put the folder back as it is.
+        void loadMessages(searchQuery);
+      } finally {
+        // Both the source folder and Trash moved, so the badges must re-read.
+        notifyMailStateChanged();
+      }
+    },
+    [folder, t, loadMessages, searchQuery]
+  );
+
   const openMessage = async (uid: number) => {
     setLoadRemoteImages(false);
     setReaderHeight(420);
@@ -359,8 +393,12 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
             filteredMessages.map((msg) => {
               const isSelected = selected?.uid === msg.uid;
               return (
+                /* The row and its delete control are siblings inside a
+                   positioned wrapper rather than nested: a button inside a
+                   button is invalid markup, and the browser drops the inner
+                   one, so the delete would never have been clickable. */
+                <div key={msg.uid} className="group relative">
                 <button
-                  key={msg.uid}
                   onClick={() => void openMessage(msg.uid)}
                   data-active={isSelected}
                   className="lm-row w-full text-left"
@@ -417,6 +455,19 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                     {!msg.seen && <span className="block h-[7px] w-[7px] rounded-full bg-indigo-500" />}
                   </span>
                 </button>
+                {/* Reachable without opening the message first, which is what
+                    the leftover empty draft needed: there was nothing worth
+                    reading in it, and no other way to get rid of it. */}
+                <button
+                  type="button"
+                  onClick={() => void deleteMessage(msg.uid)}
+                  title={t("common.delete")}
+                  aria-label={t("common.delete")}
+                  className="absolute right-2 top-2 hidden h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/[0.09] hover:text-slate-100 focus:flex focus-visible:flex group-hover:flex"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+                </div>
               );
             })
           )}
@@ -465,6 +516,15 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                 >
                   <MailOpen className="h-3.5 w-3.5" />
                   <span>{selectedRow?.seen === false ? t("mail.markRead") : t("mail.markUnread")}</span>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void deleteMessage(selected.uid)}
+                  title={t("common.delete")}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>{t("common.delete")}</span>
                 </Button>
                 <Button
                   variant="secondary"

@@ -34,3 +34,5 @@ Thumbs.db
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+*json
+*.json.gz

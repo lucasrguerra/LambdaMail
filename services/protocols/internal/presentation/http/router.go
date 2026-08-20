@@ -89,6 +89,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/mail/seen", r.handleMailSeen)
 	r.mux.HandleFunc("/api/v1/mail/send", r.handleMailSend)
 	r.mux.HandleFunc("/api/v1/mail/draft", r.handleMailDraft)
+	r.mux.HandleFunc("/api/v1/mail/delete", r.handleMailDelete)
 	r.mux.HandleFunc("/api/v1/reports/dmarc", r.handleDmarcIngest)
 	r.mux.HandleFunc("/api/v1/reports/tlsrpt", r.handleTlsRptIngest)
 }
@@ -300,6 +301,18 @@ func (r *Router) handleMailSend(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.mailReady(w) {
 		r.mail.handleSend(w, req)
+	}
+}
+
+// handleMailDelete removes one message. There was no route for this at all,
+// so nothing the webmail displayed could be deleted from it.
+func (r *Router) handleMailDelete(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost && req.Method != http.MethodDelete {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST or DELETE required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleDelete(w, req)
 	}
 }
 

@@ -72,7 +72,7 @@ func TestParseTlsRptReport_ValidJSON(t *testing.T) {
 			{
 				"policy": {
 					"policy-type": "sts",
-					"domain": "example.test"
+					"policy-domain": "example.test"
 				},
 				"summary": {
 					"total-successful-session-count": 100,

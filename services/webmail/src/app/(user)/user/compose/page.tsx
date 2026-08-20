@@ -58,11 +58,21 @@ export default function ComposePage({
   const draftUidRef = useRef<number>(0);
 
   const editorRef = useRef<HTMLDivElement>(null);
+  // The body, mirrored into React state.
+  //
+  // It used to live only inside the contenteditable, read through the ref at
+  // save time. Nothing observed it, so the autosave effect - which depends on
+  // what it reads - never re-ran when the message itself was typed. The draft
+  // was written once, moments after the address was entered, and never again:
+  // that is why a draft left behind by a sent message was empty.
+  const [body, setBody] = useState("");
 
   useEffect(() => {
     const savedSig = localStorage.getItem("lm_user_signature");
     if (editorRef.current && savedSig) {
-      editorRef.current.innerHTML = `<br/><br/>--<br/>${savedSig}`;
+      const initial = `<br/><br/>--<br/>${savedSig}`;
+      editorRef.current.innerHTML = initial;
+      setBody(initial);
     }
   }, []);
 
@@ -70,8 +80,8 @@ export default function ComposePage({
   // "draft saved automatically" and nothing else - no request, no storage - so
   // closing the tab lost the message while the screen had just said otherwise.
   const saveDraft = useCallback(async () => {
-    const html = editorRef.current?.innerHTML ?? "";
-    if (!to && !subject && !html.trim()) return;
+    const html = editorRef.current?.innerHTML ?? body;
+    if (!to && !subject && !body.trim() && !html.trim()) return;
     setDraftStatus(t("mail.draftSaving"));
     try {
       const res = await fetch("/api/v1/mail/draft", {
@@ -94,20 +104,26 @@ export default function ComposePage({
     } catch {
       setDraftStatus(t("mail.draftSaveFailed"));
     }
-  }, [to, cc, bcc, subject, t]);
+  }, [to, cc, bcc, subject, body, t]);
 
   // Debounced so a draft is written after a pause in typing rather than on
   // every keystroke. Skipped once the message is on its way out.
   useEffect(() => {
     if (sending) return;
-    if (!to && !subject) return;
+    // The body alone is enough: a message typed before its recipient is still
+    // worth keeping, and requiring an address here is half of why drafts were
+    // being stored with nothing in them.
+    if (!to && !subject && !body.trim()) return;
     const timer = setTimeout(() => void saveDraft(), 2500);
     return () => clearTimeout(timer);
-  }, [to, subject, cc, bcc, sending, saveDraft]);
+  }, [to, subject, cc, bcc, body, sending, saveDraft]);
 
   const executeFormat = (command: string, value: string | undefined = undefined) => {
     document.execCommand(command, false, value);
     editorRef.current?.focus();
+    // execCommand edits the DOM directly, so the mirrored body is re-read
+    // here rather than relying on an input event that may not be dispatched.
+    setBody(editorRef.current?.innerHTML ?? "");
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -130,7 +146,7 @@ export default function ComposePage({
     setSending(true);
     setUndoSeconds(10);
 
-    const bodyHtml = editorRef.current?.innerHTML || "";
+    const bodyHtml = editorRef.current?.innerHTML || body;
 
     const interval = setInterval(() => {
       setUndoSeconds((prev) => {
@@ -155,6 +171,10 @@ export default function ComposePage({
           bcc: splitAddresses(bcc),
           subject,
           html: htmlBody,
+          // The draft this message grew out of, so the server can discard it.
+          // Without this the draft outlived the message it became and sat in
+          // Drafts as a duplicate of mail already sent.
+          draft_uid: draftUidRef.current,
         }),
       });
       if (!res.ok) {
@@ -369,6 +389,8 @@ export default function ComposePage({
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
+            onInput={(e) => setBody((e.target as HTMLDivElement).innerHTML)}
+            onBlur={(e) => setBody((e.target as HTMLDivElement).innerHTML)}
             aria-label={t("ui.messageBody")}
             role="textbox"
             aria-multiline="true"

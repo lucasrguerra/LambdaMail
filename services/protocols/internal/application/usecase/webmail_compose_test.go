@@ -121,9 +121,11 @@ func TestHtmlToPlainTextIsReadable(t *testing.T) {
 // --- draft storage -------------------------------------------------------
 
 type stubWebmailRepo struct {
-	mailboxID  string
-	expunged   []uint32
-	expungeErr error
+	mailboxID    string
+	expunged     []uint32
+	expungeErr   error
+	movedToTrash []uint32
+	moveErr      error
 }
 
 func (s *stubWebmailRepo) FindMailboxIDByAddress(context.Context, string) (string, error) {
@@ -142,6 +144,39 @@ func (s *stubWebmailRepo) MarkSeen(context.Context, string, string, uint32, bool
 func (s *stubWebmailRepo) Expunge(_ context.Context, _, _ string, uid uint32) error {
 	s.expunged = append(s.expunged, uid)
 	return s.expungeErr
+}
+func (s *stubWebmailRepo) MoveToTrash(_ context.Context, _, _ string, uid uint32) (uint32, error) {
+	if s.moveErr != nil {
+		return 0, s.moveErr
+	}
+	s.movedToTrash = append(s.movedToTrash, uid)
+	return uid, nil
+}
+
+// newSendableUseCase wires the smallest use case that can actually complete a
+// Send: a real submission path over recording stubs.
+func newSendableUseCase(t *testing.T, mailboxID uuid.UUID, repo *stubWebmailRepo) *WebmailUseCase {
+	t.Helper()
+	return newSendableUseCaseWith(t, mailboxID, repo, &recordingMessageRepository{})
+}
+
+func newSendableUseCaseWith(
+	t *testing.T, mailboxID uuid.UUID, repo *stubWebmailRepo, messages *recordingMessageRepository,
+) *WebmailUseCase {
+	t.Helper()
+	account := &port.MailboxAuth{
+		ID: mailboxID, EmailAddress: "me@example.test",
+		DomainName: "example.test", MaxRecipientsPerHour: 100,
+	}
+	submission := NewProcessOutboundEmailUseCase(
+		nil, &countingOutboundRepo{}, &capturingBlobStorage{}, &recordingSigner{})
+	return (&WebmailUseCase{
+		repo:       repo,
+		auth:       &stubAuthRepo{account: account},
+		submission: submission,
+		localHost:  "mail.example.test",
+	}).WithLocalFiling(
+		&stubBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "d", SizeBytes: 5}}, messages)
 }
 
 type stubAuthRepo struct{ account *port.MailboxAuth }
@@ -208,5 +243,132 @@ func TestDraftSavesWithoutRecipients(t *testing.T) {
 		From: "me@example.test", Subject: "no recipients yet",
 	}, 0); err != nil {
 		t.Fatalf("a draft with no recipients must still save: %v", err)
+	}
+}
+
+// --- sending, and what it leaves behind ----------------------------------
+
+// The bug as the user hit it: write a message, send it, and the draft the
+// autosave had stored was still sitting in Drafts afterwards - a duplicate of
+// a message already on its way, that nothing on any screen could remove.
+func TestSendingDiscardsTheDraftItCameFrom(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	uc := newSendableUseCase(t, mailboxID, repo)
+
+	if err := uc.Send(context.Background(), ComposeInput{
+		From:     "me@example.test",
+		To:       []string{"you@example.test"},
+		Subject:  "Finished",
+		HTML:     "<p>done</p>",
+		DraftUID: 42,
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if len(repo.expunged) != 1 || repo.expunged[0] != 42 {
+		t.Errorf("the draft was left in Drafts after sending: expunged %v, want [42]", repo.expunged)
+	}
+}
+
+// A message composed from scratch has no draft behind it, and must not try to
+// remove UID 0 - which is not a UID at all.
+func TestSendingWithoutADraftExpungesNothing(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	uc := newSendableUseCase(t, mailboxID, repo)
+
+	if err := uc.Send(context.Background(), ComposeInput{
+		From: "me@example.test", To: []string{"you@example.test"}, Text: "hi",
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if len(repo.expunged) != 0 {
+		t.Errorf("nothing should have been expunged, got %v", repo.expunged)
+	}
+}
+
+// The Sent copy is a message the user wrote; it is not unread mail, and filing
+// it as unread is what left the Sent folder with a badge nothing could clear.
+func TestSentCopyIsFiledAsAlreadyRead(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	messages := &recordingMessageRepository{}
+	uc := newSendableUseCaseWith(t, mailboxID, repo, messages)
+
+	if err := uc.Send(context.Background(), ComposeInput{
+		From: "me@example.test", To: []string{"you@example.test"}, Text: "hi",
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if len(messages.persisted) != 1 {
+		t.Fatalf("want one filed copy, got %d", len(messages.persisted))
+	}
+	if !messages.persisted[0].AlreadySeen {
+		t.Error("the Sent copy was filed as unread mail")
+	}
+}
+
+// Likewise a draft: nothing ever opens one, so if it is filed unread its
+// folder carries a badge forever.
+func TestDraftIsFiledAsAlreadyRead(t *testing.T) {
+	mailboxID := uuid.New()
+	messages := &recordingMessageRepository{}
+	uc := (&WebmailUseCase{
+		repo:      &stubWebmailRepo{mailboxID: mailboxID.String()},
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}).WithLocalFiling(
+		&stubBlobStorage{ref: port.BlobRef{ID: uuid.New(), SHA256: "d", SizeBytes: 5}}, messages)
+
+	if _, err := uc.SaveDraft(context.Background(), ComposeInput{
+		From: "me@example.test", Subject: "half",
+	}, 0); err != nil {
+		t.Fatalf("save draft: %v", err)
+	}
+	if len(messages.persisted) != 1 || !messages.persisted[0].AlreadySeen {
+		t.Error("the draft was filed as unread mail")
+	}
+}
+
+// --- deleting ------------------------------------------------------------
+
+// Deleting from an ordinary folder moves the message to Trash.
+func TestDeleteMovesToTrash(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	uc := &WebmailUseCase{
+		repo:      repo,
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}
+
+	if err := uc.Delete(context.Background(), "me@example.test", "inbox", 7); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if len(repo.movedToTrash) != 1 || repo.movedToTrash[0] != 7 {
+		t.Errorf("the message was not moved to Trash: %v", repo.movedToTrash)
+	}
+	if len(repo.expunged) != 0 {
+		t.Errorf("deleting from the inbox must not destroy the message: expunged %v", repo.expunged)
+	}
+}
+
+// Deleting from Trash is the second press, and that one really removes it.
+func TestDeleteFromTrashExpunges(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String(), moveErr: port.ErrAlreadyInTrash}
+	uc := &WebmailUseCase{
+		repo:      repo,
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}
+
+	if err := uc.Delete(context.Background(), "me@example.test", "trash", 3); err != nil {
+		t.Fatalf("delete from trash: %v", err)
+	}
+	if len(repo.expunged) != 1 || repo.expunged[0] != 3 {
+		t.Errorf("emptying from Trash did not remove the message: %v", repo.expunged)
 	}
 }

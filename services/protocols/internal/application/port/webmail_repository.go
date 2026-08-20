@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,4 +64,16 @@ type WebmailRepository interface {
 	MarkSeen(ctx context.Context, mailboxID, folderName string, uid uint32, seen bool) error
 	// Expunge soft-deletes one message, keeping the folder counters in step.
 	Expunge(ctx context.Context, mailboxID, folderName string, uid uint32) error
+	// MoveToTrash relocates one message into Trash and returns its new UID
+	// there. This is what deleting a message means everywhere but in Trash
+	// itself, where Expunge is the operation instead.
+	MoveToTrash(ctx context.Context, mailboxID, folderName string, uid uint32) (uint32, error)
 }
+
+// ErrNoTrashFolder reports a mailbox with nowhere to put deleted mail, rather
+// than the message being destroyed instead.
+var ErrNoTrashFolder = errors.New("webmail: this mailbox has no Trash folder")
+
+// ErrAlreadyInTrash tells the caller to expunge rather than move: a message
+// already in Trash has no further destination.
+var ErrAlreadyInTrash = errors.New("webmail: message is already in Trash")

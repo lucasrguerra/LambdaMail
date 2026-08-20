@@ -34,7 +34,10 @@ type tlsRptJsonReport struct {
 	Policies []struct {
 		Policy struct {
 			PolicyType string `json:"policy-type"`
-			Domain     string `json:"domain"`
+			// RFC 8460 section 4.4 names this "policy-domain". Reading it as
+			// "domain" parsed every real report to a blank domain, so a stored
+			// report could not be attributed to the domain it was about.
+			Domain string `json:"policy-domain"`
 		} `json:"policy"`
 		Summary struct {
 			TotalSuccessfulSessionCount int `json:"total-successful-session-count"`
