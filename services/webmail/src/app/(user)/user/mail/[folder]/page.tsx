@@ -306,6 +306,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
     archive: t("mail.archive"),
     junk: t("mail.junk"),
     trash: t("mail.trash"),
+    reports: t("mail.reports"),
   };
   const folderTitle = FOLDER_LABELS[folder.toLowerCase()] ?? folder;
 

@@ -1,6 +1,10 @@
 package httppresentation
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -89,5 +93,46 @@ func TestWebSessionVerifier_RejectsExpiredToken(t *testing.T) {
 	v.now = func() time.Time { return time.Unix(interopIssuedAt+9*60*60, 0) }
 	if _, err := v.Verify(interopSession); !errors.Is(err, ErrTokenExpired) {
 		t.Fatalf("error = %v, want ErrTokenExpired", err)
+	}
+}
+
+// mintSession signs a session token the way the auth service does, so a test
+// can build a claim set the captured tokens do not cover - another surface, an
+// expired window, a different address.
+//
+// The captured tokens above stay the interop check: this only produces the
+// variations, and produces them through the same algorithm.
+func mintSession(t *testing.T, claims WebSession) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString(
+		[]byte(`{"alg":"HS256","typ":"JWT"}`))
+	body, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(body)
+
+	mac := hmac.New(sha256.New, []byte(interopSecret))
+	mac.Write([]byte(header + "." + payload))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	return header + "." + payload + "." + signature
+}
+
+// The minted tokens have to verify, or every test built on them is asserting
+// against a signature this server would reject for the wrong reason.
+func TestMintedSessionVerifiesLikeARealOne(t *testing.T) {
+	token := mintSession(t, WebSession{
+		Subject: "mb-1", Email: "user@example.test", Surface: "user",
+		Audience: "lambdamail:user", Purpose: "session", MfaSatisfied: true,
+		IssuedAt: interopIssuedAt, ExpiresAt: interopIssuedAt + 3600,
+	})
+
+	session, err := testVerifier(interopSecret).RequireSurface(token, "user")
+	if err != nil {
+		t.Fatalf("a locally minted session was rejected: %v", err)
+	}
+	if session.Email != "user@example.test" {
+		t.Errorf("Email = %q", session.Email)
 	}
 }

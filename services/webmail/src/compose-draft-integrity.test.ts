@@ -80,3 +80,23 @@ describe("deleting a message", () => {
     expect(del.slice(0, 1200)).toMatch(/setMessages\(/);
   });
 });
+
+describe("the Reports folder", () => {
+  // DMARC and TLS-RPT reports are parsed on arrival and filed here instead of
+  // the inbox. The sidebar is a fixed list, so without an entry the folder
+  // exists and receives mail that no screen can reach.
+  it("is reachable from the sidebar", () => {
+    const layout = code("src/app/(user)/user/layout.tsx");
+    expect(layout).toContain("/user/mail/reports");
+  });
+
+  it("is named through the translator, not hardcoded", () => {
+    const layout = code("src/app/(user)/user/layout.tsx");
+    expect(layout).toMatch(/t\("mail\.reports"\)/);
+  });
+
+  it("has a title on the message list too", () => {
+    const page = code(MAIL_PAGE);
+    expect(page).toMatch(/reports:\s*t\("mail\.reports"\)/);
+  });
+});

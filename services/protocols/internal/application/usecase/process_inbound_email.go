@@ -65,10 +65,18 @@ type ProcessInboundEmailUseCase struct {
 	messages       port.InboundMessageRepository
 	folders        port.ImapFolderRepository
 	trackerManager *MailboxTrackerManager
+	reportIngestor *IngestDeliveredReportsUseCase
 }
 
 func NewProcessInboundEmailUseCase(mailboxes port.MailboxRepository, blobs port.BlobStorage, messages port.InboundMessageRepository) *ProcessInboundEmailUseCase {
 	return &ProcessInboundEmailUseCase{mailboxes: mailboxes, blobs: blobs, messages: messages}
+}
+
+// SetReportIngestor enables reading DMARC and TLS-RPT reports out of the mail
+// that carries them. Optional: with no ingestor a report is delivered like any
+// other message, which is what happened before this existed.
+func (uc *ProcessInboundEmailUseCase) SetReportIngestor(ingestor *IngestDeliveredReportsUseCase) {
+	uc.reportIngestor = ingestor
 }
 
 func (uc *ProcessInboundEmailUseCase) SetScanner(scanner port.ContentScanner) {
@@ -234,6 +242,26 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 		}
 	}
 
+	// Reports are read here, after the scan has had its say and before the
+	// message is filed, because this is where the recipient list and the
+	// finished payload are both in hand.
+	//
+	// A report that fails to parse is still routed to Reports: the address it
+	// was sent to is what makes it one, and leaving a broken report in the
+	// inbox instead would put back exactly the noise this removes. The bytes
+	// are kept either way, so it can be re-ingested once the cause is fixed.
+	alreadySeen := false
+	if uc.reportIngestor != nil {
+		outcome, err := uc.reportIngestor.Ingest(ctx, input.RecipientAddresses, payload)
+		if err != nil {
+			return err
+		}
+		if outcome.Kind != ReportKindNone {
+			targetFolder = ReportsFolderName
+			alreadySeen = true
+		}
+	}
+
 	blob, err := uc.blobs.Store(ctx, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -261,6 +289,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			FromDisplayName:  headers.FromDisplayName,
 			MessageIDHeader:  headers.MessageID,
 			HasAttachments:   headers.HasAttachments,
+			AlreadySeen:      alreadySeen,
 			SPFResult:        authResult.SPF,
 			DKIMResult:       authResult.DKIM,
 			DMARCResult:      authResult.DMARC,

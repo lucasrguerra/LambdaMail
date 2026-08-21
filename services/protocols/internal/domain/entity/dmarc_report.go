@@ -1,6 +1,7 @@
 package entity
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"encoding/xml"
@@ -55,10 +56,16 @@ type dmarcXmlReport struct {
 	} `xml:"record"`
 }
 
-// ParseDmarcXmlReport parses raw XML or gzipped XML DMARC aggregate report.
+// ParseDmarcXmlReport parses a DMARC aggregate report: raw XML, gzipped XML,
+// or XML inside a zip archive.
+//
+// Zip matters as much as gzip. Microsoft and Yahoo send .zip, and between them
+// they account for a large share of the reports any domain receives; handling
+// gzip alone meant those reports never parsed at all.
 func ParseDmarcXmlReport(payload []byte) (*DmarcReport, error) {
 	data := payload
-	if isGzip(payload) {
+	switch {
+	case isGzip(payload):
 		gz, err := gzip.NewReader(bytes.NewReader(payload))
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
@@ -67,6 +74,12 @@ func ParseDmarcXmlReport(payload []byte) (*DmarcReport, error) {
 		decompressed, err := io.ReadAll(gz)
 		if err != nil {
 			return nil, fmt.Errorf("decompress gzip: %w", err)
+		}
+		data = decompressed
+	case isZip(payload):
+		decompressed, err := firstFileInZip(payload)
+		if err != nil {
+			return nil, err
 		}
 		data = decompressed
 	}
@@ -100,4 +113,42 @@ func ParseDmarcXmlReport(payload []byte) (*DmarcReport, error) {
 
 func isGzip(payload []byte) bool {
 	return len(payload) >= 2 && payload[0] == 0x1f && payload[1] == 0x8b
+}
+
+// isZip reports whether the payload begins with a local file header. The
+// empty-archive and spanned-archive signatures are deliberately not accepted:
+// neither carries a report.
+func isZip(payload []byte) bool {
+	return len(payload) >= 4 && payload[0] == 'P' && payload[1] == 'K' &&
+		payload[2] == 0x03 && payload[3] == 0x04
+}
+
+// firstFileInZip returns the contents of the first regular file in the
+// archive. An aggregate report is one XML document per archive, so there is
+// nothing to choose between; directories are skipped so an archive that
+// carries one cannot be mistaken for an empty one.
+func firstFileInZip(payload []byte) ([]byte, error) {
+	reader, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
+	if err != nil {
+		return nil, fmt.Errorf("zip reader: %w", err)
+	}
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		handle, err := file.Open()
+		if err != nil {
+			return nil, fmt.Errorf("open %s in zip: %w", file.Name, err)
+		}
+		defer handle.Close()
+		// Bounded so a zip bomb cannot exhaust this process: an aggregate
+		// report is XML in the tens of kilobytes, and 64 MiB is far past any
+		// legitimate one.
+		decompressed, err := io.ReadAll(io.LimitReader(handle, 64<<20))
+		if err != nil {
+			return nil, fmt.Errorf("decompress %s in zip: %w", file.Name, err)
+		}
+		return decompressed, nil
+	}
+	return nil, fmt.Errorf("zip archive contains no report")
 }

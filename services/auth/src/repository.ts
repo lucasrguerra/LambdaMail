@@ -686,7 +686,12 @@ export async function createMailbox(scope: AdminScope, input: CreateMailboxInput
     `INSERT INTO folders (mailbox_id, name, special_use)
      SELECT $1, f.name, f.special_use
        FROM (VALUES ('INBOX','inbox'), ('Sent','sent'), ('Drafts','drafts'),
-                    ('Trash','trash'), ('Junk','junk'), ('Archive','archive')) AS f(name, special_use)`,
+                    ('Trash','trash'), ('Junk','junk'), ('Archive','archive'),
+                    -- Where delivered DMARC and TLS-RPT reports are filed.
+                    -- IMAP has no special-use role for these, so it is matched
+                    -- by name. Without the folder the delivery path falls back
+                    -- to INBOX, which is the noise this is here to remove.
+                    ('Reports', NULL)) AS f(name, special_use)`,
     [created!.id],
   );
 

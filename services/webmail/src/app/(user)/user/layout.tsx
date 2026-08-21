@@ -43,6 +43,9 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
     { href: "/user/mail/archive", label: t("mail.archive"), icon: Archive, role: "archive" },
     { href: "/user/mail/junk", label: t("mail.junk"), icon: AlertTriangle, role: "junk" },
     { href: "/user/mail/trash", label: t("mail.trash"), icon: Trash2, role: "trash" },
+    // Where delivered DMARC and TLS-RPT reports are filed. Matched by name
+    // rather than a special-use role, because IMAP defines none for reports.
+    { href: "/user/mail/reports", label: t("mail.reports"), icon: ShieldCheck, role: "reports" },
   ];
 
   const handleLogout = () => {

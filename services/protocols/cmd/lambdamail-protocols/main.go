@@ -59,8 +59,11 @@ func main() {
 		case "healthcheck":
 			runHealthcheck()
 			return
+		case "backfill-reports":
+			runBackfillReports(cfg)
+			return
 		default:
-			log.Fatalf("unknown subcommand %q (expected preflight or healthcheck)", os.Args[1])
+			log.Fatalf("unknown subcommand %q (expected preflight, healthcheck or backfill-reports)", os.Args[1])
 		}
 	}
 
@@ -118,6 +121,16 @@ func run(cfg config) {
 		inboundUC.SetScanner(scanner)
 	}
 
+	// DMARC and TLS-RPT reports arrive as ordinary mail to the dmarc@ and
+	// tlsrpt@ aliases every domain gets. Reading them here is what fills the
+	// report tables the admin console shows; without this they arrived as
+	// attachments in the admin's inbox and nothing ever parsed one.
+	//
+	// It shares the report use case with the HTTP ingest endpoints below, so
+	// mail and API writes land in the same tables through the same parsers.
+	reportsUC := usecase.NewIngestReportsUseCase(reportRepo)
+	inboundUC.SetReportIngestor(usecase.NewIngestDeliveredReportsUseCase(reportsUC))
+
 	// ------------------------------------------------------------ outbound
 	var signer port.DkimSigner
 	if dkimRepo != nil {
@@ -173,7 +186,7 @@ func run(cfg config) {
 		postgres.NewWebmailRepository(pool), blobReader, submissionUC, authRepo, cfg.PrimaryMailHost,
 	).WithLocalFiling(blobs, messages)
 
-	router := httppresentation.NewRouter(usecase.NewIngestReportsUseCase(reportRepo), func() error { return pool.Ping(ctx) })
+	router := httppresentation.NewRouter(reportsUC, func() error { return pool.Ping(ctx) })
 	if cfg.JwtSecret == "" {
 		log.Printf("JWT_SECRET is not set: the webmail mail API stays disabled")
 	}

@@ -34,5 +34,15 @@ Thumbs.db
 
 # TypeScript incremental build cache
 *.tsbuildinfo
-*json
+
+# DMARC and TLS-RPT reports. They arrive by mail, are parsed into the report
+# tables on delivery, and are named for the reporter and the date range: data,
+# never source.
+#
+# The pattern here was "*json" - no dot - which ignored every .json file in the
+# repository. The ones already committed survived only because .gitignore does
+# not apply to tracked files; any new one - another language's messages, a new
+# service's package.json - would have been silently left out of every commit.
 *.json.gz
+*.xml.gz
+*.zip.gz
