@@ -91,6 +91,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/mail/draft", r.handleMailDraft)
 	r.mux.HandleFunc("/api/v1/mail/delete", r.handleMailDelete)
 	r.mux.HandleFunc("/api/v1/mail/move", r.handleMailMove)
+	r.mux.HandleFunc("/api/v1/mail/folders/manage", r.handleMailFolderAdmin)
 	r.mux.HandleFunc("/api/v1/reports/dmarc", r.handleDmarcIngest)
 	r.mux.HandleFunc("/api/v1/reports/tlsrpt", r.handleTlsRptIngest)
 }
@@ -314,6 +315,24 @@ func (r *Router) handleMailDelete(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.mailReady(w) {
 		r.mail.handleDelete(w, req)
+	}
+}
+
+// handleMailFolderAdmin creates, renames and deletes a user's own folders.
+func (r *Router) handleMailFolderAdmin(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleFolderAdmin(w, req)
+	}
+}
+
+// SetFolderAdmin enables managing a mailbox's own folders.
+func (r *Router) SetFolderAdmin(folders *appusecase.ManageFoldersUseCase) {
+	if r.mail != nil {
+		r.mail.folders = folders
 	}
 }
 

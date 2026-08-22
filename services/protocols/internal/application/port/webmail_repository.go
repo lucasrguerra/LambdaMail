@@ -74,6 +74,10 @@ type WebmailRepository interface {
 	MoveToTrash(ctx context.Context, mailboxID, folderName string, uid uint32) (uint32, error)
 }
 
+// ErrFolderMissing reports a folder that is not there, or that is a standard
+// folder and therefore not the user's to change.
+var ErrFolderMissing = errors.New("folders: no such folder for this mailbox")
+
 // ErrNoTrashFolder reports a mailbox with nowhere to put deleted mail, rather
 // than the message being destroyed instead.
 var ErrNoTrashFolder = errors.New("webmail: this mailbox has no Trash folder")
@@ -81,3 +85,16 @@ var ErrNoTrashFolder = errors.New("webmail: this mailbox has no Trash folder")
 // ErrAlreadyInTrash tells the caller to expunge rather than move: a message
 // already in Trash has no further destination.
 var ErrAlreadyInTrash = errors.New("webmail: message is already in Trash")
+
+// FolderAdmin manages the folders a mailbox owner creates for themselves.
+//
+// Separate from WebmailRepository because these are writes to the folder list
+// itself rather than reads of the mail inside it, and because the reserved
+// folders are protected in the use case above this, not here.
+type FolderAdmin interface {
+	ListFolders(ctx context.Context, mailboxID string) ([]WebmailFolder, error)
+	CreateFolder(ctx context.Context, mailboxID, name string) error
+	RenameFolder(ctx context.Context, mailboxID, from, to string) error
+	// DeleteFolder removes the folder and the messages filed in it.
+	DeleteFolder(ctx context.Context, mailboxID, name string) error
+}

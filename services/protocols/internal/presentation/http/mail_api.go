@@ -26,6 +26,9 @@ const maxComposeBytes = 32 << 20 // 32 MiB
 type mailAPI struct {
 	useCase  *usecase.WebmailUseCase
 	sessions *WebSessionVerifier
+	// folders is optional: without it the folder routes report that the
+	// feature is not configured rather than 404ing like a typo.
+	folders *usecase.ManageFoldersUseCase
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -291,6 +294,49 @@ func (m *mailAPI) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
+// handleFolderAdmin creates, renames and deletes the folders a mailbox owner
+// keeps for themselves.
+func (m *mailAPI) handleFolderAdmin(w http.ResponseWriter, r *http.Request) {
+	session, ok := m.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if m.folders == nil {
+		writeError(w, http.StatusServiceUnavailable, "FOLDERS_UNAVAILABLE",
+			"Folder management is not configured")
+		return
+	}
+
+	var body struct {
+		Action  string `json:"action"`
+		Name    string `json:"name"`
+		NewName string `json:"new_name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
+		return
+	}
+
+	var err error
+	switch strings.ToLower(body.Action) {
+	case "create":
+		err = m.folders.Create(r.Context(), session.Email, body.Name)
+	case "rename":
+		err = m.folders.Rename(r.Context(), session.Email, body.Name, body.NewName)
+	case "delete":
+		err = m.folders.Delete(r.Context(), session.Email, body.Name)
+	default:
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST",
+			"action must be create, rename or delete")
+		return
+	}
+	if err != nil {
+		m.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // handleMove files one message into another folder.
 func (m *mailAPI) handleMove(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.authenticate(w, r)
@@ -402,6 +448,15 @@ func (m *mailAPI) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusTooManyRequests, "SEND_LIMIT_EXCEEDED", "Hourly recipient limit reached")
 	case errors.Is(err, usecase.ErrSenderNotOwned):
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "Sender address does not belong to this account")
+	case errors.Is(err, usecase.ErrFolderExists):
+		writeError(w, http.StatusConflict, "FOLDER_EXISTS", "A folder with that name already exists")
+	case errors.Is(err, usecase.ErrFolderReserved):
+		writeError(w, http.StatusForbidden, "FOLDER_RESERVED",
+			"That folder belongs to the mail system and cannot be changed")
+	case errors.Is(err, usecase.ErrInvalidFolderName):
+		writeError(w, http.StatusBadRequest, "INVALID_FOLDER_NAME", "That folder name cannot be used")
+	case errors.Is(err, usecase.ErrFolderNotFound), errors.Is(err, port.ErrFolderMissing):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "No folder with that name")
 	case errors.Is(err, usecase.ErrFolderNotATarget):
 		writeError(w, http.StatusBadRequest, "FOLDER_NOT_A_TARGET",
 			"Messages cannot be moved into Sent or Drafts")

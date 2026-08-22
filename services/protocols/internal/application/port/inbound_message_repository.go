@@ -28,8 +28,8 @@ type PersistInboundMessageInput struct {
 	// reader ever opens their own outgoing copy, so the flag was never set.
 	AlreadySeen bool
 	SPFResult   string
-	DKIMResult      string
-	DMARCResult     string
+	DKIMResult  string
+	DMARCResult string
 }
 
 // InboundMessageRepository durably records an accepted inbound message: for

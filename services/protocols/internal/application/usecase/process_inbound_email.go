@@ -66,10 +66,20 @@ type ProcessInboundEmailUseCase struct {
 	folders        port.ImapFolderRepository
 	trackerManager *MailboxTrackerManager
 	reportIngestor *IngestDeliveredReportsUseCase
+	rules          *ApplyRulesUseCase
+	submission     *ProcessOutboundEmailUseCase
+	auth           port.AuthRepository
+	replyHost      string
 }
 
 func NewProcessInboundEmailUseCase(mailboxes port.MailboxRepository, blobs port.BlobStorage, messages port.InboundMessageRepository) *ProcessInboundEmailUseCase {
 	return &ProcessInboundEmailUseCase{mailboxes: mailboxes, blobs: blobs, messages: messages}
+}
+
+// SetRules enables the mailbox's own filing rules. Optional: without it a
+// message is delivered exactly as it was before rules existed.
+func (uc *ProcessInboundEmailUseCase) SetRules(rules *ApplyRulesUseCase) {
+	uc.rules = rules
 }
 
 // SetReportIngestor enables reading DMARC and TLS-RPT reports out of the mail
@@ -250,6 +260,8 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 	// was sent to is what makes it one, and leaving a broken report in the
 	// inbox instead would put back exactly the noise this removes. The bytes
 	// are kept either way, so it can be re-ingested once the cause is fixed.
+	var vacationReplies []pendingVacation
+
 	alreadySeen := false
 	if uc.reportIngestor != nil {
 		outcome, err := uc.reportIngestor.Ingest(ctx, input.RecipientAddresses, payload)
@@ -276,14 +288,41 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 	// same headers, and the list view reads them instead of the blob.
 	headers := ExtractMessageHeaders(payload)
 
-	persistInputs := make([]port.PersistInboundMessageInput, len(input.Recipients))
+	persistInputs := make([]port.PersistInboundMessageInput, 0, len(input.Recipients))
 	for i, recipient := range input.Recipients {
-		persistInputs[i] = port.PersistInboundMessageInput{
+		// Each recipient's own rules decide their own copy: two mailboxes on
+		// this server receiving the same message may file it differently.
+		folder := targetFolder
+		var decision RuleDecision
+		if uc.rules != nil {
+			decision = uc.rules.For(ctx, recipient.ID, input.RecipientAddresses[i], input.Sender, payload)
+			if decision.Discard {
+				// Accepted and then dropped. The sender is told the message was
+				// delivered, because a filing rule is not a rejection - saying
+				// otherwise would have their server retry it forever.
+				log.Printf("rules: %s discarded a message from %s",
+					input.RecipientAddresses[i], input.Sender)
+				continue
+			}
+			if decision.Folder != "" {
+				folder = decision.Folder
+			}
+			if decision.Vacation != nil {
+				vacationReplies = append(vacationReplies, pendingVacation{
+					To:      input.Sender,
+					From:    input.RecipientAddresses[i],
+					Subject: decision.Vacation.Subject,
+					Body:    decision.Vacation.Body,
+				})
+			}
+		}
+
+		persistInputs = append(persistInputs, port.PersistInboundMessageInput{
 			MailboxID:        recipient.ID,
 			Blob:             blob,
 			SenderAddress:    input.Sender,
 			RecipientAddress: input.RecipientAddresses[i],
-			TargetFolderName: targetFolder,
+			TargetFolderName: folder,
 			Subject:          headers.Subject,
 			Snippet:          headers.Snippet,
 			FromDisplayName:  headers.FromDisplayName,
@@ -293,12 +332,23 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			SPFResult:        authResult.SPF,
 			DKIMResult:       authResult.DKIM,
 			DMARCResult:      authResult.DMARC,
-		}
+		})
+	}
+
+	// Every recipient's rules discarded it: nothing to file, and the sender is
+	// still told the message was accepted.
+	if len(persistInputs) == 0 {
+		uc.sendVacationReplies(ctx, vacationReplies)
+		return nil
 	}
 
 	if _, err := uc.messages.PersistAll(ctx, persistInputs); err != nil {
 		return err
 	}
+
+	// Only after the message is safely stored: a reply sent for a delivery
+	// that then rolled back would answer mail the mailbox never received.
+	uc.sendVacationReplies(ctx, vacationReplies)
 
 	// Notifications happen only after the commit: an IDLE client told about a
 	// message that then rolled back would show one that does not exist.

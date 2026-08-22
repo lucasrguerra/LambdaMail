@@ -31,3 +31,13 @@ type DeliveredReportStore interface {
 	// MoveToReportsFolder files a backfilled message out of the inbox.
 	MoveToReportsFolder(ctx context.Context, messageID uuid.UUID) error
 }
+
+// SieveScriptReader reads the active rule script for a mailbox.
+//
+// The delivery path needs this and nothing else about Sieve: the scripts are
+// written by ManageSieve and by the settings screen, and read here.
+type SieveScriptReader interface {
+	// ActiveScriptFor returns the mailbox's active script, or empty when it
+	// has none.
+	ActiveScriptFor(ctx context.Context, mailboxID uuid.UUID) (string, error)
+}

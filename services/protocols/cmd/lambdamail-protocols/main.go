@@ -131,12 +131,23 @@ func run(cfg config) {
 	reportsUC := usecase.NewIngestReportsUseCase(reportRepo)
 	inboundUC.SetReportIngestor(usecase.NewIngestDeliveredReportsUseCase(reportsUC))
 
+	// The mailbox's own filing rules, applied as mail arrives. Until this was
+	// wired the scripts were stored and never read, so a vacation responder
+	// that was switched on never replied and no filter ever filed anything.
+	inboundUC.SetRules(usecase.NewApplyRulesUseCase(postgres.NewSieveRepository(pool)))
+
 	// ------------------------------------------------------------ outbound
 	var signer port.DkimSigner
 	if dkimRepo != nil {
 		signer = dkim.NewSigner(dkimRepo)
 	}
 	submissionUC := usecase.NewProcessOutboundEmailUseCase(authRepo, outboundRepo, blobs, signer)
+
+	// The vacation responder needs a way to actually send. Wired after the
+	// submission use case exists, because an automatic reply goes out through
+	// the same queue, signing and send limits as any other message this
+	// server sends - it is not a special path.
+	inboundUC.SetVacationSender(submissionUC, authRepo, cfg.PrimaryMailHost)
 
 	mxResolver := netdns.NewNetMXResolver()
 	outboundWorker := usecase.NewOutboundWorkerUseCase(outboundRepo, mxResolver, blobReader, inboundUC, mailboxes, cfg.PrimaryMailHost)
@@ -191,6 +202,10 @@ func run(cfg config) {
 		log.Printf("JWT_SECRET is not set: the webmail mail API stays disabled")
 	}
 	router.SetMailAPI(webmailUC, cfg.JwtSecret)
+	// Folders the mailbox owner keeps for themselves, which the filing rules
+	// can then name as a destination.
+	router.SetFolderAdmin(usecase.NewManageFoldersUseCase(
+		postgres.NewWebmailRepository(pool), postgres.NewWebmailRepository(pool)))
 	if dkimRepo != nil {
 		router.SetAdminDkimAPI(dkimRepo, generateDkimKey, cfg.JwtSecret)
 	}

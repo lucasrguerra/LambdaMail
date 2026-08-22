@@ -413,3 +413,76 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// --- folders the mailbox owner creates for themselves --------------------
+
+// CreateFolder adds a folder with no special-use role.
+//
+// No role, because IMAP defines roles only for the standard set: a folder a
+// user invents is addressed by name, which is why the move and the rules match
+// on names as well as roles.
+func (r *WebmailRepository) CreateFolder(ctx context.Context, mailboxID, name string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO folders (mailbox_id, name, special_use) VALUES ($1, $2, NULL)
+	`, mailboxID, name)
+	if err != nil {
+		return fmt.Errorf("create folder %q: %w", name, err)
+	}
+	return nil
+}
+
+// RenameFolder changes a folder's name, keeping its messages and its UIDs.
+//
+// The messages are not touched: a UID belongs to a folder, and the folder is
+// still the same one, so renaming must not renumber anything or an IMAP client
+// holding those UIDs would lose track of every message in it.
+func (r *WebmailRepository) RenameFolder(ctx context.Context, mailboxID, from, to string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE folders SET name = $3
+		 WHERE mailbox_id = $1 AND LOWER(name) = LOWER($2) AND special_use IS NULL
+	`, mailboxID, from, to)
+	if err != nil {
+		return fmt.Errorf("rename folder %q: %w", from, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return port.ErrFolderMissing
+	}
+	return nil
+}
+
+// DeleteFolder removes a folder and the mail filed in it.
+//
+// The messages are expunged rather than deleted outright, matching what the
+// rest of the schema does: the blobs stay referenced until the retention sweep,
+// so a folder deleted by mistake is still recoverable from the database.
+func (r *WebmailRepository) DeleteFolder(ctx context.Context, mailboxID, name string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var folderID string
+	err = tx.QueryRow(ctx, `
+		SELECT id::text FROM folders
+		 WHERE mailbox_id = $1 AND LOWER(name) = LOWER($2) AND special_use IS NULL
+	`, mailboxID, name).Scan(&folderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return port.ErrFolderMissing
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE email_messages SET expunged_at = NOW()
+		 WHERE folder_id = $1 AND expunged_at IS NULL
+	`, folderID); err != nil {
+		return fmt.Errorf("expunge the folder's messages: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM folders WHERE id = $1`, folderID); err != nil {
+		return fmt.Errorf("delete folder %q: %w", name, err)
+	}
+	return tx.Commit(ctx)
+}
