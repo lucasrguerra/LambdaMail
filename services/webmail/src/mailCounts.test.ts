@@ -333,3 +333,28 @@ describe("the folders a user made themselves", () => {
     expect(customFolders(undefined)).toEqual([]);
   });
 });
+
+describe("move targets when there is no current folder", () => {
+  const folders = [
+    { special_use: "inbox", name: "INBOX", unread_count: 0, total_count: 1 },
+    { special_use: "sent", name: "Sent", unread_count: 0, total_count: 0 },
+    { special_use: "", name: "Faturas", unread_count: 0, total_count: 0 },
+    { special_use: "", name: "Reports", unread_count: 0, total_count: 0 },
+  ];
+
+  // The rules screen picks a destination without any message being open, so it
+  // has no "current folder" to exclude. Passing an empty string made
+  // `role === current` true for every folder with no special-use role - which
+  // is exactly the folders the user created - so the destination list silently
+  // left out the only folders a filing rule is usually written for.
+  it("offers the custom folders when no folder is excluded", () => {
+    const names = moveTargets(folders, "").map((f) => f.name);
+    expect(names).toContain("Faturas");
+    expect(names).toContain("Reports");
+    expect(names).toContain("INBOX");
+  });
+
+  it("still leaves Sent out", () => {
+    expect(moveTargets(folders, "").map((f) => f.name)).not.toContain("Sent");
+  });
+});

@@ -218,7 +218,13 @@ export function moveTargets(
     if (role === "sent" || role === "drafts") return false;
     if (name === "sent" || name === "drafts") return false;
     // Already here: nothing to do.
-    if (role === current || name === current) return false;
+    //
+    // Guarded on current being non-empty. A folder the user created has no
+    // special-use role, so with an empty current `role === current` was true
+    // for every one of them - and the rules screen, which has no open message
+    // and therefore no current folder, offered a destination list missing
+    // precisely the folders a filing rule is usually written for.
+    if (current !== "" && (role === current || name === current)) return false;
     return Boolean(folder.name);
   });
 }
