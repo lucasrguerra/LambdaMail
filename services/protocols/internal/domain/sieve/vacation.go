@@ -26,9 +26,24 @@ func shouldAutoReply(msg Message) bool {
 	}
 	// Addresses that exist to carry automated mail. Answering one is at best
 	// noise and at worst a loop.
-	for _, reserved := range []string{"mailer-daemon", "postmaster", "no-reply", "noreply", "bounce", "bounces"} {
-		if local == reserved || strings.HasPrefix(local, reserved+"+") {
+	//
+	// The prefix is matched against every separator a real sender uses, not
+	// just "+". Google sends its DMARC reports from
+	// noreply-dmarc-support@google.com: checking only for the exact word or a
+	// "+" suffix let that through, and this mailbox would have auto-replied to
+	// every daily report it receives.
+	for _, reserved := range []string{
+		"mailer-daemon", "mailerdaemon", "postmaster", "no-reply", "noreply",
+		"donotreply", "do-not-reply", "bounce", "bounces", "notification",
+		"notifications", "automated", "auto-reply", "autoreply",
+	} {
+		if local == reserved {
 			return false
+		}
+		for _, separator := range []string{"+", "-", ".", "_"} {
+			if strings.HasPrefix(local, reserved+separator) {
+				return false
+			}
 		}
 	}
 

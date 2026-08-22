@@ -392,3 +392,44 @@ func TestEscapedQuestionMarkIsALiteralCharacter(t *testing.T) {
 		t.Errorf("the escaped question mark matched any character: %q", out.Folder)
 	}
 }
+
+// A reserved local part is recognised however the sender joined it to the rest
+// of the address.
+//
+// Found by running the script stored on a real mailbox: Google sends its DMARC
+// reports from noreply-dmarc-support@google.com, and matching only the exact
+// word or a "+" suffix let that through - so the responder would have replied
+// to every daily report, forever.
+func TestVacationStaysSilentForReservedAddressesWithSuffixes(t *testing.T) {
+	senders := []string{
+		"noreply-dmarc-support@google.com",
+		"no-reply.billing@example.test",
+		"bounces+abc123@example.test",
+		"mailer-daemon@example.test",
+		"notifications-noreply@example.test",
+		"MAILER-DAEMON@EXAMPLE.TEST",
+	}
+	for _, sender := range senders {
+		out := evaluate(t, vacationScript, Message{
+			Sender:  sender,
+			Headers: map[string][]string{"from": {sender}},
+		})
+		if out.Vacation != nil {
+			t.Errorf("would have replied to %s", sender)
+		}
+	}
+}
+
+// The guard must not swallow a real person whose address merely starts with
+// one of those words.
+func TestVacationStillRepliesToAPersonWithASimilarAddress(t *testing.T) {
+	for _, sender := range []string{"noreplygames@example.test", "bouncer@example.test", "postmasters@example.test"} {
+		out := evaluate(t, vacationScript, Message{
+			Sender:  sender,
+			Headers: map[string][]string{"from": {sender}},
+		})
+		if out.Vacation == nil {
+			t.Errorf("stayed silent for %s, which is a person", sender)
+		}
+	}
+}
