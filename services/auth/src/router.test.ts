@@ -412,10 +412,17 @@ describeDb("auth API against a real database", () => {
     expect(created.status).toBe(201);
 
     // Delivery depends on these existing: a mailbox with no Junk folder used
-    // to fail the spam path outright.
-    const folders = await query<{ special_use: string }>(
-      `SELECT special_use FROM folders WHERE mailbox_id = $1`, [created.body.id]);
-    expect(folders.map((f) => f.special_use).sort()).toEqual(
+    // to fail the spam path outright, and one with no Reports folder files
+    // every delivered DMARC and TLS-RPT report into the inbox instead.
+    //
+    // Asserted on the name rather than the special-use role: IMAP defines no
+    // role for Reports, so its role is NULL and a list of roles cannot say
+    // whether the folder is there.
+    const folders = await query<{ name: string; special_use: string | null }>(
+      `SELECT name, special_use FROM folders WHERE mailbox_id = $1`, [created.body.id]);
+    expect(folders.map((f) => f.name).sort()).toEqual(
+      ["Archive", "Drafts", "INBOX", "Junk", "Reports", "Sent", "Trash"]);
+    expect(folders.map((f) => f.special_use).filter(Boolean).sort()).toEqual(
       ["archive", "drafts", "inbox", "junk", "sent", "trash"]);
 
     const audit = await get("/api/v1/admin/audit", admin);

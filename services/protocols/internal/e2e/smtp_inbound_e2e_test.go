@@ -43,7 +43,7 @@ func TestInboundSMTPEndToEnd(t *testing.T) {
 	// --- 1. Real Postgres via embedded binaries ---------------------------
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54329).
+		Port(15429).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -51,7 +51,7 @@ func TestInboundSMTPEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	dbURL := "postgres://postgres:postgres@localhost:54329/postgres?sslmode=disable"
+	dbURL := "postgres://postgres:postgres@localhost:15429/postgres?sslmode=disable"
 	pool, err := postgres.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)

@@ -31,7 +31,7 @@ func TestEventStreamPushesDeliveredMail(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54348).
+		Port(15448).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -39,7 +39,7 @@ func TestEventStreamPushesDeliveredMail(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:54348/postgres?sslmode=disable")
+	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:15448/postgres?sslmode=disable")
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)
 	}

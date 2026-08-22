@@ -30,7 +30,7 @@ func TestDkimRotationLeavesAUsableKey(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54349).
+		Port(15449).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -38,7 +38,7 @@ func TestDkimRotationLeavesAUsableKey(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:54349/postgres?sslmode=disable")
+	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:15449/postgres?sslmode=disable")
 	if err != nil {
 		t.Fatal(err)
 	}

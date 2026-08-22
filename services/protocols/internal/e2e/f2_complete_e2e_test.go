@@ -35,7 +35,7 @@ func TestF2CompleteSuiteEndToEnd(t *testing.T) {
 	// 1. Embedded Postgres Setup
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54335).
+		Port(15435).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -43,7 +43,7 @@ func TestF2CompleteSuiteEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	dbURL := "postgres://postgres:postgres@localhost:54335/postgres?sslmode=disable"
+	dbURL := "postgres://postgres:postgres@localhost:15435/postgres?sslmode=disable"
 	pool, err := postgres.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)

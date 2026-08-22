@@ -33,7 +33,7 @@ func TestOutboundQueueEndToEnd(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54339).
+		Port(15439).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -41,7 +41,7 @@ func TestOutboundQueueEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	dbURL := "postgres://postgres:postgres@localhost:54339/postgres?sslmode=disable"
+	dbURL := "postgres://postgres:postgres@localhost:15439/postgres?sslmode=disable"
 	pool, err := postgres.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)

@@ -28,7 +28,7 @@ func TestManageSieveEndToEnd(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54333). // distinct port for ManageSieve e2e test execution
+		Port(15433). // distinct port for ManageSieve e2e test execution
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -36,7 +36,7 @@ func TestManageSieveEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	dbURL := "postgres://postgres:postgres@localhost:54333/postgres?sslmode=disable"
+	dbURL := "postgres://postgres:postgres@localhost:15433/postgres?sslmode=disable"
 	pool, err := postgres.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)

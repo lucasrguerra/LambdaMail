@@ -30,7 +30,7 @@ func TestImapIdleAndCondStoreEndToEnd(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54331). // distinct port for concurrent e2e test execution
+		Port(15431). // distinct port for concurrent e2e test execution
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -38,7 +38,7 @@ func TestImapIdleAndCondStoreEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	dbURL := "postgres://postgres:postgres@localhost:54331/postgres?sslmode=disable"
+	dbURL := "postgres://postgres:postgres@localhost:15431/postgres?sslmode=disable"
 	pool, err := postgres.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("connect: %v", err)

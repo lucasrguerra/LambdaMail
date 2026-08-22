@@ -21,7 +21,7 @@ func TestDnsSyncAndSystemAliasesEndToEnd(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54336).
+		Port(15436).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -29,7 +29,7 @@ func TestDnsSyncAndSystemAliasesEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	dbURL := "postgres://postgres:postgres@localhost:54336/postgres?sslmode=disable"
+	dbURL := "postgres://postgres:postgres@localhost:15436/postgres?sslmode=disable"
 	pool, err := postgres.NewPool(ctx, dbURL)
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)

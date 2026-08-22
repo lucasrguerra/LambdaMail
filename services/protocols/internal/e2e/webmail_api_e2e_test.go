@@ -58,7 +58,7 @@ func TestWebmailApiEndToEnd(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54346).
+		Port(15446).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -66,7 +66,7 @@ func TestWebmailApiEndToEnd(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:54346/postgres?sslmode=disable")
+	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:15446/postgres?sslmode=disable")
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestWebmailApiRejectsCrossMailboxAccess(t *testing.T) {
 
 	runtimeDir := t.TempDir()
 	pg := embeddedpostgres.NewDatabase(embeddedpostgres.DefaultConfig().
-		Port(54347).
+		Port(15447).
 		RuntimePath(runtimeDir).
 		StartTimeout(120 * time.Second))
 	if err := pg.Start(); err != nil {
@@ -266,7 +266,7 @@ func TestWebmailApiRejectsCrossMailboxAccess(t *testing.T) {
 	}
 	defer pg.Stop()
 
-	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:54347/postgres?sslmode=disable")
+	pool, err := postgres.NewPool(ctx, "postgres://postgres:postgres@localhost:15447/postgres?sslmode=disable")
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)
 	}
