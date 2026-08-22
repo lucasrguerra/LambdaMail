@@ -1,0 +1,17 @@
+# Findings that have been assessed and deliberately accepted.
+#
+# Every entry needs a reason. An unexplained ignore is indistinguishable from
+# one added to make a red build green, and the next person cannot tell whether
+# it is still true.
+
+# DS-0026: "Add HEALTHCHECK instruction in your Dockerfile".
+#
+# The health checks exist, in docker-compose.yaml, where every long-running
+# service defines one against its own /health endpoint. That is the layer that
+# acts on the result - Compose and Coolify restart on it, a HEALTHCHECK line in
+# the image does not - and duplicating them in the Dockerfiles would mean two
+# definitions to keep in step.
+#
+# The one service without a check is "migrate", which runs to completion and
+# exits: there is no running container left to probe.
+DS-0026

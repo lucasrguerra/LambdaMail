@@ -157,6 +157,25 @@ jobs:
           exit-code: '1'
           skip-dirs: services/auth/node_modules,services/storage/node_modules,services/webmail/node_modules,services/webmail/.next
 
+      # MEDIUM is reported but does not fail the build.
+      #
+      # The gate above stops at HIGH, which is why a MEDIUM XSS advisory in
+      # DOMPurify - the library that sanitises every message body the webmail
+      # renders - sat unnoticed through green builds. Severity is the
+      # advisory's opinion, not this project's: a MEDIUM in the HTML sanitiser
+      # matters more here than a HIGH in a build-time tool.
+      #
+      # Reporting rather than gating, because failing on every MEDIUM makes the
+      # scanner something people learn to skip.
+      - name: Repositório (MEDIUM, informativo)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret
+          severity: MEDIUM
+          exit-code: '0'
+          skip-dirs: services/auth/node_modules,services/storage/node_modules,services/webmail/node_modules,services/webmail/.next
+
   image:
     name: Imagem (${{ matrix.service }})
     runs-on: ubuntu-latest
