@@ -175,39 +175,46 @@ describe("the badge a sidebar folder renders", () => {
     { special_use: "archive", name: "Archive", unread_count: 0, total_count: 0 },
   ];
 
-  // The inbox showed "14" with nothing unread. Reading every message left it
-  // at 14, because 14 was the total wearing the unread badge's clothes.
-  it("does not show a total where an unread count belongs", () => {
-    const badge = folderBadge(folders, "inbox");
-    expect(badge.unread).toBe(0);
-    expect(badge.showsUnread).toBe(false);
-  });
-
-  it("still reports the folder size, separately from the unread count", () => {
-    expect(folderBadge(folders, "inbox").total).toBe(14);
-  });
-
-  // Drafts counted total as its badge, so total and badge were the same
-  // number and the sidebar printed it twice: "Rascunhos 1 1".
-  it("never renders the same number twice for drafts", () => {
-    const badge = folderBadge(folders, "drafts");
-    const rendered = [badge.showsUnread ? badge.unread : null, badge.total].filter(
-      (v) => v !== null,
-    );
-    expect(rendered).toEqual([1]);
-  });
-
-  it("shows the unread count when there really is unread mail", () => {
+  // The sidebar shows what needs attention and nothing else. Printing the size
+  // of every folder beside its name filled the rail with numbers that never
+  // change and that nobody is waiting on.
+  it("shows the unread count when there is unread mail", () => {
     const badge = folderBadge(folders, "junk");
     expect(badge.showsUnread).toBe(true);
     expect(badge.unread).toBe(3);
-    expect(badge.total).toBe(9);
   });
 
-  it("shows nothing at all for an empty folder", () => {
-    const badge = folderBadge(folders, "archive");
+  // An inbox whose mail has all been read shows nothing. This is also what the
+  // original defect looked like from the other side: it showed "14" - the
+  // total - and reading a message never moved it.
+  it("shows nothing when everything has been read", () => {
+    expect(folderBadge(folders, "inbox").showsUnread).toBe(false);
+  });
+
+  it("shows nothing for a folder nothing is delivered to", () => {
+    expect(folderBadge(folders, "sent").showsUnread).toBe(false);
+  });
+
+  it("shows nothing for an empty folder", () => {
+    expect(folderBadge(folders, "archive").showsUnread).toBe(false);
+  });
+
+  // Nothing marks a draft read, so its unread count is permanently zero. With
+  // only unread counts on show, Drafts carries no number at all.
+  it("shows nothing for drafts, which are never unread", () => {
+    expect(folderBadge(folders, "drafts").showsUnread).toBe(false);
+  });
+
+  // The total is still available to anything that wants it - the folder
+  // heading uses it - it is simply not what the rail displays.
+  it("still reports the folder size for callers that need it", () => {
+    expect(folderBadge(folders, "inbox").total).toBe(14);
+  });
+
+  it("copes with a folder that is not there", () => {
+    const badge = folderBadge(folders, "nao-existe");
     expect(badge.showsUnread).toBe(false);
-    expect(badge.total).toBe(0);
+    expect(badge.unread).toBe(0);
   });
 });
 

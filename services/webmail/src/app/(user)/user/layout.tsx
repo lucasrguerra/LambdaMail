@@ -133,21 +133,10 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
               <Icon className={`h-[17px] w-[17px] flex-none ${isActive ? "text-indigo-500" : "text-slate-400"}`} />
               <span className="min-w-0 flex-1 text-[13.5px] leading-snug">{item.label}</span>
               <span className="flex flex-none items-center gap-1.5">
-                {/* The folder's size, shown quietly beside the badge: the
-                    sidebar reported unread only, so there was nowhere in the
-                    interface that said how much mail a folder holds. */}
-                {/* The folder size, always in the same quiet style, so it
-                    can never be mistaken for an unread count. */}
-                {badge.total > 0 && (
-                  <span
-                    className="text-[11.5px] tabular-nums text-slate-500"
-                    title={t("mail.messagesInFolder", { count: badge.total })}
-                  >
-                    {badge.total}
-                  </span>
-                )}
-                {/* The unread count, only when there is unread mail, and
-                    visibly distinct from the size beside it. */}
+                {/* Only what is waiting to be read. The size of every folder
+                    beside its name filled the rail with numbers that never
+                    change and that nobody is waiting on; the folder heading
+                    still says how much mail a folder holds. */}
                 {badge.showsUnread && (
                   <span
                     className={`rounded-full px-1.5 py-px text-[11px] font-medium tabular-nums ${
@@ -186,9 +175,6 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
                 />
                 <span className="min-w-0 flex-1 truncate text-[13.5px] leading-snug">{folder.name}</span>
                 <span className="flex flex-none items-center gap-1.5 pr-5">
-                  {badge.total > 0 && (
-                    <span className="text-[11.5px] tabular-nums text-slate-500">{badge.total}</span>
-                  )}
                   {badge.showsUnread && (
                     <span className="rounded-full bg-indigo-500/20 px-1.5 py-px text-[11px] font-medium tabular-nums text-indigo-300">
                       {badge.unread}

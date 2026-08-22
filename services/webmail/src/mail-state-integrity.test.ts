@@ -36,17 +36,18 @@ describe("the counters the sidebar shows", () => {
     expect(code(USER_LAYOUT)).not.toMatch(/unread_count\s*\?\?/);
   });
 
-  // The total was rendered twice for Drafts, where the badge and the size are
-  // the same number: "Rascunhos 1 1".
-  //
-  // Two occurrences now, not one: the standard folders and the folders the
-  // user created are rendered by separate templates. What must not happen is
-  // one template printing it twice, which is what the defect was.
-  it("renders the folder size once per folder template", () => {
+  // The sidebar shows what is waiting to be read and nothing else. It used to
+  // print the size of every folder beside its name - numbers that never change
+  // and that nobody is waiting on - and, worse, it printed the size in the
+  // unread badge's own place whenever nothing was unread, so an inbox of read
+  // mail showed "14" and reading another message never moved it.
+  it("renders only the unread count, never the folder size", () => {
     const layout = code(USER_LAYOUT);
-    expect(layout.match(/\{badge\.total\}/g) ?? []).toHaveLength(2);
-    // And each template guards the unread badge, so the two numbers can never
-    // be the same value shown twice.
+    // The size survives in the tooltip, which is not the rail.
+    const rendered = layout.match(/\{badge\.total\}/g) ?? [];
+    expect(rendered).toHaveLength(0);
+    // Both folder templates - the standard ones and the user's own - guard
+    // their badge on there actually being unread mail.
     expect(layout.match(/badge\.showsUnread/g) ?? []).toHaveLength(2);
   });
 
