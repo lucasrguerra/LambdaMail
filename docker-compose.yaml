@@ -61,6 +61,11 @@ services:
   # unhealthy exactly when it has done its job.
   migrate:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/migrations:${IMAGE_TAG:-latest}
+    # "latest" is a moving tag and Docker considers a tag it already holds
+    # locally to be satisfied, so recreating this container silently reused
+    # the cached image and the newly published one was never fetched: the
+    # deploy reported success while the running code stayed put.
+    pull_policy: always
     restart: "no"
     logging: *default-logging
     depends_on:
@@ -76,6 +81,11 @@ services:
   # ------------------------------------------------------------ RSPAMD
   rspamd:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/rspamd:${IMAGE_TAG:-latest}
+    # "latest" is a moving tag and Docker considers a tag it already holds
+    # locally to be satisfied, so recreating this container silently reused
+    # the cached image and the newly published one was never fetched: the
+    # deploy reported success while the running code stayed put.
+    pull_policy: always
     restart: *restart
     logging: *default-logging
     environment:
@@ -131,6 +141,11 @@ services:
   # -------------------------------------------------------------- AUTH
   auth:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/auth:${IMAGE_TAG:-latest}
+    # "latest" is a moving tag and Docker considers a tag it already holds
+    # locally to be satisfied, so recreating this container silently reused
+    # the cached image and the newly published one was never fetched: the
+    # deploy reported success while the running code stayed put.
+    pull_policy: always
     restart: *restart
     logging: *default-logging
     environment:
@@ -164,6 +179,11 @@ services:
   # ----------------------------------------------------------- STORAGE
   storage:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/storage:${IMAGE_TAG:-latest}
+    # "latest" is a moving tag and Docker considers a tag it already holds
+    # locally to be satisfied, so recreating this container silently reused
+    # the cached image and the newly published one was never fetched: the
+    # deploy reported success while the running code stayed put.
+    pull_policy: always
     restart: *restart
     logging: *default-logging
     environment:
@@ -195,6 +215,11 @@ services:
   # --------------------------------------------------------- PROTOCOLS
   protocols:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/protocols:${IMAGE_TAG:-latest}
+    # "latest" is a moving tag and Docker considers a tag it already holds
+    # locally to be satisfied, so recreating this container silently reused
+    # the cached image and the newly published one was never fetched: the
+    # deploy reported success while the running code stayed put.
+    pull_policy: always
     restart: *restart
     logging: *default-logging
     ports:
@@ -273,6 +298,11 @@ services:
   # -------------------------------------------------------------- WEB
   web:
     image: ${IMAGE_NAMESPACE:-ghcr.io/lucasrguerra/lambdamail}/webmail:${IMAGE_TAG:-latest}
+    # "latest" is a moving tag and Docker considers a tag it already holds
+    # locally to be satisfied, so recreating this container silently reused
+    # the cached image and the newly published one was never fetched: the
+    # deploy reported success while the running code stayed put.
+    pull_policy: always
     restart: *restart
     logging: *default-logging
     environment:
