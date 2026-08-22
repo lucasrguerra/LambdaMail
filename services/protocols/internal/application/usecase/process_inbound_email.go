@@ -308,11 +308,18 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 				folder = decision.Folder
 			}
 			if decision.Vacation != nil {
+				// The message being answered travels with the reply, so it
+				// arrives inside that conversation instead of as a loose note
+				// the sender has to match up themselves.
+				original := headersOf(payload)
 				vacationReplies = append(vacationReplies, pendingVacation{
-					To:      input.Sender,
-					From:    input.RecipientAddresses[i],
-					Subject: decision.Vacation.Subject,
-					Body:    decision.Vacation.Body,
+					To:                 input.Sender,
+					From:               input.RecipientAddresses[i],
+					Subject:            decision.Vacation.Subject,
+					Body:               decision.Vacation.Body,
+					OriginalMessageID:  firstHeader(original, "message-id"),
+					OriginalReferences: firstHeader(original, "references"),
+					OriginalSubject:    firstHeader(original, "subject"),
 				})
 			}
 		}

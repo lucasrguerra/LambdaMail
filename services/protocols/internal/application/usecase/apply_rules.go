@@ -100,3 +100,12 @@ func headersOf(payload []byte) map[string][]string {
 	}
 	return out
 }
+
+// firstHeader returns one header value, or empty when the message has none.
+func firstHeader(headers map[string][]string, name string) string {
+	values := headers[name]
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
