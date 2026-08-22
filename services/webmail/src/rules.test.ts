@@ -53,8 +53,8 @@ describe("turning a rule into Sieve", () => {
   // a script that did not parse - so one apostrophe silently disabled every
   // rule the user had.
   it("escapes a quote in the value", () => {
-    const script = buildSieve([rule({ value: 'ele disse "olá"' })]);
-    expect(script).toContain('\\"olá\\"');
+    const script = buildSieve([rule({ value: 'ele disse "ola"' })]);
+    expect(script).toContain('\\"ola\\"');
     expect(parseSieve(script)!).toHaveLength(1);
   });
 
@@ -116,9 +116,12 @@ describe("reading rules back out of Sieve", () => {
   });
 
   it("round-trips the field and the target folder", () => {
-    const [read] = parseSieve(buildSieve([rule({ field: "from", target: "Relatórios" })]))!;
+    // Escaped rather than written as the letter: this repository keeps its
+    // source ASCII, and an accented folder name still has to survive intact.
+    const accented = "Relat\u00f3rios";
+    const [read] = parseSieve(buildSieve([rule({ field: "from", target: accented })]))!;
     expect(read.field).toBe("from");
-    expect(read.target).toBe("Relatórios");
+    expect(read.target).toBe(accented);
   });
 
   // A script written by hand, or by a desktop client over ManageSieve, may use

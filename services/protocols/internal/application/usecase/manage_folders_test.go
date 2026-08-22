@@ -201,7 +201,7 @@ func TestRefusesAnAbsurdlyLongName(t *testing.T) {
 // Accents are ordinary in a Portuguese folder name.
 func TestAcceptsAccentedNames(t *testing.T) {
 	store := &stubFolderStore{existing: standardFolders()}
-	if err := newFolders(store).Create(context.Background(), "me@example.test", "Relatórios de Março"); err != nil {
+	if err := newFolders(store).Create(context.Background(), "me@example.test", "Relat\u00f3rios de Mar\u00e7o"); err != nil {
 		t.Errorf("an accented name was refused: %v", err)
 	}
 }

@@ -39,7 +39,7 @@ func TestRuleFilesTheMessageInItsFolder(t *testing.T) {
 
 func TestRuleThatDoesNotMatchLeavesTheMessageAlone(t *testing.T) {
 	out := evaluate(t, uiRule, Message{Headers: map[string][]string{
-		"subject": {"Almoço amanhã"},
+		"subject": {"Almoco amanha"},
 	}})
 	if out.Folder != "" {
 		t.Errorf("an unmatched rule filed into %q", out.Folder)
@@ -78,10 +78,10 @@ func TestIsRequiresTheWholeValue(t *testing.T) {
 // :matches is Sieve's wildcard form - * and ? - and is what the interface
 // should offer instead of asking a human for a regular expression.
 func TestMatchesUsesWildcardsNotRegex(t *testing.T) {
-	script := `if header :matches "From" "*@google.com" { fileinto "Relatórios"; }`
+	script := `if header :matches "From" "*@google.com" { fileinto "Reports"; }`
 	if out := evaluate(t, script, Message{Headers: map[string][]string{
 		"from": {"noreply-dmarc-support@google.com"},
-	}}); out.Folder != "Relatórios" {
+	}}); out.Folder != "Reports" {
 		t.Errorf("wildcard did not match: %q", out.Folder)
 	}
 	if out := evaluate(t, script, Message{Headers: map[string][]string{
@@ -105,7 +105,7 @@ func TestWildcardDotIsLiteral(t *testing.T) {
 func TestAnyofMatchesWhenOneTestPasses(t *testing.T) {
 	script := `if anyof (header :contains "Subject" "fatura", header :contains "From" "banco") { fileinto "Financeiro"; }`
 	out := evaluate(t, script, Message{Headers: map[string][]string{
-		"subject": {"Almoço"}, "from": {"aviso@banco.test"},
+		"subject": {"Almoco"}, "from": {"aviso@banco.test"},
 	}})
 	if out.Folder != "Financeiro" {
 		t.Errorf("anyof did not match: %q", out.Folder)
@@ -186,7 +186,7 @@ func TestAddflagMarksTheMessage(t *testing.T) {
 // --- vacation ------------------------------------------------------------
 
 const vacationScript = `require ["vacation"];
-vacation :subject "Fora do escritório" "Estou de férias até dia 30.";`
+vacation :subject "Fora do escritorio" "Estou de ferias ate dia 30.";`
 
 func TestVacationProducesAReply(t *testing.T) {
 	out := evaluate(t, vacationScript, Message{
@@ -196,10 +196,10 @@ func TestVacationProducesAReply(t *testing.T) {
 	if out.Vacation == nil {
 		t.Fatal("no vacation reply was produced")
 	}
-	if out.Vacation.Subject != "Fora do escritório" {
+	if out.Vacation.Subject != "Fora do escritorio" {
 		t.Errorf("subject %q", out.Vacation.Subject)
 	}
-	if !strings.Contains(out.Vacation.Body, "férias") {
+	if !strings.Contains(out.Vacation.Body, "ferias") {
 		t.Errorf("body %q", out.Vacation.Body)
 	}
 }
@@ -266,9 +266,13 @@ if header :contains "Subject" "fatura" { fileinto "Financeiro"; }   # fim
 // A folder name is used to route mail, so it must survive intact - including
 // the accents a Portuguese folder name has.
 func TestFolderNamesKeepTheirAccents(t *testing.T) {
-	out := evaluate(t, `if header :contains "Subject" "x" { fileinto "Relatórios"; }`,
+	// Written as an escape rather than the letter itself: the source of this
+	// repository is kept ASCII (lang-lint), and the point of the test is that
+	// the accented name survives the parser intact.
+	accented := "Relat\u00f3rios"
+	out := evaluate(t, `if header :contains "Subject" "x" { fileinto "`+accented+`"; }`,
 		Message{Headers: map[string][]string{"subject": {"x"}}})
-	if out.Folder != "Relatórios" {
+	if out.Folder != accented {
 		t.Errorf("folder %q", out.Folder)
 	}
 }
@@ -324,14 +328,14 @@ func TestMatchesSingleCharacterWildcard(t *testing.T) {
 
 // A star in the middle has to match the run between two fixed parts.
 func TestMatchesStarInTheMiddle(t *testing.T) {
-	script := `if header :matches "Subject" "Relatório * de agosto" { fileinto "X"; }`
+	script := `if header :matches "Subject" "Relatorio * de agosto" { fileinto "X"; }`
 	if out := evaluate(t, script, Message{Headers: map[string][]string{
-		"subject": {"Relatório mensal de agosto"},
+		"subject": {"Relatorio mensal de agosto"},
 	}}); out.Folder != "X" {
 		t.Errorf("star in the middle did not match: %q", out.Folder)
 	}
 	if out := evaluate(t, script, Message{Headers: map[string][]string{
-		"subject": {"Relatório mensal de julho"},
+		"subject": {"Relatorio mensal de julho"},
 	}}); out.Folder != "" {
 		t.Errorf("matched despite a different tail: %q", out.Folder)
 	}

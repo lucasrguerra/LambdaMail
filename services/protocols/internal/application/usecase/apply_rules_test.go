@@ -43,7 +43,7 @@ func TestRuleDecidesTheFolder(t *testing.T) {
 
 func TestMessageWithNoMatchingRuleIsUntouched(t *testing.T) {
 	uc := newRules(&stubSieveScripts{script: filingRule})
-	payload := []byte("From: amigo@example.test\r\nSubject: Almoço\r\n\r\ncorpo")
+	payload := []byte("From: amigo@example.test\r\nSubject: Almoco\r\n\r\ncorpo")
 
 	decision := uc.For(context.Background(), uuid.New(), "me@example.test", "amigo@example.test", payload)
 	if decision.Folder != "" || decision.Discard {
@@ -85,7 +85,7 @@ func TestAFailingLookupStillDeliversTheMessage(t *testing.T) {
 // --- vacation ------------------------------------------------------------
 
 const vacationRule = `require ["vacation"];
-vacation :subject "Fora do escritório" "Volto dia 30.";`
+vacation :subject "Fora do escritorio" "Volto dia 30.";`
 
 func TestVacationRepliesToAPerson(t *testing.T) {
 	uc := newRules(&stubSieveScripts{script: vacationRule})
@@ -95,7 +95,7 @@ func TestVacationRepliesToAPerson(t *testing.T) {
 	if decision.Vacation == nil {
 		t.Fatal("no reply was produced")
 	}
-	if decision.Vacation.Subject != "Fora do escritório" {
+	if decision.Vacation.Subject != "Fora do escritorio" {
 		t.Errorf("subject %q", decision.Vacation.Subject)
 	}
 }
