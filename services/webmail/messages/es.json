@@ -163,6 +163,8 @@
     "draftSaved": "Borrador guardado automáticamente",
     "draftSaving": "Guardando borrador...",
     "drafts": "Borradores",
+    "deleteForever": "Eliminar definitivamente",
+    "continueDraft": "Seguir escribiendo",
     "emptyBody": "Este mensaje no tiene cuerpo de texto.",
     "forward": "Reenviar",
     "imagesEnabled": "Imágenes cargadas",

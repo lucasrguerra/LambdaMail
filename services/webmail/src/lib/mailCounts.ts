@@ -120,3 +120,77 @@ export function listHeaderCount(input: {
 export function applySeen<T extends MessageSummary>(messages: T[], uid: number, seen: boolean): T[] {
   return messages.map((m) => (m.uid === uid ? { ...m, seen } : m));
 }
+
+/** What the sidebar shows beside one folder. */
+export interface FolderBadge {
+  /** How many unread messages the folder holds. */
+  unread: number;
+  /** How many messages it holds in total. */
+  total: number;
+  /**
+   * Whether the unread number is worth showing at all.
+   *
+   * Kept apart from the number itself because the sidebar used to fall back to
+   * printing the total in the unread badge's place whenever nothing was
+   * unread. An inbox holding fourteen read messages therefore showed "14", and
+   * reading another message never moved it - the number was never counting
+   * what the user thought it was.
+   */
+  showsUnread: boolean;
+}
+
+/**
+ * The two numbers a sidebar folder has, and which of them to emphasise.
+ *
+ * Drafts deliberately has no unread badge: nothing marks a draft read, so its
+ * unread count is always zero and the number that matters there is how many
+ * unfinished messages are waiting - which is the total. Returning showsUnread
+ * false for it is what stops the sidebar rendering that same total twice, once
+ * as the size and once as the badge, which is where "Rascunhos 1 1" came from.
+ */
+export function folderBadge(
+  folders: FolderSummary[] | undefined | null,
+  route: string,
+): FolderBadge {
+  const { unread, total } = folderMetrics(folders, route);
+  const isDrafts = route.trim().toLowerCase() === "drafts";
+  return { unread, total, showsUnread: !isDrafts && unread > 0 };
+}
+
+/** Which actions a message offers, decided by the folder it is in. */
+export interface ReaderActions {
+  canReply: boolean;
+  canForward: boolean;
+  /** Reopen an unfinished message in the composer. */
+  canEdit: boolean;
+  canMarkUnread: boolean;
+  canDelete: boolean;
+  /** True in Trash, where delete destroys rather than moves. */
+  deleteIsPermanent: boolean;
+}
+
+/**
+ * The actions that make sense for a message, given where it lives.
+ *
+ * The reader offered the same four buttons everywhere, so a message the user
+ * had sent themselves could be "marked unread" - a flag nothing reads on a
+ * folder nothing delivers to - and a half-written draft offered Reply and
+ * Forward but no way to carry on writing it. Meanwhile delete was offered
+ * nowhere at all.
+ */
+export function readerActions(folder: string): ReaderActions {
+  const role = folder.trim().toLowerCase();
+  const isDrafts = role === "drafts";
+  const isOwnCopy = isDrafts || role === "sent";
+
+  return {
+    canReply: !isDrafts,
+    canForward: !isDrafts,
+    canEdit: isDrafts,
+    // Sent mail and drafts are the user's own copies. Nothing ever delivers
+    // to those folders, so an unread flag there conveys nothing.
+    canMarkUnread: !isOwnCopy,
+    canDelete: true,
+    deleteIsPermanent: role === "trash",
+  };
+}

@@ -163,6 +163,8 @@
     "draftSaved": "Rascunho salvo automaticamente",
     "draftSaving": "Salvando rascunho...",
     "drafts": "Rascunhos",
+    "deleteForever": "Excluir definitivamente",
+    "continueDraft": "Continuar escrevendo",
     "emptyBody": "Esta mensagem não tem corpo de texto.",
     "forward": "Encaminhar",
     "imagesEnabled": "Imagens carregadas",

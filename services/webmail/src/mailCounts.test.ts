@@ -156,3 +156,103 @@ describe("marking a message read in the loaded list", () => {
     expect(messages.find((m) => m.uid === 1)?.seen).toBe(false);
   });
 });
+
+// --- what the sidebar actually renders -----------------------------------
+
+import { folderBadge, readerActions } from "./lib/mailCounts";
+
+/**
+ * These reproduce what the running webmail shows, which the badgeCount tests
+ * above could not: they check the number, and the defect was in how the number
+ * is displayed.
+ */
+describe("the badge a sidebar folder renders", () => {
+  const folders = [
+    { special_use: "inbox", name: "INBOX", unread_count: 0, total_count: 14 },
+    { special_use: "drafts", name: "Drafts", unread_count: 0, total_count: 1 },
+    { special_use: "sent", name: "Sent", unread_count: 0, total_count: 1 },
+    { special_use: "junk", name: "Junk", unread_count: 3, total_count: 9 },
+    { special_use: "archive", name: "Archive", unread_count: 0, total_count: 0 },
+  ];
+
+  // The inbox showed "14" with nothing unread. Reading every message left it
+  // at 14, because 14 was the total wearing the unread badge's clothes.
+  it("does not show a total where an unread count belongs", () => {
+    const badge = folderBadge(folders, "inbox");
+    expect(badge.unread).toBe(0);
+    expect(badge.showsUnread).toBe(false);
+  });
+
+  it("still reports the folder size, separately from the unread count", () => {
+    expect(folderBadge(folders, "inbox").total).toBe(14);
+  });
+
+  // Drafts counted total as its badge, so total and badge were the same
+  // number and the sidebar printed it twice: "Rascunhos 1 1".
+  it("never renders the same number twice for drafts", () => {
+    const badge = folderBadge(folders, "drafts");
+    const rendered = [badge.showsUnread ? badge.unread : null, badge.total].filter(
+      (v) => v !== null,
+    );
+    expect(rendered).toEqual([1]);
+  });
+
+  it("shows the unread count when there really is unread mail", () => {
+    const badge = folderBadge(folders, "junk");
+    expect(badge.showsUnread).toBe(true);
+    expect(badge.unread).toBe(3);
+    expect(badge.total).toBe(9);
+  });
+
+  it("shows nothing at all for an empty folder", () => {
+    const badge = folderBadge(folders, "archive");
+    expect(badge.showsUnread).toBe(false);
+    expect(badge.total).toBe(0);
+  });
+});
+
+describe("the actions a message offers", () => {
+  // "Mark as unread" was offered on a message the user sent themselves and on
+  // their own half-written draft. Nothing reads those, so the flag means
+  // nothing there and the button only invites a pointless round trip.
+  it("does not offer mark-as-unread in Sent or Drafts", () => {
+    expect(readerActions("sent").canMarkUnread).toBe(false);
+    expect(readerActions("drafts").canMarkUnread).toBe(false);
+  });
+
+  it("offers mark-as-unread in the folders that receive mail", () => {
+    expect(readerActions("inbox").canMarkUnread).toBe(true);
+    expect(readerActions("archive").canMarkUnread).toBe(true);
+  });
+
+  // Reply and forward on your own unfinished draft make no sense either: the
+  // thing to do with a draft is finish it.
+  it("offers editing rather than replying on a draft", () => {
+    const draft = readerActions("drafts");
+    expect(draft.canEdit).toBe(true);
+    expect(draft.canReply).toBe(false);
+    expect(draft.canForward).toBe(false);
+  });
+
+  it("offers reply and forward on received mail", () => {
+    const inbox = readerActions("inbox");
+    expect(inbox.canReply).toBe(true);
+    expect(inbox.canForward).toBe(true);
+    expect(inbox.canEdit).toBe(false);
+  });
+
+  // Delete has to be offered everywhere: it was offered nowhere, which is why
+  // a draft left behind by a sent message could not be removed at all.
+  it("offers delete in every folder", () => {
+    for (const folder of ["inbox", "sent", "drafts", "archive", "junk", "trash"]) {
+      expect(readerActions(folder).canDelete).toBe(true);
+    }
+  });
+
+  // In Trash the same button has to say it destroys the message, because there
+  // it does - there is nowhere further to move it.
+  it("says delete is permanent once in Trash", () => {
+    expect(readerActions("trash").deleteIsPermanent).toBe(true);
+    expect(readerActions("inbox").deleteIsPermanent).toBe(false);
+  });
+});

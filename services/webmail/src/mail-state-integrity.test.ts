@@ -28,8 +28,19 @@ describe("the counters the sidebar shows", () => {
   // The badge was computed inline from folders.find(...).unread_count, which
   // missed folders with no special-use role and printed nothing for Drafts.
   it("goes through the tested counting rules", () => {
-    expect(code(USER_LAYOUT)).toContain("badgeCount");
+    // folderBadge, not badgeCount: the sidebar needs to know which of the two
+    // numbers to emphasise, not just what the number is. Rendering was where
+    // the defect lived - a folder with nothing unread printed its total in the
+    // unread badge's place, so reading a message never moved it.
+    expect(code(USER_LAYOUT)).toContain("folderBadge");
     expect(code(USER_LAYOUT)).not.toMatch(/unread_count\s*\?\?/);
+  });
+
+  // The total was rendered twice for Drafts, where the badge and the size are
+  // the same number: "Rascunhos 1 1".
+  it("renders the folder size in exactly one place", () => {
+    const layout = code(USER_LAYOUT);
+    expect(layout.match(/\{badge\.total\}/g) ?? []).toHaveLength(1);
   });
 
   // The folder list was fetched once on mount, so every badge froze at the

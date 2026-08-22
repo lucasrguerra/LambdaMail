@@ -163,6 +163,8 @@
     "draftSaved": "Draft saved automatically",
     "draftSaving": "Saving draft...",
     "drafts": "Drafts",
+    "deleteForever": "Delete permanently",
+    "continueDraft": "Continue writing",
     "emptyBody": "This message has no text body.",
     "forward": "Forward",
     "imagesEnabled": "Images loaded",

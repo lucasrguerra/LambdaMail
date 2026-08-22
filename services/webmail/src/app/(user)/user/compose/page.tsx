@@ -38,7 +38,7 @@ interface AttachedFile {
 export default function ComposePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ replyTo?: string; subject?: string; inReplyTo?: string }>;
+  searchParams?: Promise<{ replyTo?: string; subject?: string; inReplyTo?: string; draft?: string }>;
 }) {
   const t = useTranslations();
   const params = searchParams ? use(searchParams) : {};
@@ -75,6 +75,43 @@ export default function ComposePage({
       setBody(initial);
     }
   }, []);
+
+  // Reopening a draft loads what was written into the composer, and adopts its
+  // UID so carrying on writing replaces that draft instead of leaving the old
+  // copy behind and starting a second one.
+  //
+  // Opening a draft used to land in the reader, which offered to reply to the
+  // half-written message and gave no way to finish it.
+  const draftParam = params?.draft;
+  useEffect(() => {
+    const uid = Number(draftParam);
+    if (!Number.isFinite(uid) || uid <= 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/v1/mail/message/${uid}?folder=drafts`, { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const message = await res.json();
+        if (cancelled) return;
+
+        draftUidRef.current = uid;
+        setTo((message.to ?? []).join(", "));
+        setCc((message.cc ?? []).join(", "));
+        if ((message.cc ?? []).length > 0) setShowCcBcc(true);
+        setSubject(message.subject ?? "");
+        const html = message.html || message.text || "";
+        if (editorRef.current) editorRef.current.innerHTML = html;
+        setBody(html);
+      } catch {
+        // A draft that cannot be loaded leaves an empty composer rather than
+        // a broken screen; the draft itself is untouched on the server.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draftParam]);
 
   // Saves the draft for real. This used to be a setTimeout that set the words
   // "draft saved automatically" and nothing else - no request, no storage - so

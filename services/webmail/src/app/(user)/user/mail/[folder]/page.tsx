@@ -2,6 +2,7 @@
 
 import React, { use, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
@@ -14,6 +15,7 @@ import {
   Clock,
   MailOpen,
   Download,
+  Pencil,
   RefreshCw,
   Trash2,
   X,
@@ -27,6 +29,7 @@ import {
   messageCounts,
   listHeaderCount,
   applySeen,
+  readerActions,
   type ListFilter,
 } from "../../../../../lib/mailCounts";
 import { sanitizeEmailHtml, blockRemoteImages, unblockRemoteImages } from "../../../../../lib/sanitizer";
@@ -120,6 +123,12 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
 
   const { folders } = useFolders();
   const metrics = folderMetrics(folders, folder);
+  const router = useRouter();
+  // Which buttons this folder's messages deserve. The reader offered the same
+  // four everywhere, so Sent and Drafts got a mark-as-unread that means
+  // nothing there, drafts got Reply instead of a way to finish writing, and
+  // nothing anywhere got a delete.
+  const actions = readerActions(folder);
 
   const loadMessages = useCallback(
     async (search: string) => {
@@ -237,6 +246,12 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   );
 
   const openMessage = async (uid: number) => {
+    // A draft is an unfinished message: opening it means carrying on writing,
+    // not reading it in a pane that offers to reply to yourself.
+    if (actions.canEdit) {
+      router.push(`/user/compose?draft=${uid}`);
+      return;
+    }
     setLoadRemoteImages(false);
     setReaderHeight(420);
     try {
@@ -444,7 +459,10 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                       <span className="mt-px flex items-center gap-1.5">
                         <span className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-0.5 text-[10.5px] text-slate-300">
                           <Paperclip className="h-2.5 w-2.5" />
-                          {t("mail.attachments")}
+                          {/* The list knows only that a row has attachments,
+                              not how many, so it names the fact rather than
+                              printing a count it does not have. */}
+                          {t("mail.attachmentsFilter")}
                         </span>
                       </span>
                     )}
@@ -490,42 +508,61 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
               {/* Toolbar: closing, replying and read state all in one row, so
                   the reader is not the only pane with no way out of itself. */}
               <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  href={`/user/compose?replyTo=${encodeURIComponent(selected.from)}&subject=${encodeURIComponent(selected.subject)}`}
-                >
-                  <Button variant="primary" size="sm">
-                    <Reply className="h-3.5 w-3.5" />
-                    <span>{t("mail.reply")}</span>
-                  </Button>
-                </Link>
+                {/* A draft is unfinished, so the thing to do with it is carry
+                    on writing. It used to offer Reply and Forward on the
+                    user's own half-written message and no way to edit it. */}
+                {actions.canEdit && (
+                  <Link href={`/user/compose?draft=${selected.uid}`}>
+                    <Button variant="primary" size="sm">
+                      <Pencil className="h-3.5 w-3.5" />
+                      <span>{t("mail.continueDraft")}</span>
+                    </Button>
+                  </Link>
+                )}
+                {actions.canReply && (
+                  <Link
+                    href={`/user/compose?replyTo=${encodeURIComponent(selected.from)}&subject=${encodeURIComponent(selected.subject)}`}
+                  >
+                    <Button variant="primary" size="sm">
+                      <Reply className="h-3.5 w-3.5" />
+                      <span>{t("mail.reply")}</span>
+                    </Button>
+                  </Link>
+                )}
                 {/* Forward carries the subject but no recipient: it used to
                     prefill the original sender, which sends the message
                     straight back to whoever wrote it. */}
-                <Link href={`/user/compose?subject=${encodeURIComponent(selected.subject)}`}>
-                  <Button variant="secondary" size="sm">
-                    <Forward className="h-3.5 w-3.5" />
-                    <span>{t("mail.forward")}</span>
+                {actions.canForward && (
+                  <Link href={`/user/compose?subject=${encodeURIComponent(selected.subject)}`}>
+                    <Button variant="secondary" size="sm">
+                      <Forward className="h-3.5 w-3.5" />
+                      <span>{t("mail.forward")}</span>
+                    </Button>
+                  </Link>
+                )}
+                {/* Not offered in Sent or Drafts: nothing delivers to those
+                    folders, so an unread flag there says nothing. */}
+                {actions.canMarkUnread && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      const nowSeen = !(selectedRow?.seen ?? true);
+                      void setSeen(selected.uid, nowSeen, { persist: true });
+                    }}
+                  >
+                    <MailOpen className="h-3.5 w-3.5" />
+                    <span>{selectedRow?.seen === false ? t("mail.markRead") : t("mail.markUnread")}</span>
                   </Button>
-                </Link>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    const nowSeen = !(selectedRow?.seen ?? true);
-                    void setSeen(selected.uid, nowSeen, { persist: true });
-                  }}
-                >
-                  <MailOpen className="h-3.5 w-3.5" />
-                  <span>{selectedRow?.seen === false ? t("mail.markRead") : t("mail.markUnread")}</span>
-                </Button>
+                )}
                 <Button
                   variant="secondary"
                   size="sm"
                   onClick={() => void deleteMessage(selected.uid)}
-                  title={t("common.delete")}
+                  title={actions.deleteIsPermanent ? t("mail.deleteForever") : t("common.delete")}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                  <span>{t("common.delete")}</span>
+                  <span>{actions.deleteIsPermanent ? t("mail.deleteForever") : t("common.delete")}</span>
                 </Button>
                 <Button
                   variant="secondary"
@@ -606,7 +643,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
               {selected.attachments.length > 0 && (
                 <div className="flex flex-col gap-2">
                   <div className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                    {t("mail.attachments")}
+                    {t("mail.attachments", { count: selected?.attachments.length ?? 1 })}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {selected.attachments.map((filename, idx) => (

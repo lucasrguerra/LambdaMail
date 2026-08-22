@@ -24,7 +24,7 @@ import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 import { useAccount, isAdminRole } from "../../../lib/useAccount";
 import { useFolders } from "../../../lib/useFolders";
-import { badgeCount, folderMetrics } from "../../../lib/mailCounts";
+import { folderBadge } from "../../../lib/mailCounts";
 import { initialsFor } from "../../../lib/initials";
 
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
@@ -88,10 +88,11 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href || (item.role === "inbox" && pathname === "/user/mail");
-          // Drafts counts what is waiting rather than what is unread; see
-          // badgeCount, which is where that rule is tested.
-          const badge = badgeCount(folders, item.role);
-          const { total } = folderMetrics(folders, item.role);
+          // Both numbers plus which one to emphasise; see folderBadge, where
+          // that rule is tested. It used to fall back to printing the total in
+          // the unread badge's place, so an inbox of read mail showed "14" and
+          // reading another message never moved it.
+          const badge = folderBadge(folders, item.role);
 
           return (
             <Link
@@ -99,7 +100,7 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
               href={item.href}
               onClick={() => setMobileOpen(false)}
               data-active={isActive}
-              title={total > 0 ? t("mail.messagesInFolder", { count: total }) : item.label}
+              title={badge.total > 0 ? t("mail.messagesInFolder", { count: badge.total }) : item.label}
               className="lm-nav"
             >
               <span className="lm-nav-mark" />
@@ -109,19 +110,27 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
                 {/* The folder's size, shown quietly beside the badge: the
                     sidebar reported unread only, so there was nowhere in the
                     interface that said how much mail a folder holds. */}
-                {total > 0 && badge > 0 && (
-                  <span className="text-[10.5px] tabular-nums text-slate-500">{total}</span>
-                )}
-                {badge > 0 ? (
+                {/* The folder size, always in the same quiet style, so it
+                    can never be mistaken for an unread count. */}
+                {badge.total > 0 && (
                   <span
-                    className={`text-[11.5px] tabular-nums ${isActive ? "text-indigo-300" : "text-slate-400"}`}
+                    className="text-[11.5px] tabular-nums text-slate-500"
+                    title={t("mail.messagesInFolder", { count: badge.total })}
                   >
-                    {badge}
+                    {badge.total}
                   </span>
-                ) : (
-                  total > 0 && (
-                    <span className="text-[11.5px] tabular-nums text-slate-500">{total}</span>
-                  )
+                )}
+                {/* The unread count, only when there is unread mail, and
+                    visibly distinct from the size beside it. */}
+                {badge.showsUnread && (
+                  <span
+                    className={`rounded-full px-1.5 py-px text-[11px] font-medium tabular-nums ${
+                      isActive ? "bg-indigo-500/25 text-indigo-200" : "bg-indigo-500/20 text-indigo-300"
+                    }`}
+                    title={t("mail.unreadCount", { count: badge.unread })}
+                  >
+                    {badge.unread}
+                  </span>
                 )}
               </span>
             </Link>
