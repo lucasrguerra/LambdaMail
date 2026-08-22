@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Button } from "../../../../components/ui/Button";
+import { signatureToHtml } from "../../../../lib/signature";
 
 /** Splits a comma or semicolon separated field, dropping empty entries. */
 function splitAddresses(value: string): string[] {
@@ -69,8 +70,12 @@ export default function ComposePage({
 
   useEffect(() => {
     const savedSig = localStorage.getItem("lm_user_signature");
-    if (editorRef.current && savedSig) {
-      const initial = `<br/><br/>--<br/>${savedSig}`;
+    // signatureToHtml, not the raw value: the signature may be the plain text
+    // of the old field, whose newlines are whitespace once assigned as HTML -
+    // which is why every line break in a signature used to vanish here.
+    const signatureHtml = signatureToHtml(savedSig ?? "");
+    if (editorRef.current && signatureHtml) {
+      const initial = `<br/><br/>--<br/>${signatureHtml}`;
       editorRef.current.innerHTML = initial;
       setBody(initial);
     }
@@ -322,7 +327,7 @@ export default function ComposePage({
             <>
               <div className={fieldRow}>
                 <label htmlFor="compose-cc" className={fieldLabel}>
-                  Cc
+                  {t("mail.ccLabel")}
                 </label>
                 <input
                   id="compose-cc"
@@ -336,7 +341,7 @@ export default function ComposePage({
               </div>
               <div className={fieldRow}>
                 <label htmlFor="compose-bcc" className={fieldLabel}>
-                  Bcc
+                  {t("mail.bccLabel")}
                 </label>
                 <input
                   id="compose-bcc"

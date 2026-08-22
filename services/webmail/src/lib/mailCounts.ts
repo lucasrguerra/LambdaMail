@@ -194,3 +194,31 @@ export function readerActions(folder: string): ReaderActions {
     deleteIsPermanent: role === "trash",
   };
 }
+
+/**
+ * The folders a message may be filed into, from where it is now.
+ *
+ * Sent and Drafts are never offered. They record how a message came to exist
+ * rather than where its reader put it: moving arbitrary mail into Sent would
+ * have the folder claim it was sent from here, and a message in Drafts that
+ * cannot be edited would sit among the unfinished ones forever. Moving *out*
+ * of them is fine, which is why the exclusion is on the destination only.
+ *
+ * Matching is by name as well as role, so a folder the user created - which
+ * has no special-use role at all - is a destination like any other.
+ */
+export function moveTargets(
+  folders: FolderSummary[] | undefined | null,
+  currentRoute: string,
+): FolderSummary[] {
+  const current = currentRoute.trim().toLowerCase();
+  return (folders ?? []).filter((folder) => {
+    const role = (folder.special_use ?? "").toLowerCase();
+    const name = (folder.name ?? "").toLowerCase();
+    if (role === "sent" || role === "drafts") return false;
+    if (name === "sent" || name === "drafts") return false;
+    // Already here: nothing to do.
+    if (role === current || name === current) return false;
+    return Boolean(folder.name);
+  });
+}

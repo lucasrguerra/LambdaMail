@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Shield,
   Filter,
@@ -19,6 +19,7 @@ import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
 import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
 import { LanguageSwitcher } from "../../../../i18n/LanguageSwitcher";
+import { signatureToHtml, sanitizeSignature } from "../../../../lib/signature";
 
 interface SieveRule {
   id: string;
@@ -71,6 +72,15 @@ export default function UserSettingsPage() {
   const [vacationSaved, setVacationSaved] = useState(false);
 
   const [signature, setSignature] = useState("");
+  const signatureRef = useRef<HTMLDivElement>(null);
+
+  // execCommand edits the DOM directly, so the mirrored value is re-read here
+  // rather than relying on an input event that may not be dispatched.
+  const applySignatureCommand = (command: string, value?: string) => {
+    signatureRef.current?.focus();
+    document.execCommand(command, false, value);
+    setSignature(signatureRef.current?.innerHTML ?? "");
+  };
   const [sigSaved, setSigSaved] = useState(false);
 
   // Starts empty rather than with a sample rule. A seeded "[Boletim]" filter
@@ -88,7 +98,11 @@ export default function UserSettingsPage() {
     fetch("/api/v1/user/preferences")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data?.signature) setSignature(data.signature);
+        if (data?.signature) {
+          const html = signatureToHtml(data.signature);
+          setSignature(html);
+          if (signatureRef.current) signatureRef.current.innerHTML = html;
+        }
       })
       .catch(() => undefined);
 
@@ -107,9 +121,9 @@ export default function UserSettingsPage() {
       await fetch("/api/v1/user/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ signature, auto_save_drafts: true }),
+        body: JSON.stringify({ signature: sanitizeSignature(signature), auto_save_drafts: true }),
       });
-      localStorage.setItem("lm_user_signature", signature);
+      localStorage.setItem("lm_user_signature", sanitizeSignature(signature));
       setSigSaved(true);
       setTimeout(() => setSigSaved(false), 2000);
     } catch {
@@ -748,13 +762,69 @@ export default function UserSettingsPage() {
                 <label htmlFor="signature-text" className={fieldLabel}>
                   {t("ui.messageBody")}
                 </label>
-                <textarea
+                {/* A rich field rather than a textarea. A signature is a piece
+                    of a message - people put a link, a logo and bold type in
+                    it - and the plain textarea could hold none of that. It
+                    also stored real newlines, which are whitespace once the
+                    value is injected into the composer as HTML, so every line
+                    break was silently dropped there. */}
+                <div className="flex flex-wrap items-center gap-1 rounded-t-xl bg-dark-card px-2 py-1.5 shadow-edge">
+                  {[
+                    { cmd: "bold", label: "B", title: t("ui.bold"), cls: "font-bold" },
+                    { cmd: "italic", label: "I", title: t("ui.italic"), cls: "italic" },
+                    { cmd: "underline", label: "U", title: t("ui.underline"), cls: "underline" },
+                  ].map((b) => (
+                    <button
+                      key={b.cmd}
+                      type="button"
+                      title={b.title}
+                      aria-label={b.title}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applySignatureCommand(b.cmd)}
+                      className={`h-7 w-7 rounded-md text-[13px] text-slate-300 transition-colors hover:bg-white/[0.09] hover:text-slate-100 ${b.cls}`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                  <span className="mx-1 h-4 w-px bg-white/10" />
+                  <button
+                    type="button"
+                    title={t("ui.insertLink")}
+                    aria-label={t("ui.insertLink")}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const url = window.prompt(t("ui.insertLink"), "https://");
+                      if (url) applySignatureCommand("createLink", url);
+                    }}
+                    className="h-7 rounded-md px-2 text-[12px] text-slate-300 transition-colors hover:bg-white/[0.09] hover:text-slate-100"
+                  >
+                    {t("ui.insertLink")}
+                  </button>
+                  <button
+                    type="button"
+                    title={t("ui.insertImage")}
+                    aria-label={t("ui.insertImage")}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const url = window.prompt(t("ui.insertImage"), "https://");
+                      if (url) applySignatureCommand("insertImage", url);
+                    }}
+                    className="h-7 rounded-md px-2 text-[12px] text-slate-300 transition-colors hover:bg-white/[0.09] hover:text-slate-100"
+                  >
+                    {t("ui.insertImage")}
+                  </button>
+                </div>
+                <div
                   id="signature-text"
-                  rows={7}
-                  value={signature}
-                  onChange={(e) => setSignature(e.target.value)}
-                  placeholder={t("settings.signaturePlaceholder")}
-                  className={`${input} leading-relaxed`}
+                  ref={signatureRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label={t("settings.signatureTitle")}
+                  onInput={(e) => setSignature((e.target as HTMLDivElement).innerHTML)}
+                  onBlur={(e) => setSignature((e.target as HTMLDivElement).innerHTML)}
+                  className="min-h-[170px] rounded-b-xl bg-dark-panel px-3.5 py-3 text-[13.5px] leading-relaxed text-slate-200 shadow-edge focus:outline-none"
                 />
               </div>
 

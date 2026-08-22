@@ -90,6 +90,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/mail/send", r.handleMailSend)
 	r.mux.HandleFunc("/api/v1/mail/draft", r.handleMailDraft)
 	r.mux.HandleFunc("/api/v1/mail/delete", r.handleMailDelete)
+	r.mux.HandleFunc("/api/v1/mail/move", r.handleMailMove)
 	r.mux.HandleFunc("/api/v1/reports/dmarc", r.handleDmarcIngest)
 	r.mux.HandleFunc("/api/v1/reports/tlsrpt", r.handleTlsRptIngest)
 }
@@ -313,6 +314,17 @@ func (r *Router) handleMailDelete(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.mailReady(w) {
 		r.mail.handleDelete(w, req)
+	}
+}
+
+// handleMailMove files one message into another folder.
+func (r *Router) handleMailMove(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleMove(w, req)
 	}
 }
 

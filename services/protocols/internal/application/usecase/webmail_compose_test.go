@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -126,6 +128,7 @@ type stubWebmailRepo struct {
 	expungeErr   error
 	movedToTrash []uint32
 	moveErr      error
+	moved        []string
 }
 
 func (s *stubWebmailRepo) FindMailboxIDByAddress(context.Context, string) (string, error) {
@@ -145,6 +148,16 @@ func (s *stubWebmailRepo) Expunge(_ context.Context, _, _ string, uid uint32) er
 	s.expunged = append(s.expunged, uid)
 	return s.expungeErr
 }
+func (s *stubWebmailRepo) MoveToFolder(
+	_ context.Context, _, from string, uid uint32, to string,
+) (uint32, error) {
+	if s.moveErr != nil {
+		return 0, s.moveErr
+	}
+	s.moved = append(s.moved, from+"->"+to+"/"+strconv.FormatUint(uint64(uid), 10))
+	return uid, nil
+}
+
 func (s *stubWebmailRepo) MoveToTrash(_ context.Context, _, _ string, uid uint32) (uint32, error) {
 	if s.moveErr != nil {
 		return 0, s.moveErr
@@ -370,5 +383,81 @@ func TestDeleteFromTrashExpunges(t *testing.T) {
 	}
 	if len(repo.expunged) != 1 || repo.expunged[0] != 3 {
 		t.Errorf("emptying from Trash did not remove the message: %v", repo.expunged)
+	}
+}
+
+// --- moving between folders ---------------------------------------------
+
+// Filing a message somewhere else is the one ordinary mail action the webmail
+// still had no way to perform.
+func TestMoveFilesTheMessageInTheTargetFolder(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	uc := &WebmailUseCase{
+		repo:      repo,
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}
+
+	if err := uc.Move(context.Background(), "me@example.test", "inbox", 5, "Archive"); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	if len(repo.moved) != 1 || repo.moved[0] != "inbox->Archive/5" {
+		t.Errorf("moved %v", repo.moved)
+	}
+}
+
+// Sent and Drafts describe how a message came to exist, not where the reader
+// filed it. Moving arbitrary mail into them would make the folder lie: Sent
+// would hold messages that were never sent, and a draft that cannot be edited
+// would sit among the unfinished ones.
+func TestMoveRefusesSentAndDrafts(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	uc := &WebmailUseCase{
+		repo:      repo,
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}
+
+	for _, target := range []string{"Sent", "sent", "Drafts", "DRAFTS"} {
+		err := uc.Move(context.Background(), "me@example.test", "inbox", 5, target)
+		if !errors.Is(err, ErrFolderNotATarget) {
+			t.Errorf("moving into %q returned %v, want ErrFolderNotATarget", target, err)
+		}
+	}
+	if len(repo.moved) != 0 {
+		t.Errorf("a refused move still touched the repository: %v", repo.moved)
+	}
+}
+
+// Moving a message into the folder it is already in is a no-op, not an error:
+// it is what a double click on the same target produces.
+func TestMoveIntoTheSameFolderDoesNothing(t *testing.T) {
+	mailboxID := uuid.New()
+	repo := &stubWebmailRepo{mailboxID: mailboxID.String()}
+	uc := &WebmailUseCase{
+		repo:      repo,
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}
+
+	if err := uc.Move(context.Background(), "me@example.test", "inbox", 5, "inbox"); err != nil {
+		t.Fatalf("move into the same folder: %v", err)
+	}
+	if len(repo.moved) != 0 {
+		t.Errorf("a no-op move still touched the repository: %v", repo.moved)
+	}
+}
+
+func TestMoveRejectsAnEmptyTarget(t *testing.T) {
+	mailboxID := uuid.New()
+	uc := &WebmailUseCase{
+		repo:      &stubWebmailRepo{mailboxID: mailboxID.String()},
+		auth:      &stubAuthRepo{account: &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test"}},
+		localHost: "mail.example.test",
+	}
+	if err := uc.Move(context.Background(), "me@example.test", "inbox", 5, "  "); err == nil {
+		t.Error("an empty target should be refused")
 	}
 }

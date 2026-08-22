@@ -90,7 +90,8 @@
     "unknownSni": "Solicitudes SNI desconocidas",
     "unlockAccount": "Desbloquear",
     "verifyIntro": "Resuelve cada registro esperado en resolutores públicos e informa uno por uno.",
-    "watcherHealthy": "Monitor de certificado"
+    "watcherHealthy": "Monitor de certificado",
+    "openAdminShort": "Admin"
   },
   "auth": {
     "adminLoginTitle": "Consola de administración",
@@ -198,7 +199,13 @@
     "undoSend": "Enviando en {seconds}s",
     "undoSendAction": "Deshacer",
     "unreadCount": "{count} sin leer",
-    "unreadFilter": "Sin leer"
+    "unreadFilter": "Sin leer",
+    "ccLabel": "Cc",
+    "bccLabel": "Cco",
+    "hideImages": "Ocultar imágenes",
+    "alwaysFromSender": "Siempre de este remitente",
+    "forgetSender": "Dejar de confiar",
+    "moveTo": "Mover a"
   },
   "settings": {
     "actionDiscard": "Descartar",
@@ -324,6 +331,11 @@
     "toggleMenu": "Alternar menú",
     "totalEvaluated": "Mensajes evaluados",
     "twoFactorSection": "Verificación en dos pasos",
-    "watching": "Vigilando"
+    "watching": "Vigilando",
+    "bold": "Negrita",
+    "italic": "Cursiva",
+    "underline": "Subrayado",
+    "insertLink": "Enlace",
+    "insertImage": "Imagen"
   }
 }

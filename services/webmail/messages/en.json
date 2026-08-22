@@ -90,7 +90,8 @@
     "unknownSni": "Unknown SNI requests",
     "unlockAccount": "Unlock",
     "verifyIntro": "Resolves every expected record against public resolvers and reports each one.",
-    "watcherHealthy": "Certificate watcher"
+    "watcherHealthy": "Certificate watcher",
+    "openAdminShort": "Admin"
   },
   "auth": {
     "adminLoginTitle": "Admin console",
@@ -198,7 +199,13 @@
     "undoSend": "Sending in {seconds}s",
     "undoSendAction": "Undo",
     "unreadCount": "{count} unread",
-    "unreadFilter": "Unread"
+    "unreadFilter": "Unread",
+    "ccLabel": "Cc",
+    "bccLabel": "Bcc",
+    "hideImages": "Hide images",
+    "alwaysFromSender": "Always from this sender",
+    "forgetSender": "Stop trusting sender",
+    "moveTo": "Move to"
   },
   "settings": {
     "actionDiscard": "Discard",
@@ -324,6 +331,11 @@
     "toggleMenu": "Toggle menu",
     "totalEvaluated": "Messages evaluated",
     "twoFactorSection": "Two-factor authentication",
-    "watching": "Watching"
+    "watching": "Watching",
+    "bold": "Bold",
+    "italic": "Italic",
+    "underline": "Underline",
+    "insertLink": "Link",
+    "insertImage": "Image"
   }
 }

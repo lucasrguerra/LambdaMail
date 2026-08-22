@@ -300,6 +300,28 @@ func (r *WebmailRepository) Expunge(
 func (r *WebmailRepository) MoveToTrash(
 	ctx context.Context, mailboxID, folderName string, uid uint32,
 ) (uint32, error) {
+	return r.moveInto(ctx, mailboxID, folderName, uid, trashTarget)
+}
+
+// MoveToFolder files one message into a named folder.
+//
+// The target is matched on its special-use role or its name, the same way the
+// rest of this repository addresses folders, so "archive" and "Archive" both
+// reach the same place and a folder the user created themselves - which has no
+// role - is reachable by name.
+func (r *WebmailRepository) MoveToFolder(
+	ctx context.Context, mailboxID, folderName string, uid uint32, target string,
+) (uint32, error) {
+	return r.moveInto(ctx, mailboxID, folderName, uid, target)
+}
+
+// trashTarget is what MoveToTrash resolves; kept as a constant so the two
+// callers cannot drift.
+const trashTarget = "trash"
+
+func (r *WebmailRepository) moveInto(
+	ctx context.Context, mailboxID, folderName string, uid uint32, target string,
+) (uint32, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -333,11 +355,11 @@ func (r *WebmailRepository) MoveToTrash(
 	var trashUID int64
 	err = tx.QueryRow(ctx, `
 		SELECT id::text, uid_next FROM folders
-		 WHERE mailbox_id = $1 AND (special_use = 'trash' OR LOWER(name) = 'trash')
+		 WHERE mailbox_id = $1 AND (special_use = LOWER($2) OR LOWER(name) = LOWER($2))
 		 ORDER BY special_use IS NOT NULL DESC
 		 LIMIT 1
 		 FOR UPDATE
-	`, mailboxID).Scan(&trashFolderID, &trashUID)
+	`, mailboxID, target).Scan(&trashFolderID, &trashUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, port.ErrNoTrashFolder
 	}

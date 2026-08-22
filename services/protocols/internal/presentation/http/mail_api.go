@@ -12,6 +12,7 @@ import (
 
 	"github.com/emersion/go-message"
 
+	"lambdamail/protocols/internal/application/port"
 	"lambdamail/protocols/internal/application/usecase"
 	"lambdamail/protocols/internal/infrastructure/postgres"
 )
@@ -290,6 +291,37 @@ func (m *mailAPI) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
+// handleMove files one message into another folder.
+func (m *mailAPI) handleMove(w http.ResponseWriter, r *http.Request) {
+	session, ok := m.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Folder string `json:"folder"`
+		UID    uint32 `json:"uid"`
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
+		return
+	}
+	if body.Folder == "" {
+		body.Folder = "inbox"
+	}
+	if body.UID == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_UID", "Message UID is required")
+		return
+	}
+
+	if err := m.useCase.Move(r.Context(), session.Email, body.Folder, body.UID, body.Target); err != nil {
+		m.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"moved": true})
+}
+
 // handleSaveDraft stores the message being composed in the Drafts folder.
 func (m *mailAPI) handleSaveDraft(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.authenticate(w, r)
@@ -370,6 +402,13 @@ func (m *mailAPI) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusTooManyRequests, "SEND_LIMIT_EXCEEDED", "Hourly recipient limit reached")
 	case errors.Is(err, usecase.ErrSenderNotOwned):
 		writeError(w, http.StatusForbidden, "FORBIDDEN", "Sender address does not belong to this account")
+	case errors.Is(err, usecase.ErrFolderNotATarget):
+		writeError(w, http.StatusBadRequest, "FOLDER_NOT_A_TARGET",
+			"Messages cannot be moved into Sent or Drafts")
+	case errors.Is(err, usecase.ErrNoTargetFolder):
+		writeError(w, http.StatusBadRequest, "NO_TARGET_FOLDER", "A destination folder is required")
+	case errors.Is(err, port.ErrNoTrashFolder):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "That folder does not exist")
 	case errors.Is(err, usecase.ErrDraftsUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "DRAFTS_UNAVAILABLE", "Draft storage is not configured")
 	default:

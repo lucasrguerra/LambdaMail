@@ -207,6 +207,47 @@ func (uc *WebmailUseCase) Send(ctx context.Context, input ComposeInput) error {
 	return nil
 }
 
+// ErrFolderNotATarget refuses a move into a folder that describes how a
+// message came to exist rather than where its reader filed it.
+var ErrFolderNotATarget = errors.New("webmail: messages cannot be moved into this folder")
+
+// ErrNoTargetFolder rejects a move with no destination named.
+var ErrNoTargetFolder = errors.New("webmail: a destination folder is required")
+
+// notAMoveTarget are the folders a message may never be moved into.
+//
+// Sent and Drafts are not places a reader files things; they record what a
+// message is. Moving arbitrary mail into Sent would make it claim the message
+// was sent from here, and a message in Drafts that cannot be edited would sit
+// among the unfinished ones forever.
+var notAMoveTarget = map[string]bool{"sent": true, "drafts": true}
+
+// Move files one message into another folder.
+//
+// The webmail could delete a message and it could read one, but it had no way
+// to put it anywhere: archiving something out of the inbox was impossible.
+func (uc *WebmailUseCase) Move(ctx context.Context, address, folder string, uid uint32, target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ErrNoTargetFolder
+	}
+	if notAMoveTarget[strings.ToLower(target)] {
+		return ErrFolderNotATarget
+	}
+	// Moving a message where it already is is what a second click on the same
+	// target produces; it is a no-op rather than an error.
+	if strings.EqualFold(target, folder) {
+		return nil
+	}
+
+	mailboxID, err := uc.mailboxID(ctx, address)
+	if err != nil {
+		return err
+	}
+	_, err = uc.repo.MoveToFolder(ctx, mailboxID, folder, uid, target)
+	return err
+}
+
 // Delete removes one message the way a mail client does: from any ordinary
 // folder it goes to Trash, and from Trash it is really expunged.
 //

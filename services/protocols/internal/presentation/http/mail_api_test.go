@@ -89,6 +89,16 @@ func (f *fakeMailStore) Expunge(_ context.Context, mailboxID, folder string, uid
 	return nil
 }
 
+func (f *fakeMailStore) MoveToFolder(
+	_ context.Context, mailboxID, folder string, uid uint32, target string,
+) (uint32, error) {
+	if f.moveErr != nil {
+		return 0, f.moveErr
+	}
+	f.movedCalls = append(f.movedCalls, mailboxID+"/"+folder+"->"+target)
+	return uid, nil
+}
+
 func (f *fakeMailStore) MoveToTrash(
 	_ context.Context, mailboxID, folder string, uid uint32,
 ) (uint32, error) {

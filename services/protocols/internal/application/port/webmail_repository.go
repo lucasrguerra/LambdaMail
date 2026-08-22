@@ -64,6 +64,10 @@ type WebmailRepository interface {
 	MarkSeen(ctx context.Context, mailboxID, folderName string, uid uint32, seen bool) error
 	// Expunge soft-deletes one message, keeping the folder counters in step.
 	Expunge(ctx context.Context, mailboxID, folderName string, uid uint32) error
+	// MoveToFolder relocates one message into a named folder and returns its
+	// new UID there. A UID is meaningful only inside one folder, so the
+	// message keeps its identity and its blob but is renumbered.
+	MoveToFolder(ctx context.Context, mailboxID, folderName string, uid uint32, target string) (uint32, error)
 	// MoveToTrash relocates one message into Trash and returns its new UID
 	// there. This is what deleting a message means everywhere but in Trash
 	// itself, where Expunge is the operation instead.

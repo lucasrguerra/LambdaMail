@@ -15,6 +15,7 @@ import {
   Clock,
   MailOpen,
   Download,
+  FolderInput,
   Pencil,
   RefreshCw,
   Trash2,
@@ -30,9 +31,11 @@ import {
   listHeaderCount,
   applySeen,
   readerActions,
+  moveTargets,
   type ListFilter,
 } from "../../../../../lib/mailCounts";
 import { sanitizeEmailHtml, blockRemoteImages, unblockRemoteImages } from "../../../../../lib/sanitizer";
+import { isSenderTrusted, trustSender, revokeSender } from "../../../../../lib/remoteImages";
 import { resolveInlineImages, buildReaderDocument, type InlineImages } from "../../../../../lib/emailBody";
 import { Button } from "../../../../../components/ui/Button";
 
@@ -113,6 +116,11 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [selected, setSelected] = useState<RenderedMessage | null>(null);
   const [loadRemoteImages, setLoadRemoteImages] = useState(false);
+  // Whether this sender has a standing decision, so the banner can offer to
+  // take it back rather than only to grant it.
+  const [rememberSender, setRememberSender] = useState(false);
+  // Whether the "move to" menu is open.
+  const [moveOpen, setMoveOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<ListFilter>(null);
   const [loading, setLoading] = useState(true);
@@ -245,6 +253,30 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
     [folder, t, loadMessages, searchQuery]
   );
 
+  /** Files one message into another folder. */
+  const moveMessage = useCallback(
+    async (uid: number, target: string) => {
+      setMessages((current) => current.filter((m) => m.uid !== uid));
+      setSelected((current) => (current?.uid === uid ? null : current));
+      setMoveOpen(false);
+      try {
+        const res = await fetch("/api/v1/mail/move", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder, uid, target }),
+        });
+        if (!res.ok) throw new Error(t("errors.serverError"));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : t("errors.serverError"));
+        void loadMessages(searchQuery);
+      } finally {
+        // Both folders changed, so the badges have to re-read.
+        notifyMailStateChanged();
+      }
+    },
+    [folder, t, loadMessages, searchQuery]
+  );
+
   const openMessage = async (uid: number) => {
     // A draft is an unfinished message: opening it means carrying on writing,
     // not reading it in a pane that offers to reply to yourself.
@@ -253,13 +285,19 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
       return;
     }
     setLoadRemoteImages(false);
+    setRememberSender(false);
     setReaderHeight(420);
     try {
       const res = await fetch(`/api/v1/mail/message/${uid}?folder=${encodeURIComponent(folder)}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(t("errors.serverError"));
-      setSelected(await res.json());
+      const message = await res.json();
+      setSelected(message);
+      // A sender the reader has already allowed does not get asked again.
+      const trusted = isSenderTrusted(message.from ?? "");
+      setLoadRemoteImages(trusted);
+      setRememberSender(trusted);
       // Fetching the message is what marks it read on the server, so this only
       // brings the list and the badges into line with what already happened.
       void setSeen(uid, true, { persist: false });
@@ -329,7 +367,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
     <div className="flex flex-1 overflow-hidden">
       {/* Messages List Column */}
       <div
-        className={`${selected ? "hidden md:flex" : "flex"} w-full flex-col bg-dark-bg shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:w-[404px] md:flex-none`}
+        className={`${selected ? "hidden md:flex" : "flex"} w-full flex-col bg-dark-bg shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:w-[380px] md:flex-none lg:w-[420px] xl:w-[460px] 2xl:w-[500px]`}
       >
         {/* Folder heading, with the counts that belong to the folder rather
             than to the page of it that happens to be loaded. */}
@@ -444,15 +482,20 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                       </span>
                     </span>
                     {/* The subject wraps instead of being clipped - a truncated
-                        subject is the one thing a mail list must not do. */}
+                        subject is the one thing a mail list must not do.
+                        overflow-wrap:anywhere as well as wrapping, because a
+                        report's Message-ID is a single unbroken "word" longer
+                        than the column: with nowhere to break it, it ran
+                        straight out of the row. Clamped so one such subject
+                        cannot push the rest of the list off the screen. */}
                     <span
-                      className={`text-[13.5px] leading-snug ${
+                      className={`line-clamp-3 text-[13.5px] leading-snug [overflow-wrap:anywhere] ${
                         msg.seen ? "text-slate-300" : "text-slate-100"
                       }`}
                     >
                       {msg.subject || t("mail.noSubject")}
                     </span>
-                    <span className="line-clamp-2 text-xs leading-relaxed text-slate-400">
+                    <span className="line-clamp-2 text-xs leading-relaxed text-slate-400 [overflow-wrap:anywhere]">
                       {msg.snippet}
                     </span>
                     {msg.has_attachments && (
@@ -503,7 +546,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.15 }}
-              className="mx-auto flex w-full max-w-[760px] flex-col gap-5 px-5 pb-10 pt-6 sm:px-7"
+              className="mx-auto flex w-full max-w-[860px] flex-col gap-5 px-5 pb-10 pt-6 sm:px-7 xl:max-w-[1000px] 2xl:max-w-[1140px]"
             >
               {/* Toolbar: closing, replying and read state all in one row, so
                   the reader is not the only pane with no way out of itself. */}
@@ -555,6 +598,33 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                     <span>{selectedRow?.seen === false ? t("mail.markRead") : t("mail.markUnread")}</span>
                   </Button>
                 )}
+                {/* Filing a message elsewhere: the one ordinary action the
+                    reader still had no button for. */}
+                <div className="relative">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setMoveOpen((open) => !open)}
+                    title={t("mail.moveTo")}
+                  >
+                    <FolderInput className="h-3.5 w-3.5" />
+                    <span>{t("mail.moveTo")}</span>
+                  </Button>
+                  {moveOpen && (
+                    <div className="absolute left-0 top-full z-20 mt-1 min-w-[190px] overflow-hidden rounded-xl bg-dark-panel py-1 shadow-edge">
+                      {moveTargets(folders, folder).map((target) => (
+                        <button
+                          key={target.name}
+                          type="button"
+                          onClick={() => void moveMessage(selected.uid, target.name)}
+                          className="block w-full px-3.5 py-2 text-left text-[13px] text-slate-200 transition-colors hover:bg-white/[0.07]"
+                        >
+                          {FOLDER_LABELS[(target.special_use || target.name).toLowerCase()] ?? target.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <Button
                   variant="secondary"
                   size="sm"
@@ -623,18 +693,38 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
               {/* Remote content banner, shown only when something was actually
                   held back rather than over every message. The wording is the
                   reassurance, not the colour: this is not an error. */}
-              {hasBlockedContent && (
+              {(hasBlockedContent || rememberSender) && (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl bg-dark-card p-3 shadow-edge">
                   <ImageIcon className="h-4 w-4 flex-none text-indigo-400" />
                   <span className="min-w-[200px] flex-1 text-[12.5px] leading-relaxed text-slate-300">
                     {t("mail.remoteContentBlocked")}
                   </span>
+                  {/* Two separate decisions: show them now, and stop asking
+                      about this sender. Keeping them apart lets a reader look
+                      at one message without granting anything permanently. */}
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setLoadRemoteImages(!loadRemoteImages)}
                   >
-                    {loadRemoteImages ? t("mail.imagesEnabled") : t("mail.loadImages")}
+                    {loadRemoteImages ? t("mail.hideImages") : t("mail.loadImages")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (rememberSender) {
+                        revokeSender(selected.from);
+                        setRememberSender(false);
+                        setLoadRemoteImages(false);
+                      } else {
+                        trustSender(selected.from);
+                        setRememberSender(true);
+                        setLoadRemoteImages(true);
+                      }
+                    }}
+                  >
+                    {rememberSender ? t("mail.forgetSender") : t("mail.alwaysFromSender")}
                   </Button>
                 </div>
               )}

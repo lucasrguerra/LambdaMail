@@ -159,7 +159,7 @@ describe("marking a message read in the loaded list", () => {
 
 // --- what the sidebar actually renders -----------------------------------
 
-import { folderBadge, readerActions } from "./lib/mailCounts";
+import { folderBadge, readerActions, moveTargets } from "./lib/mailCounts";
 
 /**
  * These reproduce what the running webmail shows, which the badgeCount tests
@@ -254,5 +254,51 @@ describe("the actions a message offers", () => {
   it("says delete is permanent once in Trash", () => {
     expect(readerActions("trash").deleteIsPermanent).toBe(true);
     expect(readerActions("inbox").deleteIsPermanent).toBe(false);
+  });
+});
+
+describe("where a message may be moved", () => {
+  const folders = [
+    { special_use: "inbox", name: "INBOX", unread_count: 0, total_count: 3 },
+    { special_use: "sent", name: "Sent", unread_count: 0, total_count: 1 },
+    { special_use: "drafts", name: "Drafts", unread_count: 0, total_count: 1 },
+    { special_use: "archive", name: "Archive", unread_count: 0, total_count: 0 },
+    { special_use: "junk", name: "Junk", unread_count: 0, total_count: 0 },
+    { special_use: "trash", name: "Trash", unread_count: 0, total_count: 0 },
+    { special_use: "", name: "Reports", unread_count: 0, total_count: 2 },
+    { special_use: "", name: "Faturas", unread_count: 0, total_count: 0 },
+  ];
+
+  // Sent and Drafts record how a message came to exist, not where it was
+  // filed. Offering them would let Sent claim a message it never sent.
+  it("never offers Sent or Drafts", () => {
+    const names = moveTargets(folders, "inbox").map((f) => f.name);
+    expect(names).not.toContain("Sent");
+    expect(names).not.toContain("Drafts");
+  });
+
+  it("does not offer the folder the message is already in", () => {
+    expect(moveTargets(folders, "inbox").map((f) => f.name)).not.toContain("INBOX");
+    expect(moveTargets(folders, "archive").map((f) => f.name)).not.toContain("Archive");
+  });
+
+  it("offers the ordinary destinations", () => {
+    const names = moveTargets(folders, "inbox").map((f) => f.name);
+    expect(names).toContain("Archive");
+    expect(names).toContain("Junk");
+    expect(names).toContain("Trash");
+  });
+
+  // A folder the user made themselves has no special-use role, and matching
+  // only on roles would leave it unreachable.
+  it("offers folders the user created", () => {
+    const names = moveTargets(folders, "inbox").map((f) => f.name);
+    expect(names).toContain("Reports");
+    expect(names).toContain("Faturas");
+  });
+
+  it("can move out of Drafts and Sent, even though nothing moves in", () => {
+    expect(moveTargets(folders, "drafts").map((f) => f.name)).toContain("Archive");
+    expect(moveTargets(folders, "sent").map((f) => f.name)).toContain("Archive");
   });
 });
