@@ -218,3 +218,65 @@ func TestDeliveredMessageProducesAThreadedReply(t *testing.T) {
 		}
 	}
 }
+
+// --- the subject as it actually arrives ----------------------------------
+
+// A subject with an accent travels as an RFC 2047 encoded word. Pasting the
+// raw header into the reply put "=?UTF-8?Q?Re=3A_Fora...?=" in front of a real
+// person, and it also defeated the check for an existing "Re:" - encoded, the
+// subject starts with "=?", so a second "Re:" was added on top.
+func TestOriginalSubjectIsDecodedBeforeUse(t *testing.T) {
+	reply := replyTo("<abc@example.test>", "")
+	reply.OriginalSubject = "=?UTF-8?Q?Proposta_comercial?="
+
+	subject := vacationHeaders(t, reply)["subject"]
+	decoded := decodeHeaderValue(subject)
+
+	if strings.Contains(decoded, "=?UTF-8?") {
+		t.Errorf("an encoded word reached the reader: %q", decoded)
+	}
+	if !strings.Contains(decoded, "Proposta comercial") {
+		t.Errorf("subject %q", decoded)
+	}
+}
+
+// The same, for the "Re:" that is only visible once decoded.
+func TestEncodedReplyPrefixIsNotDuplicated(t *testing.T) {
+	reply := replyTo("<abc@example.test>", "")
+	// "Re: Fora do escritorio", encoded the way a mail client sends it.
+	reply.OriginalSubject = "=?UTF-8?Q?Re=3A_Fora_do_escrit=C3=B3rio?="
+
+	decoded := decodeHeaderValue(vacationHeaders(t, reply)["subject"])
+	if strings.Count(strings.ToLower(decoded), "re:") > 1 {
+		t.Errorf("stacked Re: prefixes: %q", decoded)
+	}
+}
+
+// A thread that has been round several times accumulates prefixes. The reply
+// carries one at most.
+func TestManyReplyPrefixesCollapseToOne(t *testing.T) {
+	reply := replyTo("<abc@example.test>", "")
+	reply.OriginalSubject = "Re: RE: Re: Proposta comercial"
+
+	decoded := decodeHeaderValue(vacationHeaders(t, reply)["subject"])
+	if strings.Count(strings.ToLower(decoded), "re:") > 1 {
+		t.Errorf("prefixes were not collapsed: %q", decoded)
+	}
+	if !strings.Contains(decoded, "Proposta comercial") {
+		t.Errorf("the subject itself was lost: %q", decoded)
+	}
+}
+
+// The reply must not quote back the out-of-office text as though it were the
+// subject of the conversation, which is what happens when someone replies to
+// the automatic message itself.
+func TestReplyToTheAutoReplyDoesNotEchoItself(t *testing.T) {
+	reply := replyTo("<abc@example.test>", "")
+	reply.Subject = "Fora do escritorio"
+	reply.OriginalSubject = "Re: Fora do escritorio"
+
+	decoded := decodeHeaderValue(vacationHeaders(t, reply)["subject"])
+	if strings.Count(strings.ToLower(decoded), "fora do escritorio") > 1 {
+		t.Errorf("the reply repeated its own subject back: %q", decoded)
+	}
+}

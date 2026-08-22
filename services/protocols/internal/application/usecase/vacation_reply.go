@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"mime"
 	"strings"
 	"time"
 
@@ -26,6 +27,8 @@ type pendingVacation struct {
 	OriginalMessageID  string
 	OriginalReferences string
 	OriginalSubject    string
+	// MailboxID is whose responder this is, for the suppression log.
+	MailboxID uuid.UUID
 }
 
 // SetVacationSender enables actually sending the out-of-office replies the
@@ -37,6 +40,12 @@ func (uc *ProcessInboundEmailUseCase) SetVacationSender(
 	uc.submission = submission
 	uc.auth = auth
 	uc.replyHost = host
+}
+
+// SetVacationSuppression limits how often one sender is told. Optional:
+// without it every message produces a reply, which is what happened before.
+func (uc *ProcessInboundEmailUseCase) SetVacationSuppression(s *VacationSuppression) {
+	uc.suppression = s
 }
 
 // sendVacationReplies queues the replies the rules produced.
@@ -59,7 +68,11 @@ func (uc *ProcessInboundEmailUseCase) sendVacationReplies(ctx context.Context, r
 	for _, reply := range replies {
 		if err := uc.sendVacationReply(ctx, reply); err != nil {
 			log.Printf("vacation: could not reply to %s on behalf of %s: %v", reply.To, reply.From, err)
+			continue
 		}
+		// Recorded only after the reply is really queued, so a send that
+		// failed does not silence the next message from the same person.
+		uc.suppression.Record(ctx, reply.MailboxID, reply.To)
 	}
 }
 
@@ -137,16 +150,62 @@ func vacationSubject(reply pendingVacation) string {
 	if configured == "" {
 		configured = "Out of office"
 	}
-	original := strings.TrimSpace(reply.OriginalSubject)
+
+	// Decoded first. A subject carrying an accent travels as an RFC 2047
+	// encoded word, and pasting the raw header in put
+	// "=?UTF-8?Q?Re=3A_Fora...?=" in front of a real person. It also defeated
+	// the check below: encoded, every subject starts with "=?", so an existing
+	// "Re:" went unrecognised and a second one was added on top.
+	original := stripReplyPrefixes(decodeHeaderValue(reply.OriginalSubject))
 	if original == "" {
 		return configured
 	}
-	// A subject that already announces itself as a reply does not need a
-	// second announcement.
-	if strings.HasPrefix(strings.ToLower(original), "re:") {
-		return configured + ": " + original
+
+	// Someone replying to the automatic message itself would otherwise get
+	// their own out-of-office text quoted back at them as the conversation's
+	// subject.
+	if strings.EqualFold(original, configured) {
+		return configured
 	}
 	return configured + ": Re: " + original
+}
+
+// decodeHeaderValue reads an RFC 2047 encoded word back into text.
+//
+// A header that is not encoded, or that this decoder cannot read, is returned
+// as it stands: showing the raw value is better than showing nothing, and a
+// subject is not worth failing a reply over.
+func decodeHeaderValue(value string) string {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return ""
+	}
+	decoded, err := (&mime.WordDecoder{}).DecodeHeader(raw)
+	if err != nil {
+		return raw
+	}
+	return strings.TrimSpace(decoded)
+}
+
+// stripReplyPrefixes removes the Re: a thread accumulates.
+//
+// A conversation that has been round several times carries "Re: RE: Re:", and
+// each one added another. One is enough, and it is added back by the caller.
+func stripReplyPrefixes(subject string) string {
+	out := strings.TrimSpace(subject)
+	for {
+		lower := strings.ToLower(out)
+		switch {
+		case strings.HasPrefix(lower, "re:"):
+			out = strings.TrimSpace(out[3:])
+		case strings.HasPrefix(lower, "fwd:"):
+			out = strings.TrimSpace(out[4:])
+		case strings.HasPrefix(lower, "fw:"):
+			out = strings.TrimSpace(out[3:])
+		default:
+			return out
+		}
+	}
 }
 
 // messageIDRef normalises a Message-ID into something usable as a reference.

@@ -148,6 +148,10 @@ func run(cfg config) {
 	// the same queue, signing and send limits as any other message this
 	// server sends - it is not a special path.
 	inboundUC.SetVacationSender(submissionUC, authRepo, cfg.PrimaryMailHost)
+	// One notice per sender per week, per RFC 5230. Without this a
+	// conversation of five messages produced five copies of it.
+	inboundUC.SetVacationSuppression(usecase.NewVacationSuppression(
+		postgres.NewVacationLog(pool), usecase.DefaultVacationPeriod))
 
 	mxResolver := netdns.NewNetMXResolver()
 	outboundWorker := usecase.NewOutboundWorkerUseCase(outboundRepo, mxResolver, blobReader, inboundUC, mailboxes, cfg.PrimaryMailHost)

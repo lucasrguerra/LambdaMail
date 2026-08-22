@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,4 +41,16 @@ type SieveScriptReader interface {
 	// ActiveScriptFor returns the mailbox's active script, or empty when it
 	// has none.
 	ActiveScriptFor(ctx context.Context, mailboxID uuid.UUID) (string, error)
+}
+
+// VacationLog remembers who has already been told the mailbox is unattended.
+//
+// RFC 5230 section 4.1: an autoresponder answers a given sender at most once
+// per period. Without this, every message in a conversation produces its own
+// copy of the same notice.
+type VacationLog interface {
+	// LastRepliedAt is when this sender was last answered, or the zero time
+	// when they never have been.
+	LastRepliedAt(ctx context.Context, mailboxID uuid.UUID, to string) (time.Time, error)
+	RecordReply(ctx context.Context, mailboxID uuid.UUID, to string) error
 }

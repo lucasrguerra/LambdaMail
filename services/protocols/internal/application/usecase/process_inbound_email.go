@@ -70,6 +70,7 @@ type ProcessInboundEmailUseCase struct {
 	submission     *ProcessOutboundEmailUseCase
 	auth           port.AuthRepository
 	replyHost      string
+	suppression    *VacationSuppression
 }
 
 func NewProcessInboundEmailUseCase(mailboxes port.MailboxRepository, blobs port.BlobStorage, messages port.InboundMessageRepository) *ProcessInboundEmailUseCase {
@@ -307,7 +308,11 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 			if decision.Folder != "" {
 				folder = decision.Folder
 			}
-			if decision.Vacation != nil {
+			// Someone who has already been told recently is not told again:
+			// otherwise a conversation of five messages produces five copies
+			// of the same notice, and a person replying to the automatic
+			// message is answered once more.
+			if decision.Vacation != nil && uc.suppression.ShouldReply(ctx, recipient.ID, input.Sender) {
 				// The message being answered travels with the reply, so it
 				// arrives inside that conversation instead of as a loose note
 				// the sender has to match up themselves.
@@ -320,6 +325,7 @@ func (uc *ProcessInboundEmailUseCase) Handle(ctx context.Context, input ProcessI
 					OriginalMessageID:  firstHeader(original, "message-id"),
 					OriginalReferences: firstHeader(original, "references"),
 					OriginalSubject:    firstHeader(original, "subject"),
+					MailboxID:          recipient.ID,
 				})
 			}
 		}
