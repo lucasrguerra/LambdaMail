@@ -257,7 +257,24 @@
     "vacationIntro": "Reply automatically to incoming mail while you are away.",
     "vacationSubjectLabel": "Reply subject",
     "vacationTitle": "Out-of-office auto-reply",
-    "valuePlaceholder": "Value to match..."
+    "valuePlaceholder": "Value to match...",
+    "ruleField": "Field",
+    "ruleCondition": "Condition",
+    "ruleValue": "Value",
+    "ruleValuePlaceholder": "e.g. invoice",
+    "fieldTo": "To",
+    "fieldCc": "Cc",
+    "condContains": "Contains",
+    "condIs": "Is exactly",
+    "condStartsWith": "Starts with",
+    "condEndsWith": "Ends with",
+    "condNotContains": "Does not contain",
+    "actionMarkRead": "Mark as read",
+    "ruleMoveUp": "Move up",
+    "ruleMoveDown": "Move down",
+    "ruleOrderNote": "Rules are applied in order, and the first one that files a message decides where it goes.",
+    "foreignScriptTitle": "Rules written elsewhere",
+    "foreignScriptIntro": "These rules were written by hand or by a desktop client and use features this screen cannot show. They are still applied to your mail. Editing them here would change what they do, so they are shown as they are."
   },
   "ui": {
     "accountLocked": "Locked",
@@ -337,5 +354,11 @@
     "underline": "Underline",
     "insertLink": "Link",
     "insertImage": "Image"
+  },
+  "folders": {
+    "new": "New folder",
+    "newPlaceholder": "New folder…",
+    "delete": "Delete {name}",
+    "deleteConfirm": "Delete the folder \"{name}\" and every message in it? This cannot be undone from the interface."
   }
 }

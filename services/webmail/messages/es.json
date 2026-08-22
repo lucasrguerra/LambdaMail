@@ -257,7 +257,24 @@
     "vacationIntro": "Responde automáticamente al correo entrante mientras esté ausente.",
     "vacationSubjectLabel": "Asunto de la respuesta",
     "vacationTitle": "Respuesta automática de ausencia",
-    "valuePlaceholder": "Valor a coincidir..."
+    "valuePlaceholder": "Valor a coincidir...",
+    "ruleField": "Campo",
+    "ruleCondition": "Condición",
+    "ruleValue": "Valor",
+    "ruleValuePlaceholder": "p. ej. factura",
+    "fieldTo": "Para",
+    "fieldCc": "Cc",
+    "condContains": "Contiene",
+    "condIs": "Es exactamente",
+    "condStartsWith": "Empieza por",
+    "condEndsWith": "Termina en",
+    "condNotContains": "No contiene",
+    "actionMarkRead": "Marcar como leída",
+    "ruleMoveUp": "Subir",
+    "ruleMoveDown": "Bajar",
+    "ruleOrderNote": "Las reglas se aplican en orden, y la primera que archiva un mensaje decide dónde va.",
+    "foreignScriptTitle": "Reglas escritas en otro sitio",
+    "foreignScriptIntro": "Estas reglas se escribieron a mano o desde un cliente de correo y usan funciones que esta pantalla no puede mostrar. Se siguen aplicando. Editarlas aquí cambiaría lo que hacen, por eso se muestran tal cual."
   },
   "ui": {
     "accountLocked": "Bloqueada",
@@ -337,5 +354,11 @@
     "underline": "Subrayado",
     "insertLink": "Enlace",
     "insertImage": "Imagen"
+  },
+  "folders": {
+    "new": "Nueva carpeta",
+    "newPlaceholder": "Nueva carpeta…",
+    "delete": "Eliminar {name}",
+    "deleteConfirm": "¿Eliminar la carpeta \"{name}\" y todos sus mensajes? Esto no se puede deshacer desde la interfaz."
   }
 }

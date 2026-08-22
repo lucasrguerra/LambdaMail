@@ -222,3 +222,26 @@ export function moveTargets(
     return Boolean(folder.name);
   });
 }
+
+/**
+ * The folders the user created for themselves.
+ *
+ * The sidebar lists the standard folders from a fixed array, so anything the
+ * user made appears nowhere unless it is picked out separately - which is why
+ * a rule could name a folder that had no way of being seen or created.
+ *
+ * A custom folder is one with no special-use role, minus the folders this
+ * server creates for its own purposes: Reports is filled by the report
+ * ingestion and is not the user's to rename or delete.
+ */
+const SYSTEM_OWNED = new Set(["reports", "inbox", "sent", "drafts", "trash", "junk", "archive"]);
+
+export function customFolders(folders: FolderSummary[] | undefined | null): FolderSummary[] {
+  return (folders ?? [])
+    .filter((folder) => {
+      const role = (folder.special_use ?? "").trim();
+      const name = (folder.name ?? "").trim().toLowerCase();
+      return role === "" && name !== "" && !SYSTEM_OWNED.has(name);
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}

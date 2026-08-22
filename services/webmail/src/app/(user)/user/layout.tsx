@@ -11,6 +11,8 @@ import {
   Archive,
   AlertTriangle,
   Trash2,
+  Folder as FolderIcon,
+  Plus,
   PenSquare,
   LogOut,
   Mail,
@@ -24,7 +26,7 @@ import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 import { useAccount, isAdminRole } from "../../../lib/useAccount";
 import { useFolders } from "../../../lib/useFolders";
-import { folderBadge } from "../../../lib/mailCounts";
+import { folderBadge, customFolders } from "../../../lib/mailCounts";
 import { initialsFor } from "../../../lib/initials";
 
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
@@ -34,7 +36,31 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
   const account = useAccount("user");
   // Live, not fetched once: these badges used to freeze at the value they had
   // when the tab was opened.
-  const { folders } = useFolders();
+  const { folders, reload: reloadFolders } = useFolders();
+  const [newFolder, setNewFolder] = useState("");
+  const [folderError, setFolderError] = useState<string | null>(null);
+
+  /** Creates, renames or deletes one of the user's own folders. */
+  const manageFolder = async (body: Record<string, string>) => {
+    setFolderError(null);
+    try {
+      const res = await fetch("/api/v1/mail/folders/manage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setFolderError(data.message ?? t("errors.serverError"));
+        return false;
+      }
+      reloadFolders();
+      return true;
+    } catch {
+      setFolderError(t("errors.serverError"));
+      return false;
+    }
+  };
 
   const navItems = [
     { href: "/user/mail/inbox", label: t("mail.inbox"), icon: Inbox, role: "inbox" },
@@ -136,6 +162,91 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
             </Link>
           );
         })}
+
+        {/* The folders the user made. They exist in the database and the rules
+            can file into them, but the sidebar listed only the fixed six, so
+            there was no way to see one - or to make one. */}
+        {customFolders(folders).length > 0 && <div className="lm-rule my-2.5" />}
+        {customFolders(folders).map((folder) => {
+          const badge = folderBadge(folders, folder.name);
+          const href = `/user/mail/${encodeURIComponent(folder.name)}`;
+          const isActive = decodeURIComponent(pathname) === decodeURIComponent(href);
+          return (
+            <div key={folder.name} className="group/folder relative">
+              <Link
+                href={href}
+                onClick={() => setMobileOpen(false)}
+                data-active={isActive}
+                title={folder.name}
+                className="lm-nav"
+              >
+                <span className="lm-nav-mark" />
+                <FolderIcon
+                  className={`h-[17px] w-[17px] flex-none ${isActive ? "text-indigo-500" : "text-slate-400"}`}
+                />
+                <span className="min-w-0 flex-1 truncate text-[13.5px] leading-snug">{folder.name}</span>
+                <span className="flex flex-none items-center gap-1.5 pr-5">
+                  {badge.total > 0 && (
+                    <span className="text-[11.5px] tabular-nums text-slate-500">{badge.total}</span>
+                  )}
+                  {badge.showsUnread && (
+                    <span className="rounded-full bg-indigo-500/20 px-1.5 py-px text-[11px] font-medium tabular-nums text-indigo-300">
+                      {badge.unread}
+                    </span>
+                  )}
+                </span>
+              </Link>
+              {/* Deleting takes the mail inside with it, so the confirmation
+                  says so rather than asking a bare "are you sure". */}
+              <button
+                type="button"
+                aria-label={t("folders.delete", { name: folder.name })}
+                title={t("folders.delete", { name: folder.name })}
+                onClick={() => {
+                  if (!window.confirm(t("folders.deleteConfirm", { name: folder.name }))) return;
+                  void manageFolder({ action: "delete", name: folder.name });
+                }}
+                className="absolute right-1.5 top-1/2 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-white/[0.09] hover:text-slate-200 focus:flex group-hover/folder:flex"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Creating one. Inline rather than behind a settings page: a folder is
+            made at the moment the user realises they want one. */}
+        <form
+          className="mt-1.5 flex items-center gap-1.5 px-1"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const name = newFolder.trim();
+            if (!name) return;
+            if (await manageFolder({ action: "create", name })) setNewFolder("");
+          }}
+        >
+          <input
+            value={newFolder}
+            onChange={(e) => setNewFolder(e.target.value)}
+            placeholder={t("folders.newPlaceholder")}
+            aria-label={t("folders.new")}
+            maxLength={100}
+            className="min-w-0 flex-1 rounded-lg bg-dark-panel px-2.5 py-1.5 text-[12.5px] text-slate-200 shadow-edge placeholder:text-slate-500 focus:outline-none"
+          />
+          <button
+            type="submit"
+            aria-label={t("folders.new")}
+            title={t("folders.new")}
+            className="flex h-7 w-7 flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.09] hover:text-slate-100"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </form>
+        {folderError && (
+          <p role="alert" className="px-1 pt-1 text-[11.5px] leading-snug text-amber-300">
+            {folderError}
+          </p>
+        )}
 
         <div className="lm-rule my-2.5" />
 

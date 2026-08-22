@@ -159,7 +159,7 @@ describe("marking a message read in the loaded list", () => {
 
 // --- what the sidebar actually renders -----------------------------------
 
-import { folderBadge, readerActions, moveTargets } from "./lib/mailCounts";
+import { folderBadge, readerActions, moveTargets, customFolders } from "./lib/mailCounts";
 
 /**
  * These reproduce what the running webmail shows, which the badgeCount tests
@@ -300,5 +300,36 @@ describe("where a message may be moved", () => {
   it("can move out of Drafts and Sent, even though nothing moves in", () => {
     expect(moveTargets(folders, "drafts").map((f) => f.name)).toContain("Archive");
     expect(moveTargets(folders, "sent").map((f) => f.name)).toContain("Archive");
+  });
+});
+
+describe("the folders a user made themselves", () => {
+  const folders = [
+    { special_use: "inbox", name: "INBOX", unread_count: 0, total_count: 3 },
+    { special_use: "sent", name: "Sent", unread_count: 0, total_count: 1 },
+    { special_use: "trash", name: "Trash", unread_count: 0, total_count: 0 },
+    { special_use: "", name: "Reports", unread_count: 0, total_count: 2 },
+    { special_use: "", name: "Faturas", unread_count: 1, total_count: 4 },
+    { special_use: "", name: "Clientes", unread_count: 0, total_count: 0 },
+  ];
+
+  // The sidebar lists the standard folders from a fixed array, so a folder the
+  // user created appears nowhere unless it is picked out separately.
+  it("are the ones with no special-use role, minus the system's own", () => {
+    const names = customFolders(folders).map((f) => f.name);
+    expect(names).toEqual(["Clientes", "Faturas"]);
+  });
+
+  it("leaves out Reports, which this server fills itself", () => {
+    expect(customFolders(folders).map((f) => f.name)).not.toContain("Reports");
+  });
+
+  it("lists them in alphabetical order, since nothing else orders them", () => {
+    expect(customFolders(folders).map((f) => f.name)).toEqual(["Clientes", "Faturas"]);
+  });
+
+  it("copes with no folders at all", () => {
+    expect(customFolders([])).toEqual([]);
+    expect(customFolders(undefined)).toEqual([]);
   });
 });

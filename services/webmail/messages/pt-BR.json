@@ -257,7 +257,24 @@
     "vacationIntro": "Responde automaticamente às mensagens recebidas enquanto você estiver ausente.",
     "vacationSubjectLabel": "Assunto da resposta",
     "vacationTitle": "Resposta automática de ausência",
-    "valuePlaceholder": "Valor a corresponder..."
+    "valuePlaceholder": "Valor a corresponder...",
+    "ruleField": "Campo",
+    "ruleCondition": "Condição",
+    "ruleValue": "Valor",
+    "ruleValuePlaceholder": "ex.: fatura",
+    "fieldTo": "Para",
+    "fieldCc": "Cc",
+    "condContains": "Contém",
+    "condIs": "É exatamente",
+    "condStartsWith": "Começa com",
+    "condEndsWith": "Termina com",
+    "condNotContains": "Não contém",
+    "actionMarkRead": "Marcar como lida",
+    "ruleMoveUp": "Mover para cima",
+    "ruleMoveDown": "Mover para baixo",
+    "ruleOrderNote": "As regras são aplicadas em ordem, e a primeira que arquiva uma mensagem decide onde ela fica.",
+    "foreignScriptTitle": "Regras escritas noutro sítio",
+    "foreignScriptIntro": "Estas regras foram escritas à mão ou por um cliente de e-mail e usam recursos que esta tela não consegue mostrar. Continuam a ser aplicadas ao seu correio. Editá-las aqui mudaria o que fazem, por isso são mostradas como estão."
   },
   "ui": {
     "accountLocked": "Bloqueada",
@@ -337,5 +354,11 @@
     "underline": "Sublinhado",
     "insertLink": "Link",
     "insertImage": "Imagem"
+  },
+  "folders": {
+    "new": "Nova pasta",
+    "newPlaceholder": "Nova pasta…",
+    "delete": "Apagar {name}",
+    "deleteConfirm": "Apagar a pasta \"{name}\" e todas as mensagens nela? Isto não pode ser desfeito pela interface."
   }
 }

@@ -10,6 +10,8 @@ import {
   Monitor,
   CheckCircle2,
   Trash2,
+  ChevronUp,
+  ChevronDown,
   Plus,
   Lock,
   Languages,
@@ -20,6 +22,9 @@ import { Button } from "../../../../components/ui/Button";
 import { TotpEnrolment, RecoveryCodes } from "../../../../components/TotpEnrolment";
 import { LanguageSwitcher } from "../../../../i18n/LanguageSwitcher";
 import { signatureToHtml, sanitizeSignature } from "../../../../lib/signature";
+import { buildSieve, parseSieve, type Rule, type RuleField, type RuleCondition, type RuleAction } from "../../../../lib/rules";
+import { useFolders } from "../../../../lib/useFolders";
+import { moveTargets } from "../../../../lib/mailCounts";
 
 interface SieveRule {
   id: string;
@@ -87,11 +92,17 @@ export default function UserSettingsPage() {
   // used to sit here, and because saving posts the whole list, the first time
   // anyone added or removed a rule that invented filter was written into their
   // real Sieve script and began moving their mail.
-  const [rules, setRules] = useState<SieveRule[]>([]);
-  const [newField, setNewField] = useState<"From" | "Subject" | "Header">("Subject");
-  const [newMatch, setNewMatch] = useState<"contains" | "equals" | "matches">("contains");
+  const { folders } = useFolders();
+  const [rules, setRules] = useState<Rule[]>([]);
+  // A script this screen cannot express - hand-written, or written by a
+  // desktop client over ManageSieve. Shown as it is rather than rewritten into
+  // the nearest thing this form can say, which would quietly change what the
+  // user's mail does.
+  const [foreignScript, setForeignScript] = useState<string | null>(null);
+  const [newField, setNewField] = useState<RuleField>("subject");
+  const [newCondition, setNewCondition] = useState<RuleCondition>("contains");
+  const [newAction, setNewAction] = useState<RuleAction>("move");
   const [newValue, setNewValue] = useState("");
-  const [newAction, setNewAction] = useState<"move" | "flag" | "discard" | "redirect">("move");
   const [newTarget, setNewTarget] = useState("Archive");
 
   useEffect(() => {
@@ -107,10 +118,18 @@ export default function UserSettingsPage() {
       .catch(() => undefined);
 
     fetch("/api/v1/user/sieve")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data?.script && data.script.includes("vacation")) {
-          setVacationEnabled(data.is_active);
+        const script = typeof data?.script === "string" ? data.script : "";
+        const parsed = parseSieve(script);
+        if (parsed === null) {
+          // Not expressible in this form; shown verbatim instead of being
+          // rewritten into something simpler that means something else.
+          setForeignScript(script);
+          setRules([]);
+        } else {
+          setForeignScript(null);
+          setRules(parsed);
         }
       })
       .catch(() => undefined);
@@ -146,44 +165,46 @@ export default function UserSettingsPage() {
     }
   };
 
-  const addSieveRule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newValue) return;
-    const updated = [
-      ...rules,
-      {
-        id: `rule-${Date.now()}`,
-        field: newField,
-        match: newMatch,
-        value: newValue,
-        action: newAction,
-        targetFolder: newTarget,
-      },
-    ];
+  /** Writes the whole rule list to the server as one script. */
+  const persistRules = async (updated: Rule[]) => {
     setRules(updated);
-    setNewValue("");
-
-    const scriptLines = updated.map((r) =>
-      `if header :${r.match} "${r.field}" "${r.value}" { fileinto "${r.targetFolder || "INBOX"}"; }`
-    );
     await fetch("/api/v1/user/sieve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "user-rules", script: scriptLines.join("\n"), is_active: true }),
+      body: JSON.stringify({ name: "user-rules", script: buildSieve(updated), is_active: true }),
     }).catch(() => undefined);
   };
 
+  const addSieveRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const value = newValue.trim();
+    if (!value) return;
+    await persistRules([
+      ...rules,
+      {
+        id: Date.now().toString(),
+        field: newField,
+        condition: newCondition,
+        value,
+        action: newAction,
+        target: newTarget,
+      },
+    ]);
+    setNewValue("");
+  };
+
   const removeSieveRule = async (id: string) => {
-    const updated = rules.filter((r) => r.id !== id);
-    setRules(updated);
-    const scriptLines = updated.map((r) =>
-      `if header :${r.match} "${r.field}" "${r.value}" { fileinto "${r.targetFolder || "INBOX"}"; }`
-    );
-    await fetch("/api/v1/user/sieve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "user-rules", script: scriptLines.join("\n"), is_active: true }),
-    }).catch(() => undefined);
+    await persistRules(rules.filter((r) => r.id !== id));
+  };
+
+  /** Moves a rule, since the first one that files a message decides. */
+  const moveRule = async (index: number, delta: number) => {
+    const target = index + delta;
+    if (target < 0 || target >= rules.length) return;
+    const reordered = [...rules];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(target, 0, moved);
+    await persistRules(reordered);
   };
 
   const saveVacationResponder = (e: React.FormEvent) => {
@@ -561,52 +582,62 @@ export default function UserSettingsPage() {
               {/* The rule reads as a sentence: IF <field> <match> <value> THEN
                   <action>. Each control keeps its own label, so the row still
                   makes sense when it wraps on a narrow window. */}
+              {/* The rule reads as a sentence: IF <field> <condition>
+                  <value> THEN <action>. The vocabulary is deliberately the
+                  user's, not Sieve's: the old form offered ":matches (regex)"
+                  and pasted whatever was typed into a script, which asked
+                  someone who wanted "mail from the bank goes in Faturas" to
+                  write a pattern language. Wildcards are now generated from
+                  "starts with" and "ends with"; nobody types one. */}
               <form onSubmit={addSieveRule} className="flex flex-wrap items-end gap-2.5">
                 <div className="pb-2.5 text-xs uppercase tracking-[0.08em] text-slate-400">
                   {t("settings.ruleIf")}
                 </div>
-                <div className="min-w-[150px] flex-1">
+                <div className="min-w-[140px] flex-1">
                   <label htmlFor="rule-field" className={fieldLabel}>
-                    {t("ui.eventAction")}
+                    {t("settings.ruleField")}
                   </label>
                   <select
                     id="rule-field"
                     value={newField}
-                    onChange={(e) => setNewField(e.target.value as "From" | "Subject" | "Header")}
+                    onChange={(e) => setNewField(e.target.value as RuleField)}
                     className={input}
                   >
-                    <option value="Subject">{t("settings.fieldSubject")}</option>
-                    <option value="From">{t("settings.fieldFrom")}</option>
-                    <option value="Header">{t("settings.fieldHeader")}</option>
+                    <option value="subject">{t("settings.fieldSubject")}</option>
+                    <option value="from">{t("settings.fieldFrom")}</option>
+                    <option value="to">{t("settings.fieldTo")}</option>
+                    <option value="cc">{t("settings.fieldCc")}</option>
                   </select>
                 </div>
 
-                <div className="min-w-[150px] flex-1">
-                  <label htmlFor="rule-match" className={fieldLabel}>
-                    {t("common.status")}
+                <div className="min-w-[160px] flex-1">
+                  <label htmlFor="rule-condition" className={fieldLabel}>
+                    {t("settings.ruleCondition")}
                   </label>
                   <select
-                    id="rule-match"
-                    value={newMatch}
-                    onChange={(e) => setNewMatch(e.target.value as "contains" | "equals" | "matches")}
+                    id="rule-condition"
+                    value={newCondition}
+                    onChange={(e) => setNewCondition(e.target.value as RuleCondition)}
                     className={input}
                   >
-                    <option value="contains">{t("settings.matchContains")}</option>
-                    <option value="equals">{t("settings.matchEquals")}</option>
-                    <option value="matches">{t("settings.matchRegex")}</option>
+                    <option value="contains">{t("settings.condContains")}</option>
+                    <option value="is">{t("settings.condIs")}</option>
+                    <option value="startsWith">{t("settings.condStartsWith")}</option>
+                    <option value="endsWith">{t("settings.condEndsWith")}</option>
+                    <option value="notContains">{t("settings.condNotContains")}</option>
                   </select>
                 </div>
 
                 <div className="min-w-[200px] flex-[2]">
                   <label htmlFor="rule-value" className={fieldLabel}>
-                    {t("settings.valuePlaceholder")}
+                    {t("settings.ruleValue")}
                   </label>
                   <input
                     id="rule-value"
                     type="text"
                     value={newValue}
                     onChange={(e) => setNewValue(e.target.value)}
-                    placeholder={t("settings.valuePlaceholder")}
+                    placeholder={t("settings.ruleValuePlaceholder")}
                     required
                     className={input}
                   />
@@ -622,14 +653,38 @@ export default function UserSettingsPage() {
                   <select
                     id="rule-action"
                     value={newAction}
-                    onChange={(e) => setNewAction(e.target.value as "move" | "flag" | "discard" | "redirect")}
+                    onChange={(e) => setNewAction(e.target.value as RuleAction)}
                     className={input}
                   >
                     <option value="move">{t("settings.actionMove")}</option>
+                    <option value="markRead">{t("settings.actionMarkRead")}</option>
                     <option value="flag">{t("settings.actionFlag")}</option>
-                    <option value="discard">{t("settings.actionDiscard")}</option>
+                    <option value="delete">{t("settings.actionDiscard")}</option>
                   </select>
                 </div>
+
+                {/* Real folders, listed from the mailbox: the old form typed a
+                    folder name into the script by hand, so a rule could name a
+                    folder that did not exist and simply never fired. */}
+                {newAction === "move" && (
+                  <div className="min-w-[170px] flex-1">
+                    <label htmlFor="rule-target" className={fieldLabel}>
+                      {t("mail.moveTo")}
+                    </label>
+                    <select
+                      id="rule-target"
+                      value={newTarget}
+                      onChange={(e) => setNewTarget(e.target.value)}
+                      className={input}
+                    >
+                      {moveTargets(folders, "").map((folder) => (
+                        <option key={folder.name} value={folder.name}>
+                          {folder.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <Button type="submit" variant="primary" size="md" className="flex-none">
                   <Plus className="h-[15px] w-[15px]" />
@@ -638,18 +693,63 @@ export default function UserSettingsPage() {
               </form>
             </section>
 
+            {/* A script this form cannot express is shown as it is. Rewriting
+                somebody's rules into the nearest thing this vocabulary can say
+                would quietly change what their mail does. */}
+            {foreignScript !== null && (
+              <section className={panel}>
+                <h2 className={panelTitle}>{t("settings.foreignScriptTitle")}</h2>
+                <p className={panelIntro}>{t("settings.foreignScriptIntro")}</p>
+                <pre className="overflow-x-auto rounded-xl bg-dark-panel p-3.5 font-mono text-[12.5px] leading-relaxed text-slate-300 shadow-edge">
+                  {foreignScript}
+                </pre>
+              </section>
+            )}
+
             {rules.length > 0 && (
               <section className={panel}>
+                <p className={panelIntro}>{t("settings.ruleOrderNote")}</p>
                 <div className="flex flex-col gap-2">
                   {rules.map((r, index) => (
                     <div key={r.id} className={tile}>
                       <span className="flex h-[22px] w-[22px] flex-none items-center justify-center rounded-[7px] bg-indigo-900 text-[11px] text-indigo-300">
                         {index + 1}
                       </span>
-                      <span className="min-w-[200px] flex-1 break-words font-mono text-[13px] leading-relaxed text-slate-200">
-                        {t("settings.ruleIf")} <strong className="font-medium">{r.field}</strong> {r.match} &quot;
-                        {r.value}&quot; &rarr; {t("settings.ruleThen")} {r.action.toUpperCase()}
+                      {/* Read back as the sentence it was written as, not as
+                          the Sieve it became. */}
+                      <span className="min-w-[200px] flex-1 break-words text-[13px] leading-relaxed text-slate-200">
+                        {t("settings.ruleIf")}{" "}
+                        <strong className="font-medium">{t(`settings.field${r.field.charAt(0).toUpperCase()}${r.field.slice(1)}`)}</strong>{" "}
+                        {t(`settings.cond${r.condition.charAt(0).toUpperCase()}${r.condition.slice(1)}`).toLowerCase()}{" "}
+                        <strong className="font-medium">&quot;{r.value}&quot;</strong>
+                        {" \u2192 "}
+                        {r.action === "move"
+                          ? `${t("mail.moveTo")} ${r.target}`
+                          : t(`settings.action${r.action === "delete" ? "Discard" : r.action.charAt(0).toUpperCase() + r.action.slice(1)}`)}
                       </span>
+                      {/* Order matters: the first rule that files a message
+                          decides where it lands, so the list has to be
+                          rearrangeable. */}
+                      <button
+                        type="button"
+                        onClick={() => void moveRule(index, -1)}
+                        disabled={index === 0}
+                        aria-label={t("settings.ruleMoveUp")}
+                        title={t("settings.ruleMoveUp")}
+                        className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-slate-100 disabled:opacity-30"
+                      >
+                        <ChevronUp className="h-[15px] w-[15px]" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void moveRule(index, 1)}
+                        disabled={index === rules.length - 1}
+                        aria-label={t("settings.ruleMoveDown")}
+                        title={t("settings.ruleMoveDown")}
+                        className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/[0.07] hover:text-slate-100 disabled:opacity-30"
+                      >
+                        <ChevronDown className="h-[15px] w-[15px]" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => removeSieveRule(r.id)}

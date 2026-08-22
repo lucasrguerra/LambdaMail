@@ -80,29 +80,56 @@ func compare(comparator, actual, want string) bool {
 // that take exponential time on a crafted subject line.
 func wildcardMatch(value, pattern string) bool {
 	v, p := []rune(value), []rune(pattern)
+
+	// literalAt reports whether the pattern rune at i is escaped, and how wide
+	// the escape is. RFC 5228 section 2.7.1: a backslash makes the next
+	// character literal, which is how a rule can be about a real asterisk.
+	// The rules screen relies on this - it escapes any wildcard the user typed
+	// so it stays the character they meant.
+	escaped := func(i int) (rune, int, bool) {
+		if p[i] == '\\' && i+1 < len(p) {
+			return p[i+1], 2, true
+		}
+		return p[i], 1, false
+	}
+
 	// Iterative backtracking: linear in the common case, and it cannot blow
 	// the stack on a long subject the way a recursive version can.
 	vi, pi := 0, 0
 	star, mark := -1, 0
 	for vi < len(v) {
-		switch {
-		case pi < len(p) && (p[pi] == '?' || p[pi] == v[vi]):
-			vi++
-			pi++
-		case pi < len(p) && p[pi] == '*':
-			star = pi
-			mark = vi
-			pi++
-		case star >= 0:
+		if pi < len(p) {
+			ch, width, isEscaped := escaped(pi)
+			switch {
+			case isEscaped && ch == v[vi]:
+				vi++
+				pi += width
+				continue
+			case !isEscaped && (ch == '?' || ch == v[vi]):
+				vi++
+				pi += width
+				continue
+			case !isEscaped && ch == '*':
+				star = pi
+				mark = vi
+				pi += width
+				continue
+			}
+		}
+		if star >= 0 {
 			pi = star + 1
 			mark++
 			vi = mark
-		default:
-			return false
+			continue
 		}
+		return false
 	}
-	for pi < len(p) && p[pi] == '*' {
-		pi++
+	for pi < len(p) {
+		ch, width, isEscaped := escaped(pi)
+		if isEscaped || ch != '*' {
+			break
+		}
+		pi += width
 	}
 	return pi == len(p)
 }

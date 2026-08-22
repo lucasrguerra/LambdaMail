@@ -355,3 +355,40 @@ func TestMatchesDoesNotBlowUpOnManyStars(t *testing.T) {
 		t.Fatal("wildcard matching took more than three seconds; it is backtracking exponentially")
 	}
 }
+
+// A backslash escapes a wildcard, per RFC 5228 section 2.7.1: "\*" is a real
+// asterisk, not "any run of characters".
+//
+// This matters because the rules screen generates the wildcards itself. When
+// someone writes a rule about a subject containing "50% *", the screen escapes
+// their asterisk so it stays literal - and if this engine ignored the escape,
+// that rule would match every subject starting with "50% " instead.
+func TestEscapedWildcardIsALiteralCharacter(t *testing.T) {
+	script := `if header :matches "Subject" "50% \\* desconto*" { fileinto "X"; }`
+
+	if out := evaluate(t, script, Message{Headers: map[string][]string{
+		"subject": {"50% * desconto de agosto"},
+	}}); out.Folder != "X" {
+		t.Errorf("the literal asterisk did not match: %q", out.Folder)
+	}
+	// The escaped asterisk must not behave as a wildcard.
+	if out := evaluate(t, script, Message{Headers: map[string][]string{
+		"subject": {"50% enorme desconto de agosto"},
+	}}); out.Folder != "" {
+		t.Errorf("the escaped asterisk was treated as a wildcard: %q", out.Folder)
+	}
+}
+
+func TestEscapedQuestionMarkIsALiteralCharacter(t *testing.T) {
+	script := `if header :matches "Subject" "Onde\\?" { fileinto "X"; }`
+	if out := evaluate(t, script, Message{Headers: map[string][]string{
+		"subject": {"Onde?"},
+	}}); out.Folder != "X" {
+		t.Errorf("the literal question mark did not match: %q", out.Folder)
+	}
+	if out := evaluate(t, script, Message{Headers: map[string][]string{
+		"subject": {"OndeX"},
+	}}); out.Folder != "" {
+		t.Errorf("the escaped question mark matched any character: %q", out.Folder)
+	}
+}

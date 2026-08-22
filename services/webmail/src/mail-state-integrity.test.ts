@@ -38,9 +38,16 @@ describe("the counters the sidebar shows", () => {
 
   // The total was rendered twice for Drafts, where the badge and the size are
   // the same number: "Rascunhos 1 1".
-  it("renders the folder size in exactly one place", () => {
+  //
+  // Two occurrences now, not one: the standard folders and the folders the
+  // user created are rendered by separate templates. What must not happen is
+  // one template printing it twice, which is what the defect was.
+  it("renders the folder size once per folder template", () => {
     const layout = code(USER_LAYOUT);
-    expect(layout.match(/\{badge\.total\}/g) ?? []).toHaveLength(1);
+    expect(layout.match(/\{badge\.total\}/g) ?? []).toHaveLength(2);
+    // And each template guards the unread badge, so the two numbers can never
+    // be the same value shown twice.
+    expect(layout.match(/badge\.showsUnread/g) ?? []).toHaveLength(2);
   });
 
   // The folder list was fetched once on mount, so every badge froze at the
