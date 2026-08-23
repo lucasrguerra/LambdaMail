@@ -296,7 +296,10 @@ export default function AdminDomainsPage() {
                       onClick={() => setSelectedId(d.id)}
                     >
                       {selectedId === d.id ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
-                      <span>{selectedId === d.id ? t("common.status") : t("common.add")}</span>
+                      {/* It said "Add" for a domain already on the list, and
+                          "Status" once picked. It does neither: it chooses
+                          which domain the actions below act on. */}
+                      <span>{selectedId === d.id ? t("admin.domainSelected") : t("admin.selectDomain")}</span>
                     </Button>
                   </div>
                 </div>

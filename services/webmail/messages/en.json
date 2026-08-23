@@ -65,7 +65,6 @@
     "quotaMb": "Quota (MB)",
     "readinessIntro": "Checks the server reports about itself before it carries production mail.",
     "reconcileDns": "Reconcile DNS",
-    "reconcileNotImplemented": "Per-record DNS verification is not implemented yet: this records the request and re-reads the stored status, it does not query a resolver.",
     "rejectScore": "Reject score",
     "retryJob": "Retry",
     "rspamdIntro": "Scores that trigger greylisting, header tagging and rejection.",
@@ -94,7 +93,9 @@
     "openAdminShort": "Admin",
     "reconcileSummary": "{created} created, {updated} corrected, {unchanged} already right.",
     "reconcileConflicts": "Left untouched — another value is already published:",
-    "reconcileErrors": "The provider refused these:"
+    "reconcileErrors": "The provider refused these:",
+    "selectDomain": "Select",
+    "domainSelected": "Selected"
   },
   "auth": {
     "adminLoginTitle": "Admin console",

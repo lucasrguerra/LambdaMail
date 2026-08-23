@@ -65,7 +65,6 @@
     "quotaMb": "Cuota (MB)",
     "readinessIntro": "Verificaciones que el servidor informa sobre sí mismo antes de transportar correo en producción.",
     "reconcileDns": "Reconciliar DNS",
-    "reconcileNotImplemented": "La verificación de registros DNS individuales aún no está implementada: esto registra la solicitud y relee el estado almacenado, no consulta un resolutor.",
     "rejectScore": "Puntuación de rechazo",
     "retryJob": "Reintentar",
     "rspamdIntro": "Puntuaciones que activan greylisting, etiquetado de cabecera y rechazo.",
@@ -94,7 +93,9 @@
     "openAdminShort": "Admin",
     "reconcileSummary": "{created} creados, {updated} corregidos, {unchanged} ya correctos.",
     "reconcileConflicts": "Sin tocar — ya hay otro valor publicado:",
-    "reconcileErrors": "El proveedor rechazó estos:"
+    "reconcileErrors": "El proveedor rechazó estos:",
+    "selectDomain": "Seleccionar",
+    "domainSelected": "Seleccionado"
   },
   "auth": {
     "adminLoginTitle": "Consola de administración",
