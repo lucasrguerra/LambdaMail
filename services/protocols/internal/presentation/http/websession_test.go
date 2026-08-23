@@ -104,11 +104,17 @@ func TestWebSessionVerifier_RejectsExpiredToken(t *testing.T) {
 // variations, and produces them through the same algorithm.
 func mintSession(t *testing.T, claims WebSession) string {
 	t.Helper()
+	return mintSessionRaw(claims)
+}
+
+// mintSessionRaw is the same without a *testing.T, for helpers that build a
+// token outside a test body.
+func mintSessionRaw(claims WebSession) string {
 	header := base64.RawURLEncoding.EncodeToString(
 		[]byte(`{"alg":"HS256","typ":"JWT"}`))
 	body, err := json.Marshal(claims)
 	if err != nil {
-		t.Fatalf("marshal claims: %v", err)
+		panic(err)
 	}
 	payload := base64.RawURLEncoding.EncodeToString(body)
 

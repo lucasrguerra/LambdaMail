@@ -91,7 +91,10 @@
     "unlockAccount": "Desbloquear",
     "verifyIntro": "Resuelve cada registro esperado en resolutores públicos e informa uno por uno.",
     "watcherHealthy": "Monitor de certificado",
-    "openAdminShort": "Admin"
+    "openAdminShort": "Admin",
+    "reconcileSummary": "{created} creados, {updated} corregidos, {unchanged} ya correctos.",
+    "reconcileConflicts": "Sin tocar — ya hay otro valor publicado:",
+    "reconcileErrors": "El proveedor rechazó estos:"
   },
   "auth": {
     "adminLoginTitle": "Consola de administración",

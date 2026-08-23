@@ -91,7 +91,10 @@
     "unlockAccount": "Unlock",
     "verifyIntro": "Resolves every expected record against public resolvers and reports each one.",
     "watcherHealthy": "Certificate watcher",
-    "openAdminShort": "Admin"
+    "openAdminShort": "Admin",
+    "reconcileSummary": "{created} created, {updated} corrected, {unchanged} already right.",
+    "reconcileConflicts": "Left untouched — another value is already published:",
+    "reconcileErrors": "The provider refused these:"
   },
   "auth": {
     "adminLoginTitle": "Admin console",

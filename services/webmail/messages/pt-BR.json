@@ -91,7 +91,10 @@
     "unlockAccount": "Desbloquear",
     "verifyIntro": "Resolve cada registro esperado em servidores DNS públicos e relata um a um.",
     "watcherHealthy": "Monitor de certificado",
-    "openAdminShort": "Admin"
+    "openAdminShort": "Admin",
+    "reconcileSummary": "{created} criados, {updated} corrigidos, {unchanged} já corretos.",
+    "reconcileConflicts": "Não alterados — já existe outro valor publicado:",
+    "reconcileErrors": "O provedor recusou estes:"
   },
   "auth": {
     "adminLoginTitle": "Console de administração",

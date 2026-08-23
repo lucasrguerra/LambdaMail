@@ -185,7 +185,7 @@ func run(cfg config) {
 	// ------------------------------------------------------- background jobs
 	go runDeliveryWorker(ctx, outboundWorker)
 	if cfg.CloudflareToken != "" {
-		go runDnsReconciler(ctx, cfg, aliasRepo, dkimRepo)
+		go runDnsReconciler(ctx, cfg, aliasRepo, dkimRepo, postgres.NewDomainRepository(pool))
 	} else {
 		log.Printf("CLOUDFLARE_API_TOKEN is not set: DNS reconciliation is disabled")
 	}
@@ -208,6 +208,11 @@ func run(cfg config) {
 	router.SetMailAPI(webmailUC, cfg.JwtSecret)
 	// Folders the mailbox owner keeps for themselves, which the filing rules
 	// can then name as a destination.
+	// The console's reconcile button reaches this: the same sync the timer
+	// runs, for one named domain, on demand.
+	router.SetDnsReconciler(domainReconciler{run: func(c context.Context, domain string) (*usecase.SyncDnsRecordsOutput, error) {
+		return reconcileDomainOnDemand(c, cfg, aliasRepo, dkimRepo, domain)
+	}})
 	router.SetFolderAdmin(usecase.NewManageFoldersUseCase(
 		postgres.NewWebmailRepository(pool), postgres.NewWebmailRepository(pool)))
 	if dkimRepo != nil {
@@ -546,7 +551,10 @@ func runDeliveryWorker(ctx context.Context, worker *usecase.OutboundWorkerUseCas
 
 // runDnsReconciler provisions the DKIM keys and reconciles the zone, then
 // repeats on the interval of PLAN.md section 7.5 to detect drift.
-func runDnsReconciler(ctx context.Context, cfg config, aliasRepo port.SystemAliasRepository, dkimRepo *postgres.DkimRepository) {
+func runDnsReconciler(
+	ctx context.Context, cfg config, aliasRepo port.SystemAliasRepository,
+	dkimRepo *postgres.DkimRepository, domainRepo *postgres.DomainRepository,
+) {
 	syncUC := usecase.NewSyncDnsRecordsUseCase(cloudflare.NewCloudflareAdapter(cfg.CloudflareToken), aliasRepo)
 	syncUC.SetVerifier(netdns.NewPublicVerifier())
 
@@ -555,9 +563,8 @@ func runDnsReconciler(ctx context.Context, cfg config, aliasRepo port.SystemAlia
 		provisioner = usecase.NewProvisionDkimKeysUseCase(dkimRepo, generateDkimKey)
 	}
 
-	reconcile := func() {
-		domain := cfg.domain()
-
+	// reconcileOne publishes the expected records for one domain.
+	reconcileOne := func(domain string) (*usecase.SyncDnsRecordsOutput, error) {
 		input := usecase.SyncDnsRecordsInput{
 			DomainName:  domain,
 			MailHost:    cfg.PrimaryMailHost,
@@ -573,8 +580,7 @@ func runDnsReconciler(ctx context.Context, cfg config, aliasRepo port.SystemAlia
 		if provisioner != nil {
 			keys, err := provisioner.Execute(ctx, domain)
 			if err != nil {
-				log.Printf("DNS reconcile: could not provision DKIM keys for %s: %v", domain, err)
-				return
+				return nil, fmt.Errorf("provision DKIM keys for %s: %w", domain, err)
 			}
 			input.RsaDkimPubKey = keys.RsaPublicKey
 			input.EdDkimPubKey = keys.Ed25519PublicKey
@@ -585,8 +591,7 @@ func runDnsReconciler(ctx context.Context, cfg config, aliasRepo port.SystemAlia
 
 		out, err := syncUC.Execute(ctx, input)
 		if err != nil {
-			log.Printf("DNS reconcile for %s failed: %v", domain, err)
-			return
+			return nil, err
 		}
 
 		log.Printf("DNS reconcile for %s: %s (created=%d updated=%d unchanged=%d conflicts=%d)",
@@ -603,9 +608,34 @@ func runDnsReconciler(ctx context.Context, cfg config, aliasRepo port.SystemAlia
 		for _, e := range out.Errors {
 			log.Printf("DNS reconcile error: %s", e)
 		}
+		return out, nil
 	}
 
-	reconcile()
+	// reconcileAll covers every domain this server serves, not just the one in
+	// MAIL_DOMAIN. A domain added through the console was never reconciled at
+	// all: its records simply never appeared, and the only visible symptom was
+	// the console reporting them missing forever.
+	reconcileAll := func() {
+		domains := []string{cfg.domain()}
+		if domainRepo != nil {
+			if found, err := domainRepo.ActiveDomainNames(ctx); err != nil {
+				log.Printf("DNS reconcile: could not list the domains, falling back to %s: %v",
+					cfg.domain(), err)
+			} else if len(found) > 0 {
+				domains = found
+			}
+		}
+
+		for _, domain := range domains {
+			// One domain failing must not stop the others: a zone the token
+			// cannot reach is a problem for that domain alone.
+			if _, err := reconcileOne(domain); err != nil {
+				log.Printf("DNS reconcile for %s failed: %v", domain, err)
+			}
+		}
+	}
+
+	reconcileAll()
 
 	ticker := time.NewTicker(cfg.DnsSyncInterval)
 	defer ticker.Stop()
@@ -614,7 +644,7 @@ func runDnsReconciler(ctx context.Context, cfg config, aliasRepo port.SystemAlia
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reconcile()
+			reconcileAll()
 		}
 	}
 }

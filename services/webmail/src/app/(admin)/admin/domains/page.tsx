@@ -32,6 +32,15 @@ interface DnsRecordCheck {
   proxied: boolean;
 }
 
+interface ReconcileResult {
+  domain: string;
+  created: number;
+  updated: number;
+  unchanged: number;
+  conflicts?: string[];
+  errors?: string[];
+}
+
 interface DnsVerification {
   domain: string;
   status: string;
@@ -70,6 +79,9 @@ export default function AdminDomainsPage() {
 
   const [reconciling, setReconciling] = useState(false);
   const [verification, setVerification] = useState<DnsVerification | null>(null);
+  // What the last reconciliation actually did, so the panel can say it rather
+  // than leaving the operator to infer it from the verification that follows.
+  const [reconcileResult, setReconcileResult] = useState<ReconcileResult | null>(null);
   const [onboardDomain, setOnboardDomain] = useState("");
   const [onboarding, setOnboarding] = useState(false);
 
@@ -112,13 +124,28 @@ export default function AdminDomainsPage() {
     setNotice(null);
     setError(null);
     setVerification(null);
+    setReconcileResult(null);
     try {
+      // Publish first, then look. The button used to verify and then call an
+      // endpoint that only wrote an audit row, so it reported what was missing
+      // and never created any of it - which is what made the panel feel like
+      // it did nothing.
+      const applied = await fetch(
+        `/api/v1/admin/dns/reconcile?domain=${encodeURIComponent(selected.name)}`,
+        { method: "POST" },
+      );
+      const result = await applied.json().catch(() => ({}));
+      if (!applied.ok) throw new Error(result.message);
+      setReconcileResult(result);
+
+      // Then verify, so what is shown is the state after publishing rather
+      // than the state that prompted it.
       const res = await fetch(`/api/v1/admin/dns/verify?domain=${encodeURIComponent(selected.name)}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message);
       setVerification(data);
-      // Reconciliation still runs, so the stored status and the audit trail
-      // stay in step with what was just observed.
+
+      // The audit trail still records who asked for it.
       await fetch("/api/v1/admin/domains/reconcile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -294,6 +321,41 @@ export default function AdminDomainsPage() {
                 <span>{t("admin.reconcileDns")}</span>
               </Button>
             </div>
+
+            {/* What the reconciliation did. Without this the panel showed only
+                the verification that followed, so an operator could not tell
+                whether anything had been published or the records had simply
+                been there all along. */}
+            {reconcileResult && (
+              <div className="flex flex-col gap-2 rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <span className="text-[13px] text-slate-200">
+                  {t("admin.reconcileSummary", {
+                    created: reconcileResult.created,
+                    updated: reconcileResult.updated,
+                    unchanged: reconcileResult.unchanged,
+                  })}
+                </span>
+                {(reconcileResult.conflicts ?? []).length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    {/* Left untouched on purpose: a record of the right type
+                        and name already holding another value may be something
+                        the zone still needs. */}
+                    <span className="text-[12px] text-amber-300">{t("admin.reconcileConflicts")}</span>
+                    {(reconcileResult.conflicts ?? []).map((c) => (
+                      <span key={c} className="font-mono text-[11.5px] text-slate-400">{c}</span>
+                    ))}
+                  </div>
+                )}
+                {(reconcileResult.errors ?? []).length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[12px] text-rose-300">{t("admin.reconcileErrors")}</span>
+                    {(reconcileResult.errors ?? []).map((e) => (
+                      <span key={e} className="font-mono text-[11.5px] text-slate-400">{e}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {verification && (
               <>

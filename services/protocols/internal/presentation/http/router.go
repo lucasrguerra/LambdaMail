@@ -81,6 +81,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/events", r.handleEvents)
 	r.mux.HandleFunc("/api/v1/admin/tls", r.handleAdminTls)
 	r.mux.HandleFunc("/api/v1/admin/dns/verify", r.handleAdminDnsVerify)
+	r.mux.HandleFunc("/api/v1/admin/dns/reconcile", r.handleAdminDnsReconcile)
 	r.mux.HandleFunc("/api/v1/admin/dkim/keys", r.handleAdminDkimKeys)
 	r.mux.HandleFunc("/api/v1/admin/dkim/rotate", r.handleAdminDkimRotate)
 	r.mux.HandleFunc("/api/v1/mail/folders", r.handleMailFolders)
