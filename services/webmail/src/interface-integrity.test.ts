@@ -198,3 +198,25 @@ describe("API proxy routing", () => {
     expect(proxy).toContain("return AUTH_SERVICE_URL");
   });
 });
+
+describe("the admin rail has the fixes the webmail rail got", () => {
+  const ADMIN_LAYOUT = "src/app/(admin)/admin/layout.tsx";
+
+  // The same defect, in the other surface: break-words split the address
+  // mid-domain and left a lone "br" on its own line.
+  it("truncates the account address instead of breaking it apart", () => {
+    const layout = code(ADMIN_LAYOUT);
+    expect(layout).not.toMatch(/break-words[^"]*>\s*\{?\s*(account|session)?\??\.?email/);
+    expect(layout).toMatch(/truncate[\s\S]{0,200}email/);
+  });
+
+  // A rail pinned at 244px is what made the address and the surface switch
+  // too tight to fit in the first place.
+  it("gives the rail room on a wide screen", () => {
+    expect(code(ADMIN_LAYOUT)).toMatch(/xl:w-\[\d+px\]/);
+  });
+
+  it("keeps the full address reachable in the tooltip", () => {
+    expect(code(ADMIN_LAYOUT)).toMatch(/title=\{[^}]*email/);
+  });
+});

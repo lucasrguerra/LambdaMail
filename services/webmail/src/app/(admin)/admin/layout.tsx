@@ -105,7 +105,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {initialsFor(account?.email)}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block break-words text-[12.5px] leading-tight">
+            <span
+              className="block truncate text-[12.5px] leading-tight"
+              title={account?.email ?? undefined}
+            >
               {account?.email ?? t("common.loading")}
             </span>
             <span className="mt-0.5 flex items-center gap-1 text-[10.5px] text-slate-400">
@@ -154,7 +157,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </div>
 
       {/* Desktop rail */}
-      <aside className="hidden w-[244px] flex-none flex-col bg-dark-rail shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:flex">
+      <aside className="hidden w-[244px] flex-none flex-col bg-dark-rail xl:w-[268px] shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:flex">
         {SidebarContent}
       </aside>
 
