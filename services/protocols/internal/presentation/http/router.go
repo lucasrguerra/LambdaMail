@@ -37,6 +37,8 @@ type Router struct {
 	// dns verifies the published records against public resolvers. It lives
 	// here because this is the process with the resolver and the record spec.
 	dns *adminDnsAPI
+	// dnsReconciler is held here so it survives being set before dns exists.
+	dnsReconciler DomainReconciler
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued

@@ -81,7 +81,7 @@ func (a *adminDnsAPI) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.reconciler == nil {
 		writeError(w, http.StatusServiceUnavailable, "RECONCILER_UNAVAILABLE",
-			"DNS reconciliation needs a provider token to be configured")
+			"DNS reconciliation is not available: the service started without a DNS provider")
 		return
 	}
 
@@ -183,7 +183,13 @@ func (r *Router) SetAdminDnsAPI(spec DnsSpecSource, verifier DnsRecordVerifier, 
 	if spec == nil || verifier == nil || sessionSecret == "" {
 		return
 	}
-	r.dns = &adminDnsAPI{spec: spec, verifier: verifier, sessions: NewWebSessionVerifier(sessionSecret)}
+	r.dns = &adminDnsAPI{
+		spec: spec, verifier: verifier, sessions: NewWebSessionVerifier(sessionSecret),
+		// Carried over from the router so the two setters can be called in
+		// either order. They could not before, and main.go called them in the
+		// order that lost the reconciler.
+		reconciler: r.dnsReconciler,
+	}
 }
 
 // handleAdminDnsReconcile publishes the records a domain is missing.
@@ -203,6 +209,12 @@ func (r *Router) handleAdminDnsReconcile(w http.ResponseWriter, req *http.Reques
 // SetDnsReconciler enables the reconcile route to actually publish records.
 // Without it the route reports that reconciliation is not configured.
 func (r *Router) SetDnsReconciler(reconciler DomainReconciler) {
+	// Kept on the router as well as on the API. Assigning only to r.dns meant
+	// that calling this before SetAdminDnsAPI silently did nothing: the field
+	// was written to a struct that did not exist yet, and the console then
+	// reported reconciliation as unconfigured while the provider token was
+	// present and the background sweep was publishing records with it.
+	r.dnsReconciler = reconciler
 	if r.dns != nil {
 		r.dns.reconciler = reconciler
 	}

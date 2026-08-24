@@ -209,10 +209,14 @@ func run(cfg config) {
 	// Folders the mailbox owner keeps for themselves, which the filing rules
 	// can then name as a destination.
 	// The console's reconcile button reaches this: the same sync the timer
-	// runs, for one named domain, on demand.
-	router.SetDnsReconciler(domainReconciler{run: func(c context.Context, domain string) (*usecase.SyncDnsRecordsOutput, error) {
-		return reconcileDomainOnDemand(c, cfg, aliasRepo, dkimRepo, domain)
-	}})
+	// runs, for one named domain, on demand. Only wired when there is a
+	// provider to talk to, so the route can say it is unavailable instead of
+	// reaching Cloudflare with an empty token and reporting a refusal.
+	if cfg.CloudflareToken != "" {
+		router.SetDnsReconciler(domainReconciler{run: func(c context.Context, domain string) (*usecase.SyncDnsRecordsOutput, error) {
+			return reconcileDomainOnDemand(c, cfg, aliasRepo, dkimRepo, domain)
+		}})
+	}
 	router.SetFolderAdmin(usecase.NewManageFoldersUseCase(
 		postgres.NewWebmailRepository(pool), postgres.NewWebmailRepository(pool)))
 	if dkimRepo != nil {

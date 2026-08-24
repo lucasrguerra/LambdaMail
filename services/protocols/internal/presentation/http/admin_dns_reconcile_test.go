@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"lambdamail/protocols/internal/domain/entity"
 )
 
 // Making the reconcile button do what its name says.
@@ -143,4 +146,61 @@ func adminSurfaceToken2() string {
 		Purpose: "session", MfaSatisfied: true,
 		IssuedAt: interopIssuedAt, ExpiresAt: interopIssuedAt + 3600,
 	})
+}
+
+// stubSpec is the minimum a wired DNS API needs; the wiring, not the spec, is
+// what these tests are about.
+type stubSpec struct{}
+
+func (stubSpec) ExpectedRecords(context.Context, string) ([]entity.DnsRecord, error) {
+	return nil, nil
+}
+
+type stubVerifier struct{}
+
+func (stubVerifier) VerifyRecord(context.Context, entity.DnsRecord) (bool, string) {
+	return true, ""
+}
+
+// The console reported "DNS reconciliation needs a provider token to be
+// configured" while the token was configured and working - the background
+// sweep was publishing records with it at that very moment.
+//
+// SetDnsReconciler only assigned when r.dns already existed, and main.go calls
+// it before SetAdminDnsAPI creates r.dns. So it silently did nothing, and the
+// API was then built with no reconciler at all. The earlier tests missed it by
+// constructing adminDnsAPI directly, which is exactly the wiring that broke.
+func TestReconcilerSurvivesBeingWiredBeforeTheDnsAPI(t *testing.T) {
+	for _, order := range []string{"reconciler first", "dns api first"} {
+		t.Run(order, func(t *testing.T) {
+			router := NewRouter(nil, func() error { return nil })
+			stub := &stubReconciler{created: 11}
+
+			wireAPI := func() { router.SetAdminDnsAPI(stubSpec{}, stubVerifier{}, interopSecret) }
+			wireReconciler := func() { router.SetDnsReconciler(stub) }
+
+			if order == "reconciler first" {
+				wireReconciler()
+				wireAPI()
+			} else {
+				wireAPI()
+				wireReconciler()
+			}
+
+			// Only the clock is pinned: the captured admin token has a fixed
+			// validity window. The wiring itself is left exactly as main.go
+			// builds it, because the wiring is what is under test.
+			router.dns.sessions.now = func() time.Time { return time.Unix(interopIssuedAt+60, 0) }
+
+			rec := httptest.NewRecorder()
+			router.handleAdminDnsReconcile(rec, adminRequest("/api/v1/admin/dns/reconcile?domain=example.test"))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("answered %d (%s): the route lost its reconciler", rec.Code, rec.Body)
+			}
+			if len(stub.called) != 1 {
+				t.Fatalf("reconciled %v, want one call: the route answered without reconciling", stub.called)
+			}
+		})
+	}
 }
