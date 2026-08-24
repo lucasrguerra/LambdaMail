@@ -671,6 +671,144 @@ describeDb("auth API against a real database", () => {
 });
 
 // Guards that need no database, so they still run in a bare checkout.
+describeDb("paging, filtering and editing users", () => {
+  beforeAll(async () => {
+    await startServer();
+    await seed();
+    // Enough rows that a single hardcoded page cannot hold them, which is the
+    // condition the console could not cope with at all.
+    const hash = await hashPassword(PASSWORD);
+    for (let i = 0; i < 30; i++) {
+      const local = `paged${String(i).padStart(2, "0")}`;
+      await query(
+        `INSERT INTO mailboxes (id, domain_id, local_part, email_address, password_hash, role, is_active)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, 'USER', $5)
+         ON CONFLICT DO NOTHING`,
+        [DOMAIN_ID, local, `${local}@authtest-${DOMAIN_ID}.invalid`, hash, i % 2 === 0],
+      );
+    }
+  });
+
+  afterAll(async () => {
+    server?.close();
+    await query(`DELETE FROM domains WHERE id = $1`, [DOMAIN_ID]).catch(() => undefined);
+    await closePool();
+  });
+
+  it("returns one page at a time, with the total of the whole set", async () => {
+    const admin = await adminSession();
+    const first = await get("/api/v1/admin/mailboxes?page=1&page_size=10", admin);
+
+    expect(first.status).toBe(200);
+    const body = first.body as unknown as { items: unknown[]; total: number; total_pages: number };
+    expect(body.items).toHaveLength(10);
+    // The total describes every row, not the ten that came back; otherwise
+    // the page control cannot know there is anything after this page.
+    expect(body.total).toBeGreaterThanOrEqual(32);
+    expect(body.total_pages).toBeGreaterThan(1);
+  });
+
+  it("gives a different page for a different page number", async () => {
+    const admin = await adminSession();
+    const one = await get("/api/v1/admin/mailboxes?page=1&page_size=5", admin);
+    const two = await get("/api/v1/admin/mailboxes?page=2&page_size=5", admin);
+
+    const ids = (r: typeof one) => (r.body as unknown as { items: { id: string }[] }).items.map((i) => i.id);
+    expect(ids(one)).not.toEqual(ids(two));
+    expect(ids(one).some((id) => ids(two).includes(id))).toBe(false);
+  });
+
+  it("filters in the database rather than returning everything", async () => {
+    const admin = await adminSession();
+    const res = await get("/api/v1/admin/mailboxes?search=paged1", admin);
+    const body = res.body as unknown as { items: { email_address: string }[]; total: number };
+
+    expect(body.total).toBe(10); // paged10..paged19
+    for (const item of body.items) {
+      expect(item.email_address).toContain("paged1");
+    }
+  });
+
+  it("filters by whether the user is enabled", async () => {
+    const admin = await adminSession();
+    const res = await get("/api/v1/admin/mailboxes?active=false&page_size=200", admin);
+    const body = res.body as unknown as { items: { is_active: boolean }[] };
+
+    expect(body.items.length).toBeGreaterThan(0);
+    for (const item of body.items) expect(item.is_active).toBe(false);
+  });
+
+  // A search term is bound as a parameter. If it were interpolated, this ends
+  // the statement and drops the table.
+  it("does not let a search term reach the SQL text", async () => {
+    const admin = await adminSession();
+    const evil = encodeURIComponent("'; DROP TABLE mailboxes; --");
+    const res = await get(`/api/v1/admin/mailboxes?search=${evil}`, admin);
+
+    expect(res.status).toBe(200);
+    expect((res.body as unknown as { total: number }).total).toBe(0);
+    const still = await query(`SELECT count(*)::int AS c FROM mailboxes`);
+    expect((still[0] as { c: number }).c).toBeGreaterThan(0);
+  });
+
+  it("edits a user instead of only disabling them", async () => {
+    const admin = await adminSession();
+    const res = await fetch(`${base}/api/v1/admin/mailboxes/${USER_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${admin}` },
+      body: JSON.stringify({ quota_bytes: 12345678, locale: "pt-BR", role: "DOMAIN_ADMIN" }),
+    });
+    expect(res.status).toBe(200);
+
+    const rows = await query<{ quota_bytes: string; locale: string; role: string }>(
+      `SELECT quota_bytes::text, locale, role FROM mailboxes WHERE id = $1`,
+      [USER_ID],
+    );
+    expect(Number(rows[0].quota_bytes)).toBe(12345678);
+    expect(rows[0].locale).toBe("pt-BR");
+    expect(rows[0].role).toBe("DOMAIN_ADMIN");
+
+    await query(`UPDATE mailboxes SET role = 'USER' WHERE id = $1`, [USER_ID]);
+  });
+
+  it("refuses a quota that is not a positive whole number", async () => {
+    const admin = await adminSession();
+    const res = await fetch(`${base}/api/v1/admin/mailboxes/${USER_ID}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${admin}` },
+      body: JSON.stringify({ quota_bytes: -1 }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("lists the aliases that deliver to one user", async () => {
+    const admin = await adminSession();
+    const mine = `alias-of-user@authtest-${DOMAIN_ID}.invalid`;
+    const other = `alias-of-nobody@authtest-${DOMAIN_ID}.invalid`;
+    await query(
+      `INSERT INTO aliases (domain_id, source_address, destination_addresses)
+       VALUES ($1, $2, ARRAY[$3]), ($1, $4, ARRAY['somebody-else@elsewhere.invalid'])
+       ON CONFLICT DO NOTHING`,
+      [DOMAIN_ID, mine, userEmail(), other],
+    );
+
+    const res = await get(`/api/v1/admin/mailboxes/${USER_ID}/aliases`, admin);
+    expect(res.status).toBe(200);
+    const items = res.body as unknown as { source_address: string }[];
+
+    expect(items.map((a) => a.source_address)).toContain(mine);
+    // An alias pointing somewhere else is not this user's, even though it
+    // belongs to the same domain.
+    expect(items.map((a) => a.source_address)).not.toContain(other);
+  });
+
+  it("answers 404 for a user that does not exist rather than leaking the difference", async () => {
+    const admin = await adminSession();
+    const res = await get(`/api/v1/admin/mailboxes/44444444-4444-4444-4444-444444444444/aliases`, admin);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("surface routing", () => {
   it("ignores anything outside /api/v1/", async () => {
     const { handleApiRequest: handler } = await import("./router.js");

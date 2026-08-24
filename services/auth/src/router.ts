@@ -11,6 +11,7 @@ import {
   type Surface,
 } from "./surfaceAccess.js";
 import * as repo from "./repository.js";
+import { parsePageParams, paged } from "./pagination.js";
 
 const CHALLENGE_TTL_SECONDS = 300;
 // Long enough to scan a code and type one back, short enough that a token
@@ -177,6 +178,12 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url.startsWith("/api/v1/admin/mailboxes/") && method === "DELETE") {
       return adminDeleteMailbox(req, res, session!, url.substring("/api/v1/admin/mailboxes/".length));
     }
+    if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/aliases") && method === "GET") {
+      return adminMailboxAliases(res, session!, url.slice("/api/v1/admin/mailboxes/".length, -"/aliases".length));
+    }
+    if (url.startsWith("/api/v1/admin/mailboxes/") && method === "PATCH") {
+      return adminUpdateMailbox(req, res, session!, url.substring("/api/v1/admin/mailboxes/".length));
+    }
     if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/active") && method === "PUT") {
       const id = url.slice("/api/v1/admin/mailboxes/".length, -"/active".length);
       return adminSetMailboxActive(req, res, session!, id);
@@ -189,9 +196,9 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     }
     if (url === "/api/v1/admin/dashboard" && method === "GET") return adminDashboard(res);
     if (url === "/api/v1/admin/domains" && method === "GET") return adminDomains(res, session!);
-    if (url === "/api/v1/admin/mailboxes" && method === "GET") return adminMailboxes(res, session!);
+    if (url.split("?")[0] === "/api/v1/admin/mailboxes" && method === "GET") return adminMailboxes(req, res, session!);
     if (url === "/api/v1/admin/dmarc" && method === "GET") return adminDmarc(res);
-    if (url === "/api/v1/admin/queue" && method === "GET") return adminQueue(res);
+    if (url.split("?")[0] === "/api/v1/admin/queue" && method === "GET") return adminQueue(req, res);
     if (url === "/api/v1/admin/preflight" && method === "GET") return adminPreflight(res);
 
     return sendJson(res, 404, { error: "NOT_FOUND", message: "API endpoint not found" });
@@ -737,8 +744,75 @@ async function adminDomains(res: ServerResponse, session: SessionTokenPayload): 
   sendJson(res, 200, await repo.listDomains(scopeOf(session)));
 }
 
-async function adminMailboxes(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
-  sendJson(res, 200, await repo.listMailboxes(scopeOf(session)));
+async function adminMailboxes(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const url = new URL(req.url || "/", "http://localhost");
+  const page = parsePageParams(url);
+
+  const activeParam = url.searchParams.get("active");
+  const roleParam = (url.searchParams.get("role") || "").toUpperCase();
+
+  const { items, total } = await repo.listMailboxes(scopeOf(session), {
+    search: page.search,
+    // Absent means "either"; only an explicit true/false filters.
+    active: activeParam === "true" ? true : activeParam === "false" ? false : null,
+    // An unrecognised role filters nothing rather than returning an empty
+    // page the operator cannot explain.
+    role: (repo.ALLOWED_USER_ROLES as readonly string[]).includes(roleParam) ? roleParam : null,
+    offset: page.offset,
+    pageSize: page.pageSize,
+  });
+
+  sendJson(res, 200, paged(items, total, page));
+}
+
+/** Edits a user: role, quota, language, enabled, and releasing a lockout. */
+async function adminUpdateMailbox(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  const update: repo.UserUpdate = {};
+
+  if (typeof body?.role === "string") {
+    const role = body.role.toUpperCase();
+    if (!(repo.ALLOWED_USER_ROLES as readonly string[]).includes(role)) {
+      return sendJson(res, 400, { error: "BAD_REQUEST", message: "Unknown role" });
+    }
+    // Only a super admin may hand out super admin, or a domain admin could
+    // promote themselves out of their own domain.
+    if (role === "SUPER_ADMIN" && session.role !== "SUPER_ADMIN") {
+      return sendJson(res, 403, { error: "FORBIDDEN", message: "Only a super admin can grant that role" });
+    }
+    update.role = role;
+  }
+  if (typeof body?.quota_bytes === "number") {
+    if (!Number.isSafeInteger(body.quota_bytes) || body.quota_bytes < 0) {
+      return sendJson(res, 400, { error: "BAD_REQUEST", message: "quota_bytes must be a positive whole number" });
+    }
+    update.quotaBytes = body.quota_bytes;
+  }
+  if (typeof body?.locale === "string" && body.locale.trim()) {
+    update.locale = body.locale.trim().slice(0, 16);
+  }
+  if (typeof body?.is_active === "boolean") update.isActive = body.is_active;
+  if (body?.unlock === true) update.unlock = true;
+
+  const updated = await repo.updateMailbox(scopeOf(session), id, update);
+  if (!updated) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "No such user, or nothing to change" });
+  }
+  await repo.recordAudit(session.sub, clientIp(req), "user.update", "mailbox", id, update as Record<string, unknown>);
+  sendJson(res, 200, { ok: true });
+}
+
+/** The aliases that deliver to one user. */
+async function adminMailboxAliases(
+  res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  const aliases = await repo.listAliasesForMailbox(scopeOf(session), id);
+  if (aliases === null) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "No such user" });
+  }
+  sendJson(res, 200, aliases);
 }
 
 /** The scope travels from the verified session, never from the request. */
@@ -750,8 +824,24 @@ async function adminDmarc(res: ServerResponse): Promise<void> {
   sendJson(res, 200, await repo.dmarcSummary());
 }
 
-async function adminQueue(res: ServerResponse): Promise<void> {
-  sendJson(res, 200, await repo.queueSummary());
+async function adminQueue(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url || "/", "http://localhost");
+  const page = parsePageParams(url);
+  const status = (url.searchParams.get("status") || "").toUpperCase();
+
+  const summary = await repo.queueSummary({
+    search: page.search,
+    status: status || null,
+    offset: page.offset,
+    pageSize: page.pageSize,
+  });
+
+  sendJson(res, 200, {
+    ...summary,
+    page: page.page,
+    page_size: page.pageSize,
+    total_pages: Math.max(1, Math.ceil(Number(summary.total ?? 0) / page.pageSize)),
+  });
 }
 
 async function adminPreflight(res: ServerResponse): Promise<void> {

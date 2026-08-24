@@ -401,16 +401,68 @@ export async function listDomains(scope: AdminScope): Promise<unknown[]> {
   );
 }
 
-export async function listMailboxes(scope: AdminScope): Promise<unknown[]> {
+export interface UserListFilter {
+  search: string;
+  active: boolean | null;
+  role: string | null;
+  offset: number;
+  pageSize: number;
+}
+
+/**
+ * Lists users, filtered and paged in the database.
+ *
+ * It used to answer with a hardcoded LIMIT 200 and no filter, so an
+ * installation with more users than that had no way to reach the rest, and
+ * finding one meant scrolling.
+ */
+export async function listMailboxes(
+  scope: AdminScope,
+  filter: UserListFilter,
+): Promise<{ items: unknown[]; total: number }> {
   const { sql, params } = scopeClause(scope, "m.domain_id");
-  return query(
+  const where: string[] = [sql];
+  const args: unknown[] = [...params];
+
+  if (filter.search) {
+    // Bound as a parameter, never interpolated. The wildcards are added here
+    // so the caller searches for a substring without having to know SQL.
+    args.push(`%${filter.search}%`);
+    where.push(`(m.email_address ILIKE $${args.length} OR d.name ILIKE $${args.length})`);
+  }
+  if (filter.active !== null) {
+    args.push(filter.active);
+    where.push(`m.is_active = $${args.length}`);
+  }
+  if (filter.role) {
+    args.push(filter.role);
+    where.push(`m.role = $${args.length}`);
+  }
+
+  const clause = where.join(" AND ");
+
+  // Counted with the same filter, or the page count would describe a
+  // different set of rows than the page itself.
+  const totalRow = await queryOne<{ count: string }>(
+    `SELECT count(*)::text AS count
+       FROM mailboxes m JOIN domains d ON d.id = m.domain_id
+      WHERE ${clause}`,
+    args,
+  );
+
+  args.push(filter.pageSize, filter.offset);
+  const items = await query(
     `SELECT m.id, m.email_address, m.role, m.is_active, m.quota_bytes, m.used_bytes,
-            m.locale, m.locked_until, d.name AS domain_name,
+            m.locale, m.locked_until, d.name AS domain_name, m.domain_id,
             EXISTS (SELECT 1 FROM mfa_totp t WHERE t.mailbox_id = m.id AND t.status = 'CONFIRMED') AS mfa_enrolled
        FROM mailboxes m JOIN domains d ON d.id = m.domain_id
-      WHERE ${sql} ORDER BY m.email_address LIMIT 200`,
-    params,
+      WHERE ${clause}
+      ORDER BY m.email_address
+      LIMIT $${args.length - 1} OFFSET $${args.length}`,
+    args,
   );
+
+  return { items, total: Number(totalRow?.count ?? 0) };
 }
 
 export async function dmarcSummary(): Promise<Record<string, unknown>> {
@@ -435,18 +487,63 @@ export async function dmarcSummary(): Promise<Record<string, unknown>> {
   };
 }
 
-export async function queueSummary(): Promise<Record<string, unknown>> {
+export interface QueueFilter {
+  search: string;
+  status: string | null;
+  offset: number;
+  pageSize: number;
+}
+
+/**
+ * The outbound queue, filtered and paged in the database.
+ *
+ * It used to return the 50 most recent jobs and nothing else, so a queue that
+ * had backed up could not be inspected past its own head - which is precisely
+ * when someone needs to look at it.
+ */
+export async function queueSummary(filter: QueueFilter): Promise<Record<string, unknown>> {
+  // The totals are of the whole queue, deliberately: they are the summary the
+  // page leads with, and filtering them to the current search would make the
+  // counts change as somebody types.
   const byStatus = await query<{ status: string; count: string }>(
     `SELECT status, count(*)::text AS count FROM outbound_jobs GROUP BY status`,
   );
+
+  const where: string[] = ["TRUE"];
+  const args: unknown[] = [];
+
+  if (filter.search) {
+    args.push(`%${filter.search}%`);
+    where.push(
+      `(envelope_from ILIKE $${args.length} OR envelope_to ILIKE $${args.length}` +
+        ` OR destination_domain ILIKE $${args.length} OR last_error ILIKE $${args.length})`,
+    );
+  }
+  if (filter.status) {
+    args.push(filter.status);
+    where.push(`status = $${args.length}`);
+  }
+
+  const clause = where.join(" AND ");
+  const totalRow = await queryOne<{ count: string }>(
+    `SELECT count(*)::text AS count FROM outbound_jobs WHERE ${clause}`,
+    args,
+  );
+
+  args.push(filter.pageSize, filter.offset);
   const recent = await query(
     `SELECT id, envelope_from, envelope_to, destination_domain, status, attempt,
-            next_attempt_at, last_smtp_code, last_error, tls_policy_used
-       FROM outbound_jobs ORDER BY created_at DESC LIMIT 50`,
+            next_attempt_at, last_smtp_code, last_error, tls_policy_used, created_at
+       FROM outbound_jobs WHERE ${clause}
+      ORDER BY created_at DESC
+      LIMIT $${args.length - 1} OFFSET $${args.length}`,
+    args,
   );
+
   return {
     by_status: Object.fromEntries(byStatus.map((r) => [r.status, Number(r.count)])),
     recent,
+    total: Number(totalRow?.count ?? 0),
   };
 }
 
@@ -605,6 +702,72 @@ export async function setMailboxActive(scope: AdminScope, mailboxId: string, isA
   return rows.length === 1;
 }
 
+export interface UserUpdate {
+  role?: string;
+  quotaBytes?: number;
+  locale?: string;
+  isActive?: boolean;
+  unlock?: boolean;
+}
+
+/** Roles a user may hold. Anything else is refused rather than stored. */
+export const ALLOWED_USER_ROLES = ["USER", "DOMAIN_ADMIN", "SUPER_ADMIN"] as const;
+
+/**
+ * Edits a user, refusing anything outside the caller's scope.
+ *
+ * The console could only disable or delete a user; everything else - the role,
+ * the quota, the language, releasing a lockout - meant going to the database
+ * by hand.
+ */
+export async function updateMailbox(
+  scope: AdminScope,
+  mailboxId: string,
+  update: UserUpdate,
+): Promise<boolean> {
+  const sets: string[] = [];
+  const args: unknown[] = [mailboxId];
+
+  if (update.role !== undefined) {
+    args.push(update.role);
+    sets.push(`role = $${args.length}`);
+  }
+  if (update.quotaBytes !== undefined) {
+    args.push(update.quotaBytes);
+    sets.push(`quota_bytes = $${args.length}`);
+  }
+  if (update.locale !== undefined) {
+    args.push(update.locale);
+    sets.push(`locale = $${args.length}`);
+  }
+  if (update.isActive !== undefined) {
+    args.push(update.isActive);
+    sets.push(`is_active = $${args.length}`);
+  }
+  if (update.unlock) {
+    // Releases a lockout from failed sign-ins without touching the password.
+    sets.push(`locked_until = NULL`);
+  }
+
+  // Nothing to change is not an error, but it must not become "UPDATE ... SET
+  // WHERE", which is a syntax error rather than a no-op.
+  if (sets.length === 0) return false;
+
+  sets.push("updated_at = NOW()");
+
+  let where = "id = $1";
+  if (scope.role !== "SUPER_ADMIN") {
+    args.push(scope.domainId);
+    where += ` AND domain_id = $${args.length}`;
+  }
+
+  const rows = await query<{ id: string }>(
+    `UPDATE mailboxes SET ${sets.join(", ")} WHERE ${where} RETURNING id`,
+    args,
+  );
+  return rows.length === 1;
+}
+
 /**
  * Retries or cancels one queued delivery.
  *
@@ -716,6 +879,41 @@ export async function listAliases(scope: AdminScope): Promise<unknown[]> {
        FROM aliases a JOIN domains d ON d.id = a.domain_id
       WHERE ${sql} ORDER BY a.source_address LIMIT 500`,
     params,
+  );
+}
+
+/**
+ * The aliases that deliver to one user.
+ *
+ * An alias is not owned by a user: it belongs to a domain and carries a list
+ * of destinations, which may include addresses on other servers, and a
+ * catch-all belongs to the whole domain. What can be shown inside a user is
+ * the set of aliases that land in their mailbox, which is what an operator
+ * actually wants to know when looking at that person.
+ */
+export async function listAliasesForMailbox(
+  scope: AdminScope,
+  mailboxId: string,
+): Promise<unknown[] | null> {
+  const { sql, params } = scopeClause(scope, "m.domain_id");
+  const owner = await queryOne<{ email_address: string; domain_id: string }>(
+    `SELECT m.email_address, m.domain_id FROM mailboxes m WHERE m.id = $${params.length + 1} AND ${sql}`,
+    [...params, mailboxId],
+  );
+  // Out of scope and non-existent are answered the same way, so the console
+  // of one domain cannot probe for ids belonging to another.
+  if (!owner) return null;
+
+  return query(
+    `SELECT a.id, a.source_address, a.destination_addresses, a.is_catch_all, a.is_active
+       FROM aliases a
+      WHERE a.domain_id = $1
+        AND EXISTS (
+              SELECT 1 FROM unnest(a.destination_addresses) AS dest
+               WHERE lower(dest) = lower($2)
+            )
+      ORDER BY a.source_address`,
+    [owner.domain_id, owner.email_address],
   );
 }
 
