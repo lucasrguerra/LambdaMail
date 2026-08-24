@@ -95,7 +95,8 @@
     "reconcileConflicts": "Left untouched — another value is already published:",
     "reconcileErrors": "The provider refused these:",
     "selectDomain": "Select",
-    "domainSelected": "Selected"
+    "domainSelected": "Selected",
+    "tlsSelfSigned": "This certificate is self-signed (issuer: {issuer}). Clients that verify certificates will refuse the connection on the mail ports. Set TRAEFIK_ACME_DIR or STATIC_CERT_PATH to serve an issued certificate."
   },
   "auth": {
     "adminLoginTitle": "Admin console",

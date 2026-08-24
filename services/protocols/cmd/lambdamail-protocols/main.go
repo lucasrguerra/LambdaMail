@@ -238,9 +238,15 @@ func run(cfg config) {
 	// The TLS panel reads the live watcher instead of the constants the admin
 	// service used to return, which reported a healthy certificate whatever
 	// the process actually held.
-	if source, ok := certProvider.(httppresentation.TlsStatusSource); ok {
-		router.SetAdminTlsAPI(source, cfg.PrimaryMailHost, cfg.TLSMode, cfg.JwtSecret, cfg.CertPollInterval)
+	// Wired for every certificate source, not just the Traefik watcher. Only
+	// the watcher carried status methods, so with TRAEFIK_ACME_DIR unset the
+	// panel answered 503 and showed "could not load the data" - in exactly the
+	// state an operator most needs to see, the degraded self-signed fallback.
+	tlsStatus, ok := certProvider.(httppresentation.TlsStatusSource)
+	if !ok {
+		tlsStatus = tlsprovider.NewProviderStatus(certProvider)
 	}
+	router.SetAdminTlsAPI(tlsStatus, cfg.PrimaryMailHost, cfg.TLSMode, cfg.JwtSecret, cfg.CertPollInterval)
 
 	// Real-time updates: the outbox relay reads the events delivery wrote in
 	// its own transaction and hands them to the hub, which pushes them to the

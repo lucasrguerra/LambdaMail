@@ -95,7 +95,8 @@
     "reconcileConflicts": "Não alterados — já existe outro valor publicado:",
     "reconcileErrors": "O provedor recusou estes:",
     "selectDomain": "Selecionar",
-    "domainSelected": "Selecionado"
+    "domainSelected": "Selecionado",
+    "tlsSelfSigned": "Este certificado e autoassinado (emissor: {issuer}). Clientes que verificam o certificado vao recusar a ligacao nas portas de correio. Defina TRAEFIK_ACME_DIR ou STATIC_CERT_PATH para servir um certificado emitido."
   },
   "auth": {
     "adminLoginTitle": "Console de administração",

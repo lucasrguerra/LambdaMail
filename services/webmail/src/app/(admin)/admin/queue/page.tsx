@@ -156,8 +156,8 @@ export default function AdminQueuePage() {
                 {jobs.map((j) => (
                   <tr key={j.id}>
                     <td className="pl-0 font-mono text-[12.5px] text-slate-100">{j.id.slice(0, 8)}</td>
-                    <td className="max-w-[180px] break-words text-[12.5px] text-slate-300">{j.envelope_from}</td>
-                    <td className="max-w-[180px] break-words text-[12.5px] text-slate-300">{j.envelope_to}</td>
+                    <td className="max-w-[220px] break-words text-[12.5px] text-slate-300">{j.envelope_from}</td>
+                    <td className="max-w-[220px] break-words text-[12.5px] text-slate-300">{j.envelope_to}</td>
                     <td className="break-words text-[12.5px] text-slate-300">{j.destination_domain}</td>
                     <td className="whitespace-nowrap text-[12.5px] tabular-nums text-slate-300">{j.attempt}</td>
                     {/* The diagnostic wraps instead of being truncated: a queue

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Search,
   Shield,
+  AlertTriangle,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Badge } from "../../../../components/ui/Badge";
@@ -274,6 +275,18 @@ export default function AdminSecurityPage() {
             <Lock className="h-[17px] w-[17px] flex-none text-indigo-500" />
             {t("admin.tlsTitle")}
           </h2>
+
+          {/* A self-signed certificate on the mail ports is refused by every
+              client that verifies, so it is stated outright rather than left
+              to be inferred from a status word. */}
+          {tlsStatus?.self_signed ? (
+            <div className="flex items-start gap-2.5 rounded-xl bg-amber-500/10 px-3.5 py-3 shadow-edge">
+              <AlertTriangle className="mt-px h-4 w-4 flex-none text-amber-400" />
+              <span className="text-[12.5px] leading-relaxed text-amber-200">
+                {t("admin.tlsSelfSigned", { issuer: String(tlsStatus.issuer ?? "-") })}
+              </span>
+            </div>
+          ) : null}
 
           {tlsStatus ? (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">

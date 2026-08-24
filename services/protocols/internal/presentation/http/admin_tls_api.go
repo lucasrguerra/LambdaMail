@@ -16,6 +16,13 @@ type TlsStatusSource interface {
 	HasCertificateFor(host string) bool
 }
 
+// TlsCertificateInspector is optional extra detail: who issued the
+// certificate, and whether it is self-signed. A source that cannot say simply
+// does not implement it.
+type TlsCertificateInspector interface {
+	CertificateSummary(host string) (issuer string, selfSigned bool, ok bool)
+}
+
 type adminTlsAPI struct {
 	source     TlsStatusSource
 	mailHost   string
@@ -73,6 +80,19 @@ func (a *adminTlsAPI) handleStatus(w http.ResponseWriter, r *http.Request) {
 			status["state"] = "WARNING"
 		default:
 			status["state"] = "OK"
+		}
+	}
+
+	// Who signed it, and whether anything would trust it. A self-signed
+	// certificate on 25 and 993 is refused by every client that verifies, so
+	// it outranks an expiry that is comfortably far away.
+	if inspector, ok := a.source.(TlsCertificateInspector); ok {
+		if issuer, selfSigned, found := inspector.CertificateSummary(a.mailHost); found {
+			status["issuer"] = issuer
+			status["self_signed"] = selfSigned
+			if selfSigned {
+				status["state"] = "SELF_SIGNED"
+			}
 		}
 	}
 
