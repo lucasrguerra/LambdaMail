@@ -132,3 +132,66 @@ func TestOnlyTheAvailableDkimKeyIsPublished(t *testing.T) {
 		}
 	}
 }
+
+// A second domain served by the same server does not own the mail host.
+//
+// Every domain's spec included an A and an AAAA for the mail host, so
+// reconciling cienciaembarcada.com.br tried to create records for
+// mail.lucasrguerra.dev.br - a name in somebody else's zone. Cloudflare
+// answered "An identical record already exists" and the console showed the
+// operator two errors about a domain that was in fact perfectly configured.
+//
+// The address records belong to whichever zone actually contains the host.
+func TestBuildDnsRecordSpecs_SkipsMailHostAddressesOutsideTheDomain(t *testing.T) {
+	specs := BuildDnsRecordSpecs(DnsRecordSpec{
+		DomainName:  "cienciaembarcada.test",
+		MailHost:    "mail.lucasrguerra.test",
+		ServerIPv4:  "192.0.2.1",
+		ServerIPv6:  "2001:db8::1",
+		DaneEnabled: true,
+		TlsaHashes:  []string{"hash123"},
+	})
+
+	for _, r := range specs {
+		if r.Type == "A" || r.Type == "AAAA" || r.Type == "TLSA" {
+			t.Errorf("spec publishes %s for %q, which is not inside cienciaembarcada.test",
+				r.Type, r.Name)
+		}
+	}
+
+	// The records that point AT the mail host are still the domain's own and
+	// must stay, or the domain stops receiving mail.
+	var mx bool
+	for _, r := range specs {
+		if r.Type == "MX" && r.Value == "mail.lucasrguerra.test" {
+			mx = true
+		}
+	}
+	if !mx {
+		t.Error("the domain lost its MX; it would stop receiving mail")
+	}
+}
+
+// The ordinary case must keep them: a domain whose mail host is its own
+// subdomain still needs the address records published.
+func TestBuildDnsRecordSpecs_KeepsMailHostAddressesInsideTheDomain(t *testing.T) {
+	specs := BuildDnsRecordSpecs(DnsRecordSpec{
+		DomainName: "example.test",
+		MailHost:   "mail.example.test",
+		ServerIPv4: "192.0.2.1",
+		ServerIPv6: "2001:db8::1",
+	})
+
+	var a, aaaa bool
+	for _, r := range specs {
+		if r.Type == "A" && r.Name == "mail.example.test" {
+			a = true
+		}
+		if r.Type == "AAAA" && r.Name == "mail.example.test" {
+			aaaa = true
+		}
+	}
+	if !a || !aaaa {
+		t.Errorf("lost the mail host addresses (A=%v AAAA=%v)", a, aaaa)
+	}
+}

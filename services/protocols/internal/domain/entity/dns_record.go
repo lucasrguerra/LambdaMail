@@ -50,16 +50,15 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 		mailHost = fmt.Sprintf("mail.%s", domainName)
 	}
 
+	// The address records for the mail host belong to whichever zone actually
+	// contains that host. A second domain served by the same server points its
+	// MX at a host it does not own, and publishing an A for it meant trying to
+	// write into somebody else's zone: the provider answered "an identical
+	// record already exists" and the console showed errors for a domain that
+	// was correctly configured.
+	ownsMailHost := hostInsideDomain(mailHost, domainName)
+
 	records := []DnsRecord{
-		// 1. A record for mail host
-		{
-			Type:    "A",
-			Name:    mailHost,
-			Value:   serverIPv4,
-			TTL:     1, // Auto
-			Proxied: false,
-			Comment: "LambdaMail Mail Host A Record",
-		},
 		// 3. MX record
 		{
 			Type:     "MX",
@@ -185,8 +184,20 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 		})
 	}
 
+	// 1. A record for the mail host, only when this domain contains it.
+	if ownsMailHost {
+		records = append(records, DnsRecord{
+			Type:    "A",
+			Name:    mailHost,
+			Value:   serverIPv4,
+			TTL:     1, // Auto
+			Proxied: false,
+			Comment: "LambdaMail Mail Host A Record",
+		})
+	}
+
 	// 2. Conditional AAAA record if IPv6 is supplied
-	if serverIPv6 != "" {
+	if ownsMailHost && serverIPv6 != "" {
 		records = append(records, DnsRecord{
 			Type:    "AAAA",
 			Name:    mailHost,
@@ -200,7 +211,7 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 	// 11. Conditional TLSA records if DANE is enabled. More than one is normal
 	// during a rollover: the current association and the next one are both
 	// published so the certificate can change without a gap (RFC 7671 8.1).
-	if spec.DaneEnabled {
+	if ownsMailHost && spec.DaneEnabled {
 		for _, hash := range spec.TlsaHashes {
 			if hash == "" {
 				continue
@@ -267,4 +278,17 @@ func (r DnsRecord) EqualsNormalized(other DnsRecord) bool {
 		return false
 	}
 	return true
+}
+
+// hostInsideDomain reports whether a host name sits inside a domain's zone,
+// and so whether this domain is the one that should publish its addresses.
+func hostInsideDomain(host, domain string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	if host == "" || domain == "" {
+		return false
+	}
+	// The suffix must fall on a label boundary: "notexample.test" is not
+	// inside "example.test".
+	return host == domain || strings.HasSuffix(host, "."+domain)
 }

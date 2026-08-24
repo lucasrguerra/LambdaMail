@@ -235,3 +235,46 @@ func TestCloudflareAdapter_ListRecords_RendersStructuredValues(t *testing.T) {
 		t.Errorf("value = %q, want the rendered presentation form", records[0].Value)
 	}
 }
+
+// Cloudflare renders an SRV record's content WITHOUT the priority: the zone
+// holding "0 1 993 mail.example.test" answers content "1 993 mail.example.test"
+// and keeps the priority in data. Taking content at face value made the record
+// differ from the spec on every comparison, so every reconcile rewrote all four
+// SRV records - against the live zone, on a timer, forever.
+func TestCloudflareAdapter_ListRecords_KeepsSrvPriority(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"result": []map[string]interface{}{{
+				"id": "rec_1", "type": "SRV", "name": "_imaps._tcp.example.test",
+				// Exactly what the API returns: the priority is missing here
+				// and present in data.
+				"content": "1 993 mail.example.test",
+				"data": map[string]interface{}{
+					"priority": float64(0), "weight": float64(1),
+					"port": float64(993), "target": "mail.example.test",
+				},
+				"ttl": float64(1),
+			}},
+			"result_info": map[string]interface{}{"total_pages": float64(1)},
+		})
+	}))
+	defer ts.Close()
+
+	adapter := NewCloudflareAdapter("token")
+	adapter.baseURL = ts.URL
+
+	records, err := adapter.ListRecords(context.Background(), "zone1")
+	if err != nil {
+		t.Fatalf("ListRecords: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+
+	const want = "0 1 993 mail.example.test"
+	if records[0].Value != want {
+		t.Errorf("read SRV value %q, want %q: the record will be rewritten on every reconcile",
+			records[0].Value, want)
+	}
+}

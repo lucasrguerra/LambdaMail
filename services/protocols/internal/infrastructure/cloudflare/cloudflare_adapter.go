@@ -130,12 +130,15 @@ func (a *CloudflareAdapter) ListRecords(ctx context.Context, zoneID string) ([]e
 			if r.Proxied != nil {
 				rec.Proxied = *r.Proxied
 			}
-			// Cloudflare returns SRV and TLSA with content already rendered,
-			// but older zones and some responses only populate data; fall back
-			// to it so a structured record is not seen as an empty value and
-			// rewritten on every reconcile.
-			if rec.Value == "" && len(r.Data) > 0 {
-				rec.Value = renderStructuredValue(r.Type, r.Data)
+			// For SRV and TLSA the structured data is the authority, not the
+			// rendered content. Cloudflare renders SRV content WITHOUT the
+			// priority - a record stored as "0 1 993 host" reads back as
+			// "1 993 host" - so trusting content made every SRV differ from
+			// the spec and be rewritten on every single reconcile.
+			if len(r.Data) > 0 {
+				if rendered := renderStructuredValue(r.Type, r.Data); rendered != "" {
+					rec.Value = rendered
+				}
 			}
 			out = append(out, rec)
 		}
