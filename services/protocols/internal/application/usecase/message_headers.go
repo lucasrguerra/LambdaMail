@@ -69,16 +69,51 @@ func ExtractMessageHeaders(payload []byte) MessageHeaders {
 	}
 
 	contentType := msg.Header.Get("Content-Type")
-	mediaType, params, err := mime.ParseMediaType(contentType)
-	if err == nil && strings.HasPrefix(mediaType, "multipart/") {
-		// mixed and related carry parts that are not the body; alternative is
-		// just the same text twice, so it does not count as an attachment.
-		out.HasAttachments = mediaType != "multipart/alternative"
-		_ = params
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType = ""
 	}
+	out.HasAttachments = carriesAttachment(mediaType, msg.Header.Get("Content-Disposition"))
 
 	out.Snippet = buildSnippet(msg, mediaType)
 	return out
+}
+
+// carriesAttachment decides whether a message has something worth a paperclip,
+// from its top-level headers alone.
+//
+// Looking only for multipart/* missed the case where the body IS the
+// attachment: a DMARC aggregate report from Google arrives as a single-part
+// application/zip with no text part at all, so it showed up unmarked next to
+// TLS-RPT reports - which do carry a text part, and so are multipart/mixed -
+// from the same sender in the same folder.
+func carriesAttachment(mediaType, disposition string) bool {
+	// An explicit disposition is the author saying so, and it settles the
+	// question even for a text type: a .txt sent as the whole message is an
+	// attachment, an inline part is not.
+	if disp, _, err := mime.ParseMediaType(disposition); err == nil {
+		switch strings.ToLower(disp) {
+		case "attachment":
+			return true
+		case "inline":
+			return false
+		}
+	}
+
+	switch {
+	case strings.HasPrefix(mediaType, "multipart/"):
+		// mixed and related carry parts that are not the body; alternative is
+		// just the same text twice.
+		return mediaType != "multipart/alternative"
+	case mediaType == "":
+		// No Content-Type means text/plain (RFC 2045 section 5.2). An
+		// unparseable one is treated the same way rather than guessed at.
+		return false
+	default:
+		// Anything that is not text and not multipart is a single part that is
+		// not the body: a zip, a PDF, a forwarded message.
+		return !strings.HasPrefix(mediaType, "text/")
+	}
 }
 
 // buildSnippet takes the opening of the body as a plain-text preview.

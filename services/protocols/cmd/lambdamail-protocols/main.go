@@ -248,6 +248,11 @@ func run(cfg config) {
 	}
 	router.SetAdminTlsAPI(tlsStatus, cfg.PrimaryMailHost, cfg.TLSMode, cfg.JwtSecret, cfg.CertPollInterval)
 
+	// One-shot repair of has_attachments on messages stored before single-part
+	// attachments were recognised. In the background: it is display metadata,
+	// and nothing waits on it.
+	go backfillAttachmentFlags(ctx, pool)
+
 	// Real-time updates: the outbox relay reads the events delivery wrote in
 	// its own transaction and hands them to the hub, which pushes them to the
 	// browser (PLAN.md sections 9.4 and 14.2).
