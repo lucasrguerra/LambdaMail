@@ -129,7 +129,7 @@ export default function AdminTestsPage() {
                   sentence, so the page reads in the interface's language. */}
               <span className="min-w-0 flex-1 break-words text-[13px] text-slate-200">
                 {t(`checks.${c.key}`)}
-                {c.subject ? <span className="text-slate-400"> — {c.subject}</span> : null}
+                {c.subject ? <span className="text-slate-400"> {"\u2014"} {c.subject}</span> : null}
               </span>
               {c.detail ? (
                 <span className="whitespace-nowrap font-mono text-[11.5px] text-slate-400">{c.detail}</span>
