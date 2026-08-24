@@ -226,6 +226,9 @@ func run(cfg config) {
 	// like this: the auth service answered it by re-reading the stored status,
 	// because the resolver and the record spec both live here.
 	if cfg.CloudflareToken != "" || cfg.PublicIPv4 != "" {
+		// Verification writes down what it found, so the badge in the domain
+		// list stops disagreeing with the page next to it.
+		router.SetDnsStatusWriter(postgres.NewDomainRepository(pool))
 		router.SetAdminDnsAPI(
 			&dnsSpecSource{cfg: cfg, dkim: dkimRepo},
 			netdns.NewPublicVerifier(),

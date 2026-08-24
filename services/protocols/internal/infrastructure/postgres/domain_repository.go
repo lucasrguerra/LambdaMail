@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,4 +40,40 @@ func (r *DomainRepository) ActiveDomainNames(ctx context.Context) ([]string, err
 		out = append(out, name)
 	}
 	return out, rows.Err()
+}
+
+// SaveDnsStatus files the outcome of a verification against the domain.
+//
+// The console reads its badge from this column, and nothing ever wrote to it
+// after onboarding: a domain whose records were all published and resolving
+// was still listed as PENDING, last checked "never".
+func (r *DomainRepository) SaveDnsStatus(ctx context.Context, domain, status string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE domains
+		   SET dns_status = $2, dns_last_checked_at = now()
+		 WHERE lower(name) = lower($1)
+	`, domain, columnStatus(status))
+	if err != nil {
+		return fmt.Errorf("save dns status for %s: %w", domain, err)
+	}
+	return nil
+}
+
+// columnStatus maps the verifier's vocabulary onto the one the column accepts.
+//
+// dns_status is constrained to PENDING, VERIFIED, PARTIAL, DRIFT and ERROR,
+// while verification also reports MISSING and UNKNOWN. Writing either of those
+// violates the check constraint, so the update fails and the badge silently
+// stays stale - the exact symptom this was meant to fix.
+func columnStatus(status string) string {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "VERIFIED", "PARTIAL", "DRIFT", "ERROR", "PENDING":
+		return strings.ToUpper(strings.TrimSpace(status))
+	case "MISSING":
+		// Nothing resolved: the zone is not serving what it should.
+		return "ERROR"
+	default:
+		// UNKNOWN, and anything new the verifier learns to say.
+		return "PENDING"
+	}
 }

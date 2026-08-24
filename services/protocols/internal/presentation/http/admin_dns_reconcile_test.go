@@ -204,3 +204,44 @@ func TestReconcilerSurvivesBeingWiredBeforeTheDnsAPI(t *testing.T) {
 		})
 	}
 }
+
+type stubStatusWriter struct {
+	domain string
+	status string
+	calls  int
+}
+
+func (s *stubStatusWriter) SaveDnsStatus(_ context.Context, domain, status string) error {
+	s.calls++
+	s.domain, s.status = domain, status
+	return nil
+}
+
+// The console listed a fully verified domain as PENDING, "last checked: never".
+//
+// Verification ran in the protocols service, which owns the resolver, and its
+// answer went straight to the browser. Nothing wrote it down, and the badge in
+// the list is read from the domains table - so it stayed at the value set when
+// the domain was first added, no matter how many times it verified 13 of 13.
+func TestVerifyRecordsWhatItFound(t *testing.T) {
+	writer := &stubStatusWriter{}
+	api := &adminDnsAPI{
+		spec: stubSpec{}, verifier: stubVerifier{},
+		sessions: testVerifier(interopSecret), status: writer,
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/dns/verify?domain=example.test", nil)
+	req.Header.Set("Authorization", "Bearer "+adminSurfaceToken2())
+	api.handleVerify(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("answered %d: %s", rec.Code, rec.Body)
+	}
+	if writer.calls != 1 {
+		t.Fatalf("wrote the status %d times, want 1: the console keeps showing a stale badge", writer.calls)
+	}
+	if writer.domain != "example.test" {
+		t.Errorf("recorded status for %q, want example.test", writer.domain)
+	}
+}

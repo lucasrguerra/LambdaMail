@@ -39,6 +39,7 @@ type Router struct {
 	dns *adminDnsAPI
 	// dnsReconciler is held here so it survives being set before dns exists.
 	dnsReconciler DomainReconciler
+	dnsStatus     DnsStatusWriter
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued

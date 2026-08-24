@@ -47,6 +47,15 @@ type DomainReconciler interface {
 	ReconcileDomain(ctx context.Context, domain string) (ReconcileResult, error)
 }
 
+// DnsStatusWriter records the outcome of a verification.
+//
+// Verification lives here, with the resolver; the badge the console shows is
+// read from the domains table. Without this the two never met: a domain could
+// verify 13 of 13 and still be listed as PENDING, never checked.
+type DnsStatusWriter interface {
+	SaveDnsStatus(ctx context.Context, domain, status string) error
+}
+
 type adminDnsAPI struct {
 	spec     DnsSpecSource
 	verifier DnsRecordVerifier
@@ -54,6 +63,9 @@ type adminDnsAPI struct {
 	// reconciler is optional: without it the route reports that the feature
 	// is not configured rather than answering as though it had run.
 	reconciler DomainReconciler
+	// status is optional: without it verification still answers, it just is
+	// not written down.
+	status DnsStatusWriter
 }
 
 // handleReconcile publishes the records a domain is missing.
@@ -168,6 +180,15 @@ func (a *adminDnsAPI) handleVerify(w http.ResponseWriter, r *http.Request) {
 		status = "PARTIAL"
 	}
 
+	// Written down before answering, so the list badge and this page agree.
+	if a.status != nil {
+		if err := a.status.SaveDnsStatus(r.Context(), domain, status); err != nil {
+			// The check itself succeeded; failing to file it must not turn a
+			// good answer into an error for the operator.
+			log.Printf("dns: verified %s but could not record the status: %v", domain, err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"domain":   domain,
 		"status":   status,
@@ -189,6 +210,7 @@ func (r *Router) SetAdminDnsAPI(spec DnsSpecSource, verifier DnsRecordVerifier, 
 		// either order. They could not before, and main.go called them in the
 		// order that lost the reconciler.
 		reconciler: r.dnsReconciler,
+		status:     r.dnsStatus,
 	}
 }
 
@@ -208,6 +230,14 @@ func (r *Router) handleAdminDnsReconcile(w http.ResponseWriter, req *http.Reques
 
 // SetDnsReconciler enables the reconcile route to actually publish records.
 // Without it the route reports that reconciliation is not configured.
+// SetDnsStatusWriter lets verification record what it found.
+func (r *Router) SetDnsStatusWriter(w DnsStatusWriter) {
+	r.dnsStatus = w
+	if r.dns != nil {
+		r.dns.status = w
+	}
+}
+
 func (r *Router) SetDnsReconciler(reconciler DomainReconciler) {
 	// Kept on the router as well as on the API. Assigning only to r.dns meant
 	// that calling this before SetAdminDnsAPI silently did nothing: the field
