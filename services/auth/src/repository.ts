@@ -657,6 +657,65 @@ export async function changePassword(
   return "OK";
 }
 
+/**
+ * Sets a user's password from the console, without knowing the old one.
+ *
+ * Every other session that user holds is signed out. A password reset an
+ * administrator performs is either a handover or a response to a compromise,
+ * and in both cases the sessions opened with the previous password must not
+ * survive it.
+ */
+export async function adminSetPassword(
+  scope: AdminScope,
+  mailboxId: string,
+  newPassword: string,
+): Promise<boolean> {
+  const args: unknown[] = [mailboxId, await hashPassword(newPassword)];
+  let where = "id = $1";
+  if (scope.role !== "SUPER_ADMIN") {
+    args.push(scope.domainId);
+    where += ` AND domain_id = $${args.length}`;
+  }
+
+  const rows = await query<{ id: string }>(
+    `UPDATE mailboxes
+        SET password_hash = $2, password_updated_at = NOW(), updated_at = NOW()
+      WHERE ${where} RETURNING id`,
+    args,
+  );
+  if (rows.length !== 1) return false;
+
+  // Every session, including the one the user is holding right now: sessions
+  // are revoked rather than deleted, which is how the rest of this service
+  // records them.
+  await query(
+    `UPDATE web_sessions SET revoked_at = NOW() WHERE mailbox_id = $1 AND revoked_at IS NULL`,
+    [mailboxId],
+  );
+  return true;
+}
+
+/**
+ * Removes a user's second factor.
+ *
+ * This is the way back in for somebody who lost their authenticator, so it
+ * clears the enrolment and the recovery codes together: codes minted for the
+ * old secret are no use against a new one, and leaving them would be a second
+ * set of credentials nobody is tracking.
+ */
+export async function adminRemoveTotp(scope: AdminScope, mailboxId: string): Promise<boolean> {
+  const { sql, params } = scopeClause(scope, "domain_id");
+  const owner = await queryOne<{ id: string }>(
+    `SELECT id FROM mailboxes WHERE id = $${params.length + 1} AND ${sql}`,
+    [...params, mailboxId],
+  );
+  if (!owner) return false;
+
+  await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [mailboxId]);
+  await query(`DELETE FROM mfa_recovery_codes WHERE mailbox_id = $1`, [mailboxId]).catch(() => undefined);
+  return true;
+}
+
 // ------------------------------------------------------------- audit log
 
 /** Records an administrative action. PLAN.md section 14.3 requires every

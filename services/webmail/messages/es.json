@@ -106,7 +106,13 @@
     "runChecks": "Ejecutar",
     "checksRun": "{count} comprobaciones",
     "pickADomain": "Elija un dominio.",
-    "aliasSource": "Direccion del alias"
+    "aliasSource": "Direccion del alias",
+    "setPassword": "Definir contrasena",
+    "atLeast12": "Al menos 12 caracteres",
+    "passwordReset": "Contrasena cambiada. Las sesiones de este usuario se cerraron.",
+    "passwordResetWarning": "Cierra todas las sesiones de este usuario, incluida una abierta ahora.",
+    "removeTotp": "Quitar segundo factor",
+    "totpRemoved": "Segundo factor eliminado, con sus codigos de recuperacion."
   },
   "auth": {
     "adminLoginTitle": "Consola de administración",

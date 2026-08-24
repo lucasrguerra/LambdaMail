@@ -846,6 +846,87 @@ describeDb("auth API against a real database", () => {
       expect(sources).toContain(mine);
     });
 
+    it("resets a password from the console and signs the sessions out", async () => {
+      // A session opened with the old password, to prove it does not survive.
+      const before = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
+      expect(before.status).toBe(200);
+      const oldToken = before.body.token as unknown as string;
+
+      const NEXT = "AnotherCorrectHorse9!";
+      const reset = await post(`/api/v1/admin/mailboxes/${USER_ID}/password`, { password: NEXT }, admin);
+      expect(reset.status).toBe(200);
+
+      // The new password works.
+      const after = await post("/api/v1/auth/user/login", { email: userEmail(), password: NEXT });
+      expect(after.status).toBe(200);
+
+      // The old one does not.
+      const stale = await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD });
+      expect(stale.status).toBe(401);
+
+      // And the session minted before the reset is no longer accepted: an
+      // administrator resetting a password is either a handover or a response
+      // to a compromise, and both mean the old sessions must stop working.
+      const reuse = await get("/api/v1/user/preferences", oldToken);
+      expect(reuse.status).toBe(401);
+
+      // Put it back for whatever runs next.
+      await post(`/api/v1/admin/mailboxes/${USER_ID}/password`, { password: PASSWORD }, admin);
+    }, 60000);
+
+    it("refuses a short password on reset, like every other path does", async () => {
+      const res = await post(`/api/v1/admin/mailboxes/${USER_ID}/password`, { password: "short" }, admin);
+      expect(res.status).toBe(400);
+    });
+
+    it("removes a second factor, with its recovery codes", async () => {
+      // The enrolment state is built directly: this test is about the removal,
+      // and USER_ID already carries a factor from the tests above, so going
+      // through the enrolment flow again would only be testing that flow.
+      await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [USER_ID]);
+      await query(
+        `INSERT INTO mfa_totp (mailbox_id, label, secret_enc, secret_nonce, key_version, status, confirmed_at)
+         VALUES ($1, 'test', '\\x00'::bytea, '\\x00'::bytea, 1, 'CONFIRMED', NOW())`,
+        [USER_ID],
+      );
+      await query(
+        `INSERT INTO mfa_recovery_codes (mailbox_id, code_hash) VALUES ($1, 'not-a-real-hash')`,
+        [USER_ID],
+      );
+
+      const res = await fetch(`${base}/api/v1/admin/mailboxes/${USER_ID}/totp`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${admin}` },
+      });
+      expect(res.status).toBe(200);
+
+      expect(await query(`SELECT 1 FROM mfa_totp WHERE mailbox_id = $1`, [USER_ID])).toHaveLength(0);
+      // Codes minted against the old secret are no use against a new one, and
+      // leaving them behind is a second set of credentials nobody tracks.
+      expect(await query(`SELECT 1 FROM mfa_recovery_codes WHERE mailbox_id = $1`, [USER_ID])).toHaveLength(0);
+    });
+
+    // The catch-all DELETE under /mailboxes/ matches this path too. With the
+    // routes in the wrong order, pressing "remove second factor" was routed to
+    // deleting the mailbox - it only failed because the id came out malformed.
+    it("removing a second factor does not delete the user", async () => {
+      await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [USER_ID]);
+      await query(
+        `INSERT INTO mfa_totp (mailbox_id, label, secret_enc, secret_nonce, key_version, status, confirmed_at)
+         VALUES ($1, 'test', '\\x00'::bytea, '\\x00'::bytea, 1, 'CONFIRMED', NOW())`,
+        [USER_ID],
+      );
+
+      const res = await fetch(`${base}/api/v1/admin/mailboxes/${USER_ID}/totp`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${admin}` },
+      });
+      expect(res.status).toBe(200);
+
+      const still = await query(`SELECT 1 FROM mailboxes WHERE id = $1`, [USER_ID]);
+      expect(still).toHaveLength(1);
+    });
+
     it("answers 404 for a user that does not exist rather than leaking the difference", async () => {
       const res = await get(`/api/v1/admin/mailboxes/44444444-4444-4444-4444-444444444444/aliases`, admin);
       expect(res.status).toBe(404);

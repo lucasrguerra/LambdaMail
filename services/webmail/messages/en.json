@@ -106,7 +106,13 @@
     "runChecks": "Run",
     "checksRun": "{count} checks",
     "pickADomain": "Pick a domain.",
-    "aliasSource": "Alias address"
+    "aliasSource": "Alias address",
+    "setPassword": "Set password",
+    "atLeast12": "At least 12 characters",
+    "passwordReset": "Password changed. This user's sessions were signed out.",
+    "passwordResetWarning": "Signs out every session this user holds, including one open right now.",
+    "removeTotp": "Remove second factor",
+    "totpRemoved": "Second factor removed, with its recovery codes."
   },
   "auth": {
     "adminLoginTitle": "Admin console",

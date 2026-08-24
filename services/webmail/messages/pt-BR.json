@@ -106,7 +106,13 @@
     "runChecks": "Correr",
     "checksRun": "{count} verificacoes",
     "pickADomain": "Escolha um dominio.",
-    "aliasSource": "Endereco do apelido"
+    "aliasSource": "Endereco do apelido",
+    "setPassword": "Definir palavra-passe",
+    "atLeast12": "Pelo menos 12 caracteres",
+    "passwordReset": "Palavra-passe alterada. As sessoes deste utilizador foram terminadas.",
+    "passwordResetWarning": "Termina todas as sessoes deste utilizador, incluindo a que esteja aberta agora.",
+    "removeTotp": "Remover segundo factor",
+    "totpRemoved": "Segundo factor removido, com os codigos de recuperacao."
   },
   "auth": {
     "adminLoginTitle": "Console de administração",

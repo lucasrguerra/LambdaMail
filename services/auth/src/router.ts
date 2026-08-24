@@ -176,8 +176,18 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url.startsWith("/api/v1/admin/aliases/") && method === "DELETE") {
       return adminDeleteAlias(req, res, session!, url.substring("/api/v1/admin/aliases/".length));
     }
+    if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/totp") && method === "DELETE") {
+      return adminRemoveTotp(req, res, session!, url.slice("/api/v1/admin/mailboxes/".length, -"/totp".length));
+    }
+    // Must stay below the sub-resource DELETEs above: this one matches any
+    // path under /mailboxes/, so a more specific route placed after it would
+    // be routed here instead - removing a second factor would delete the
+    // mailbox.
     if (url.startsWith("/api/v1/admin/mailboxes/") && method === "DELETE") {
       return adminDeleteMailbox(req, res, session!, url.substring("/api/v1/admin/mailboxes/".length));
+    }
+    if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/password") && method === "POST") {
+      return adminResetPassword(req, res, session!, url.slice("/api/v1/admin/mailboxes/".length, -"/password".length));
     }
     if (url.startsWith("/api/v1/admin/mailboxes/") && url.endsWith("/aliases") && method === "GET") {
       return adminMailboxAliases(res, session!, url.slice("/api/v1/admin/mailboxes/".length, -"/aliases".length));
@@ -806,6 +816,41 @@ async function adminUpdateMailbox(
     return sendJson(res, 404, { error: "NOT_FOUND", message: "No such user, or nothing to change" });
   }
   await repo.recordAudit(session.sub, clientIp(req), "user.update", "mailbox", id, update as Record<string, unknown>);
+  sendJson(res, 200, { ok: true });
+}
+
+/** Sets a user's password from the console and signs their sessions out. */
+async function adminResetPassword(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  const password = typeof body?.password === "string" ? body.password : "";
+
+  // The same floor the account creation and the CLI enforce; a console reset
+  // must not be the one way to get a weak password onto an account.
+  if (password.length < 12) {
+    return sendJson(res, 400, {
+      error: "WEAK_PASSWORD",
+      message: "The password must be at least 12 characters",
+    });
+  }
+
+  if (!(await repo.adminSetPassword(scopeOf(session), id, password))) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "No such user" });
+  }
+  // The password itself never reaches the audit log.
+  await repo.recordAudit(session.sub, clientIp(req), "user.password_reset", "mailbox", id, {});
+  sendJson(res, 200, { ok: true });
+}
+
+/** Removes a user's second factor, for somebody who lost their authenticator. */
+async function adminRemoveTotp(
+  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  if (!(await repo.adminRemoveTotp(scopeOf(session), id))) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "No such user" });
+  }
+  await repo.recordAudit(session.sub, clientIp(req), "user.totp_removed", "mailbox", id, {});
   sendJson(res, 200, { ok: true });
 }
 

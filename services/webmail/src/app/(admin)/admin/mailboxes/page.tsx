@@ -117,6 +117,9 @@ export default function AdminMailboxesPage() {
   const [saving, setSaving] = useState(false);
   const [newAliasForUser, setNewAliasForUser] = useState("");
   const [aliasBusy, setAliasBusy] = useState(false);
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -247,6 +250,8 @@ export default function AdminMailboxesPage() {
     setEditQuotaMb(Math.round(mb.quotaBytes / 1048576));
     setEditLocale(mb.locale);
     setEditAliases(null);
+    setNewUserPassword("");
+    setNotice(null);
     try {
       const res = await fetch(`/api/v1/admin/mailboxes/${encodeURIComponent(mb.id)}/aliases`);
       const data = res.ok ? await res.json() : [];
@@ -308,6 +313,54 @@ export default function AdminMailboxesPage() {
       await load();
     } finally {
       setAliasBusy(false);
+    }
+  };
+
+  /**
+   * Sets the user's password. Their sessions are signed out by the server,
+   * which is the point: this is either a handover or a response to a
+   * compromise.
+   */
+  const resetUserPassword = async () => {
+    if (!editing || newUserPassword.length < 12) return;
+    setPwBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/v1/admin/mailboxes/${encodeURIComponent(editing.id)}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: newUserPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      setNewUserPassword("");
+      setNotice(t("admin.passwordReset"));
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
+    } finally {
+      setPwBusy(false);
+    }
+  };
+
+  /** Removes the second factor, for somebody who lost their authenticator. */
+  const removeUserTotp = async () => {
+    if (!editing) return;
+    setPwBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/v1/admin/mailboxes/${encodeURIComponent(editing.id)}/totp`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error();
+      setNotice(t("admin.totpRemoved"));
+      setEditing({ ...editing, mfaEnabled: false });
+      await load();
+    } catch {
+      setError(t("errors.serverError"));
+    } finally {
+      setPwBusy(false);
     }
   };
 
@@ -781,6 +834,56 @@ export default function AdminMailboxesPage() {
                   <option value="es">Espanol</option>
                 </select>
               </div>
+
+              <div className="rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <div className="text-xs text-slate-400">{t("admin.setPassword")}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="password"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    placeholder={t("admin.atLeast12")}
+                    aria-label={t("admin.setPassword")}
+                    autoComplete="new-password"
+                    className={`${input} min-w-[200px] flex-1`}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void resetUserPassword()}
+                    disabled={pwBusy || newUserPassword.length < 12}
+                  >
+                    {t("common.save")}
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-[11.5px] leading-relaxed text-slate-500">
+                  {t("admin.passwordResetWarning")}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <div className="min-w-0">
+                  <div className="text-xs text-slate-400">{t("ui.twoFactorSection")}</div>
+                  <div className="mt-1 text-[13px] text-slate-200">
+                    {editing.mfaEnabled ? t("ui.mfaActive") : t("ui.mfaNone")}
+                  </div>
+                </div>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void removeUserTotp()}
+                  disabled={pwBusy || !editing.mfaEnabled}
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>{t("admin.removeTotp")}</span>
+                </Button>
+              </div>
+
+              {notice && (
+                <div className="rounded-xl bg-dark-card px-3.5 py-2.5 text-[12.5px] text-slate-200 shadow-edge">
+                  {notice}
+                </div>
+              )}
 
               <div className="rounded-xl bg-dark-card p-3.5 shadow-edge">
                 <div className="text-xs text-slate-400">{t("admin.aliasesForUser")}</div>
