@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
+import { Pagination } from "../../../../components/ui/Pagination";
+import { useDebounced } from "../../../../lib/useDebounced";
 
 /**
  * The outbound queue, read from the database.
@@ -33,6 +35,10 @@ interface QueueJob {
 interface QueueSummary {
   by_status: Record<string, number>;
   recent: QueueJob[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 /**
@@ -55,10 +61,28 @@ export default function AdminQueuePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Filtering and paging happen in the database. Holding them here and
+  // slicing in the browser would still have fetched only the first page,
+  // which is the whole reason a backed-up queue could not be inspected.
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const debouncedSearch = useDebounced(search, 300);
+
+  // A new search belongs on page one; keeping the old page number lands the
+  // reader on an empty page of a smaller result set.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, status]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/admin/queue");
+      const params = new URLSearchParams({ page: String(page), page_size: "25" });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (status) params.set("status", status);
+
+      const res = await fetch(`/api/v1/admin/queue?${params.toString()}`);
       if (!res.ok) throw new Error();
       setSummary(await res.json());
       setError(null);
@@ -70,7 +94,7 @@ export default function AdminQueuePage() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, page, debouncedSearch, status]);
 
   useEffect(() => {
     void load();
@@ -134,6 +158,33 @@ export default function AdminQueuePage() {
         <div className="rounded-xl bg-rose-900/60 px-4 py-3 text-[12.5px] text-rose-200 shadow-edge">{error}</div>
       )}
 
+      <div className="flex flex-wrap items-center gap-2.5">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("ui.searchPlaceholder")}
+            aria-label={t("ui.searchPlaceholder")}
+            className="w-full rounded-[10px] border border-white/[0.14] bg-transparent py-2 pl-9 pr-3 text-[13px] text-slate-100 placeholder:text-slate-500"
+          />
+        </div>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          aria-label={t("common.status")}
+          className="rounded-[10px] border border-white/[0.14] bg-dark-panel px-3 py-2 text-[13px] text-slate-100"
+        >
+          <option value="">{t("ui.all")}</option>
+          {/* Taken from the aggregate, so the choices are the states this
+              queue actually contains rather than a list invented here. */}
+          {Object.keys(summary?.by_status ?? {}).sort().map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+
       <div className="rounded-2xl bg-dark-panel px-[18px] pb-3 pt-1.5 shadow-edge">
         {jobs.length === 0 && !loading ? (
           <div className="p-8 text-center text-[13px] text-slate-400">{t("admin.queueEmpty")}</div>
@@ -186,6 +237,15 @@ export default function AdminQueuePage() {
             </table>
           </div>
         )}
+
+        <Pagination
+          page={summary?.page ?? 1}
+          pageSize={summary?.page_size ?? 25}
+          total={summary?.total ?? 0}
+          totalPages={summary?.total_pages ?? 1}
+          onPage={setPage}
+          busy={loading}
+        />
       </div>
     </div>
   );

@@ -14,9 +14,14 @@ import {
   Upload,
   AlertCircle,
   CheckCircle2,
+  Pencil,
+  Search,
+  X,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Badge } from "../../../../components/ui/Badge";
+import { Pagination } from "../../../../components/ui/Pagination";
+import { useDebounced } from "../../../../lib/useDebounced";
 import { initialsFor } from "../../../../lib/initials";
 import { Button } from "../../../../components/ui/Button";
 
@@ -28,6 +33,7 @@ interface Mailbox {
   quotaMb: number;
   mfaEnabled: boolean;
   locked: boolean;
+  locale: string;
 }
 
 interface Alias {
@@ -45,6 +51,16 @@ interface ApiMailbox {
   quota_bytes: number;
   mfa_enrolled: boolean;
   is_active: boolean;
+  locale: string | null;
+}
+
+/** The envelope every server-paged list answers with. */
+interface PagedUsers {
+  items: ApiMailbox[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 interface ApiAlias {
@@ -79,14 +95,45 @@ export default function AdminMailboxesPage() {
 
   const [error, setError] = useState<string | null>(null);
 
+  // Paging and filtering are the server's job; nothing here slices a list that
+  // was never fully fetched in the first place.
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState({ total: 0, page: 1, pageSize: 25, totalPages: 1 });
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [activeFilter, setActiveFilter] = useState("");
+  const debouncedSearch = useDebounced(search, 300);
+
+  // The user being edited, and the aliases that deliver to them.
+  const [editing, setEditing] = useState<Mailbox | null>(null);
+  const [editRole, setEditRole] = useState("USER");
+  const [editQuotaMb, setEditQuotaMb] = useState(0);
+  const [editLocale, setEditLocale] = useState("");
+  const [editAliases, setEditAliases] = useState<Alias[] | null>(null);
+  const [saving, setSaving] = useState(false);
+
   const load = useCallback(async () => {
     try {
+      const params = new URLSearchParams({ page: String(page), page_size: "25" });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (roleFilter) params.set("role", roleFilter);
+      if (activeFilter) params.set("active", activeFilter);
+
       const [mb, al] = await Promise.all([
-        fetch("/api/v1/admin/mailboxes").then((r) => (r.ok ? r.json() : [])),
+        fetch(`/api/v1/admin/mailboxes?${params.toString()}`).then((r) =>
+          r.ok ? r.json() : { items: [], total: 0, page: 1, page_size: 25, total_pages: 1 },
+        ),
         fetch("/api/v1/admin/aliases").then((r) => (r.ok ? r.json() : [])),
       ]);
+      const users = mb as PagedUsers;
+      setPageInfo({
+        total: users.total ?? 0,
+        page: users.page ?? 1,
+        pageSize: users.page_size ?? 25,
+        totalPages: users.total_pages ?? 1,
+      });
       setMailboxes(
-        (mb as ApiMailbox[]).map((m) => ({
+        (users.items ?? []).map((m) => ({
           id: m.id,
           email: m.email_address,
           role: m.role,
@@ -94,6 +141,7 @@ export default function AdminMailboxesPage() {
           quotaMb: Math.round(Number(m.quota_bytes ?? 0) / 1048576),
           mfaEnabled: Boolean(m.mfa_enrolled),
           locked: !m.is_active,
+          locale: m.locale ?? "",
         }))
       );
       setAliases(
@@ -107,7 +155,13 @@ export default function AdminMailboxesPage() {
     } catch {
       setError(t("errors.loadFailed"));
     }
-  }, []);
+  }, [t, page, debouncedSearch, roleFilter, activeFilter]);
+
+  // A changed filter belongs on page one; keeping the page number lands the
+  // reader on an empty page of a smaller result set.
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, roleFilter, activeFilter]);
 
   useEffect(() => {
     void load();
@@ -153,6 +207,62 @@ export default function AdminMailboxesPage() {
       setError(data.message ?? "Could not delete the mailbox.");
     }
     await load();
+  };
+
+  /**
+   * Opens one user for editing, with the aliases that deliver to them.
+   *
+   * An alias belongs to a domain rather than to a person - it carries a list
+   * of destinations, which may point at other servers - so what is shown here
+   * is the set that lands in this mailbox, not a collection the user owns.
+   */
+  const openUser = async (mb: Mailbox) => {
+    setEditing(mb);
+    setEditRole(mb.role);
+    setEditQuotaMb(mb.quotaMb);
+    setEditLocale(mb.locale);
+    setEditAliases(null);
+    try {
+      const res = await fetch(`/api/v1/admin/mailboxes/${encodeURIComponent(mb.id)}/aliases`);
+      const data = res.ok ? await res.json() : [];
+      setEditAliases(
+        (data as ApiAlias[]).map((a) => ({
+          id: a.id,
+          aliasAddress: a.source_address,
+          targetAddress: (a.destination_addresses ?? []).join(", "),
+          domain: a.domain_name,
+        })),
+      );
+    } catch {
+      setEditAliases([]);
+    }
+  };
+
+  const saveUser = async () => {
+    if (!editing) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/admin/mailboxes/${encodeURIComponent(editing.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: editRole,
+          // Stored in bytes; the field is in megabytes because that is what an
+          // operator thinks in.
+          quota_bytes: Math.max(0, Math.round(editQuotaMb * 1048576)),
+          locale: editLocale || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCreateAlias = async (e: React.FormEvent) => {
@@ -385,6 +495,42 @@ export default function AdminMailboxesPage() {
           </section>
 
           <div className="rounded-2xl bg-dark-panel px-[18px] pb-3 pt-1.5 shadow-edge">
+          {/* Filtering and paging are done by the server. */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("ui.searchPlaceholder")}
+                aria-label={t("ui.searchPlaceholder")}
+                className="w-full rounded-[10px] border border-white/[0.14] bg-transparent py-2 pl-9 pr-3 text-[13px] text-slate-100 placeholder:text-slate-500"
+              />
+            </div>
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              aria-label={t("ui.role")}
+              className="rounded-[10px] border border-white/[0.14] bg-dark-panel px-3 py-2 text-[13px] text-slate-100"
+            >
+              <option value="">{t("ui.all")}</option>
+              <option value="USER">USER</option>
+              <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
+              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+            </select>
+            <select
+              value={activeFilter}
+              onChange={(e) => setActiveFilter(e.target.value)}
+              aria-label={t("ui.accountStatus")}
+              className="rounded-[10px] border border-white/[0.14] bg-dark-panel px-3 py-2 text-[13px] text-slate-100"
+            >
+              <option value="">{t("ui.all")}</option>
+              <option value="true">{t("ui.active")}</option>
+              <option value="false">{t("ui.accountLocked")}</option>
+            </select>
+          </div>
+
             <div className="overflow-x-auto">
               <table className="lm-table">
                 <thead>
@@ -441,6 +587,15 @@ export default function AdminMailboxesPage() {
                       <td className="whitespace-nowrap pr-0 text-right">
                         <button
                           type="button"
+                          onClick={() => void openUser(mb)}
+                          title={t("common.edit")}
+                          aria-label={t("common.edit")}
+                          className={`${iconButton} inline-flex`}
+                        >
+                          <Pencil className="h-[15px] w-[15px]" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void handleToggleLock(mb.id, mb.locked)}
                           title={mb.locked ? t("admin.unlockAccount") : t("admin.lockAccount")}
                           aria-label={mb.locked ? t("admin.unlockAccount") : t("admin.lockAccount")}
@@ -462,6 +617,105 @@ export default function AdminMailboxesPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <Pagination
+              page={pageInfo.page}
+              pageSize={pageInfo.pageSize}
+              total={pageInfo.total}
+              totalPages={pageInfo.totalPages}
+              onPage={setPage}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* The user being edited, with the aliases that land in their mailbox. */}
+      {editing && (
+        <div className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16">
+          <div className="w-full max-w-[560px] rounded-2xl bg-dark-panel p-5 shadow-edge">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="break-words text-[17px] font-medium leading-tight text-slate-100">
+                  {editing.email}
+                </h2>
+                <p className="mt-1 text-[12px] text-slate-400">{t("ui.editUser")}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                aria-label={t("common.cancel")}
+                className={`${iconButton} inline-flex`}
+              >
+                <X className="h-[15px] w-[15px]" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3">
+              <div>
+                <label htmlFor="edit-role" className={fieldLabel}>{t("ui.role")}</label>
+                <select
+                  id="edit-role"
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className={input}
+                >
+                  <option value="USER">USER</option>
+                  <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
+                  <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                </select>
+              </div>
+              <div>
+                <label htmlFor="edit-quota" className={fieldLabel}>{t("ui.quotaMb")}</label>
+                <input
+                  id="edit-quota"
+                  type="number"
+                  min={0}
+                  value={editQuotaMb}
+                  onChange={(e) => setEditQuotaMb(Number(e.target.value))}
+                  className={input}
+                />
+              </div>
+              <div>
+                <label htmlFor="edit-locale" className={fieldLabel}>{t("settings.language")}</label>
+                <select
+                  id="edit-locale"
+                  value={editLocale}
+                  onChange={(e) => setEditLocale(e.target.value)}
+                  className={input}
+                >
+                  <option value="">{t("common.none")}</option>
+                  <option value="pt-BR">Portugues (BR)</option>
+                  <option value="en">English</option>
+                  <option value="es">Espanol</option>
+                </select>
+              </div>
+
+              <div className="rounded-xl bg-dark-card p-3.5 shadow-edge">
+                <div className="text-xs text-slate-400">{t("admin.aliasesForUser")}</div>
+                {editAliases === null ? (
+                  <div className="mt-2 text-[12.5px] text-slate-500">{t("common.loading")}</div>
+                ) : editAliases.length === 0 ? (
+                  <div className="mt-2 text-[12.5px] text-slate-500">{t("admin.noAliasesForUser")}</div>
+                ) : (
+                  <ul className="mt-2 flex flex-col gap-1.5">
+                    {editAliases.map((a) => (
+                      <li key={a.id} className="break-all font-mono text-[12px] text-slate-200">
+                        {a.aliasAddress}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="secondary" size="sm" onClick={() => setEditing(null)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button variant="primary" size="sm" onClick={() => void saveUser()} disabled={saving}>
+                  {saving ? t("common.loading") : t("common.save")}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

@@ -12,6 +12,7 @@ import {
 } from "./surfaceAccess.js";
 import * as repo from "./repository.js";
 import { parsePageParams, paged } from "./pagination.js";
+import { checkUser, checkServer, overallStatus } from "./diagnostics.js";
 
 const CHALLENGE_TTL_SECONDS = 300;
 // Long enough to scan a code and type one back, short enough that a token
@@ -193,6 +194,10 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     }
     if (url.startsWith("/api/v1/admin/queue/") && url.endsWith("/cancel") && method === "POST") {
       return adminQueueAction(req, res, session!, url.slice("/api/v1/admin/queue/".length, -"/cancel".length), "cancel");
+    }
+    if (url === "/api/v1/admin/diagnostics/server" && method === "GET") return adminDiagnosticsServer(res, session!);
+    if (url.startsWith("/api/v1/admin/diagnostics/user/") && method === "GET") {
+      return adminDiagnosticsUser(res, session!, url.substring("/api/v1/admin/diagnostics/user/".length));
     }
     if (url === "/api/v1/admin/dashboard" && method === "GET") return adminDashboard(res);
     if (url === "/api/v1/admin/domains" && method === "GET") return adminDomains(res, session!);
@@ -945,6 +950,52 @@ async function adminReconcileDomain(req: IncomingMessage, res: ServerResponse, s
   });
 }
 
+
+/**
+ * The checks an operator runs by hand from /admin/tests.
+ *
+ * They read state rather than changing it: a diagnostic page that alters the
+ * thing it is diagnosing is worse than no page at all.
+ */
+async function adminDiagnosticsServer(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const facts = await repo.serverDiagnosticFacts(scopeOf(session));
+  const checks = checkServer(facts as never);
+  sendJson(res, 200, { scope: "server", status: overallStatus(checks), checks });
+}
+
+async function adminDiagnosticsUser(
+  res: ServerResponse, session: SessionTokenPayload, id: string,
+): Promise<void> {
+  const row = await repo.userDiagnosticFacts(scopeOf(session), id);
+  if (!row) {
+    return sendJson(res, 404, { error: "NOT_FOUND", message: "No such user" });
+  }
+
+  const checks = checkUser({
+    email: String(row.email_address),
+    isActive: Boolean(row.is_active),
+    lockedUntil: row.locked_until ? String(row.locked_until) : null,
+    // Bytes come back as text so a bigint is not rounded through a double.
+    quotaBytes: Number(row.quota_bytes ?? 0),
+    usedBytes: Number(row.used_bytes ?? 0),
+    mfaEnrolled: Boolean(row.mfa_enrolled),
+    aliasCount: Number(row.alias_count ?? 0),
+    sieveScriptBytes: row.sieve_bytes === null || row.sieve_bytes === undefined ? null : Number(row.sieve_bytes),
+    vacationEnabled: Boolean(row.vacation_enabled),
+    // The autoresponder is a Sieve script with no date window of its own, so
+    // there is no window to judge and none is invented here.
+    vacationStart: null,
+    vacationEnd: null,
+    passwordHashPresent: Boolean(row.password_hash_present),
+  });
+
+  sendJson(res, 200, {
+    scope: "user",
+    subject: String(row.email_address),
+    status: overallStatus(checks),
+    checks,
+  });
+}
 
 async function adminGetRspamdThresholds(res: ServerResponse): Promise<void> {
   sendJson(res, 200, await repo.getRspamdThresholds());

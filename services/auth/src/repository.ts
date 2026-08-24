@@ -917,6 +917,75 @@ export async function listAliasesForMailbox(
   );
 }
 
+/** Everything one user's checks need, in a single pass over the database. */
+export async function userDiagnosticFacts(
+  scope: AdminScope,
+  mailboxId: string,
+): Promise<Record<string, unknown> | null> {
+  const { sql, params } = scopeClause(scope, "m.domain_id");
+  const row = await queryOne<Record<string, unknown>>(
+    `SELECT m.email_address, m.is_active, m.locked_until,
+            m.quota_bytes::text AS quota_bytes, m.used_bytes::text AS used_bytes,
+            (m.password_hash IS NOT NULL AND m.password_hash <> '') AS password_hash_present,
+            EXISTS (SELECT 1 FROM mfa_totp t WHERE t.mailbox_id = m.id AND t.status = 'CONFIRMED') AS mfa_enrolled,
+            (SELECT count(*) FROM aliases a
+              WHERE a.domain_id = m.domain_id
+                AND EXISTS (SELECT 1 FROM unnest(a.destination_addresses) d
+                             WHERE lower(d) = lower(m.email_address)))::int AS alias_count,
+            (SELECT length(sc.script) FROM sieve_scripts sc
+              WHERE sc.mailbox_id = m.id AND sc.is_active
+                AND sc.name <> 'vacation-autoresponder' LIMIT 1) AS sieve_bytes,
+            EXISTS (SELECT 1 FROM sieve_scripts sc
+                     WHERE sc.mailbox_id = m.id AND sc.is_active
+                       AND sc.name = 'vacation-autoresponder') AS vacation_enabled
+       FROM mailboxes m
+      WHERE m.id = $${params.length + 1} AND ${sql}`,
+    [...params, mailboxId],
+  );
+  return row ?? null;
+}
+
+/** Everything the server-wide checks need. */
+export async function serverDiagnosticFacts(scope: AdminScope): Promise<Record<string, unknown>> {
+  const { sql, params } = scopeClause(scope, "d.id");
+  const domains = await query<{ name: string; dns_status: string; dane_enabled: boolean }>(
+    `SELECT d.name, d.dns_status, d.dane_enabled FROM domains d WHERE ${sql} ORDER BY d.name`,
+    params,
+  );
+
+  const withoutDkim = await query<{ name: string }>(
+    `SELECT d.name FROM domains d
+      WHERE ${sql}
+        AND NOT EXISTS (SELECT 1 FROM dkim_keys k WHERE k.domain_id = d.id)
+      ORDER BY d.name`,
+    params,
+  );
+
+  const queue = await query<{ status: string; count: string }>(
+    `SELECT status, count(*)::text AS count FROM outbound_jobs GROUP BY status`,
+  );
+
+  const { sql: mSql, params: mParams } = scopeClause(scope, "m.domain_id");
+  const quota = await queryOne<{ over: string; total: string }>(
+    `SELECT count(*) FILTER (WHERE m.quota_bytes > 0 AND m.used_bytes >= m.quota_bytes)::text AS over,
+            count(*)::text AS total
+       FROM mailboxes m WHERE ${mSql}`,
+    mParams,
+  );
+
+  return {
+    domains: domains.map((d) => ({
+      name: d.name,
+      dnsStatus: d.dns_status,
+      daneEnabled: d.dane_enabled,
+    })),
+    domainsWithoutDkim: withoutDkim.map((d) => d.name),
+    queueByStatus: Object.fromEntries(queue.map((r) => [r.status, Number(r.count)])),
+    usersOverQuota: Number(quota?.over ?? 0),
+    usersTotal: Number(quota?.total ?? 0),
+  };
+}
+
 export type AliasResult = { status: "OK"; id: string } | { status: "FORBIDDEN" } | { status: "DUPLICATE" } | { status: "INVALID" };
 
 export async function createAlias(

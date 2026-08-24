@@ -16,6 +16,7 @@ import {
   X,
   Lock,
   Mail,
+  FlaskConical,
 } from "lucide-react";
 import { useTranslations } from "../../../i18n/provider";
 import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
@@ -35,6 +36,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: "/admin/queue", label: t("admin.queueTitle"), icon: ListOrdered },
     { href: "/admin/dmarc", label: t("admin.dmarcTitle"), icon: Activity },
     { href: "/admin/security", label: t("admin.securityTitle"), icon: ShieldCheck },
+    { href: "/admin/tests", label: t("admin.testsTitle"), icon: FlaskConical },
   ];
 
   const handleLogout = () => {
