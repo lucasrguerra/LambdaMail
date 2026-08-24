@@ -161,7 +161,8 @@
     "search": "Buscar",
     "status": "Status",
     "unavailable": "Indisponível",
-    "userPortal": "Webmail"
+    "userPortal": "Webmail",
+    "notApplicable": "Nao aplicavel"
   },
   "errors": {
     "forbidden": "Você não tem acesso a isto",

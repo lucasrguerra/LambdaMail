@@ -9,9 +9,8 @@ paid tiers and no artificial limits on domains or mailboxes.
 
 > **Status: pre-release.** The mail path, the security posture and the web
 > interfaces work end to end, and there is an automated test suite behind them.
-> Several console panels are still read-only, and some features are recorded but
-> not yet acted on — see [What is not finished](#what-is-not-finished) before
-> putting real mail through it.
+> See [What is not finished](#what-is-not-finished) before putting real mail
+> through it.
 
 ---
 
@@ -23,8 +22,10 @@ paid tiers and no artificial limits on domains or mailboxes.
 | **Authentication** | SPF, DKIM (Ed25519 + RSA dual signature), DMARC, ARC sealing, DANE/TLSA and MTA-STS on delivery, TLS-RPT ingestion |
 | **Filtering** | Rspamd scoring with greylisting, RBLs and rate limiting; ClamAV; Sieve |
 | **Delivery** | Durable outbound queue in Postgres with the retry ladder and RFC 3464 bounces; smarthost fallback for hosts with port 25 blocked |
-| **DNS** | Cloudflare reconciliation of the 13 records, idempotent, with drift detection |
+| **DNS** | Cloudflare reconciliation of the expected records for every active domain, idempotent, with per-record verification against public resolvers |
+| **Filing** | Sieve rules built in the UI, custom folders, and an RFC 5230 vacation responder that replies in thread and once per sender per week |
 | **Web** | Webmail at `/user/*` and an admin console at `/admin/*`, isolated by session audience, with TOTP two-factor, recovery codes, app passwords, and English, Portuguese and Spanish |
+| **Console** | Server-side paging and filtering, user editing (role, quota, language, password, second factor), per-user aliases, and a diagnostics page at `/admin/tests` |
 
 ## Architecture
 
@@ -109,13 +110,8 @@ more thing to keep patched.
 - **Ports below 1024** are bound by Docker's proxy on the host, so the daemon
   needs the privilege — the default on a normal install. The containers
   themselves run unprivileged.
-- **The proxy's certificate directory** must be readable by the `protocols`
-  container. Under `TLS_MODE=traefik` it reads the certificate the proxy
-  obtained, from the directory given by `COOLIFY_PROXY_DIR`, mounted read-only.
-  The images run as a non-root user, so an `acme.json` left at mode `600` and
-  owned by root cannot be read, and the mail listeners fall back to a
-  self-signed certificate while HTTPS keeps working — a confusing failure that
-  looks like a certificate problem and is a permissions problem.
+- **The proxy's certificate directory**, under `TLS_MODE=traefik` only — see
+  [Certificates](#certificates) below, and prefer `TLS_MODE=acme` if you can.
 - **Disk** for the mail spool (`protocols_spool`) and Postgres. Mail is stored
   once and reference-counted, but plan for growth.
 - **A firewall that does not rate-limit port 25 into uselessness.** Some
@@ -159,6 +155,34 @@ default:
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD` | No defaults; compose fails without them. |
 | `MAIL_DOMAIN`, `PRIMARY_MAIL_HOST`, `PUBLIC_IPV4` | Identity. `PRIMARY_MAIL_HOST` must match the PTR of `PUBLIC_IPV4`. |
 
+### Certificates
+
+Two modes, and the choice matters more than it looks.
+
+**`TLS_MODE=acme` (recommended).** LambdaMail obtains its own certificate for
+`PRIMARY_MAIL_HOST`, `mta-sts.<domain>` and `autoconfig.<domain>` over DNS-01,
+using the Cloudflare token already configured for DNS. It needs
+`LAMBDAMAIL_MASTER_KEY` to seal the account and certificate keys, and
+`ACME_EMAIL`. It is the only mode DANE can run in, because it is the only one
+where the key for the next certificate exists before that certificate does.
+
+**`TLS_MODE=traefik`.** The mail listeners read the certificate the reverse
+proxy already obtained, from `COOLIFY_PROXY_DIR`, mounted read-only. Two things
+have to be true, and neither is obvious when they are not:
+
+- the proxy must have a router for `PRIMARY_MAIL_HOST`, or that name never
+  appears in `acme.json` and no certificate exists to read;
+- `acme.json` must be readable by the container's non-root user. Left at mode
+  `600` owned by root — which is how the proxy writes it — it cannot be.
+
+Either failure is silent in the same way: HTTPS keeps working, because the
+proxy is serving it, while the mail listeners fall back to a **self-signed
+certificate** and every client that verifies refuses SMTP, IMAP and POP3. It
+reads as a certificate problem and is usually a permissions problem.
+
+`/admin/security` names the issuer and says outright when the certificate is
+self-signed, which is the fastest way to tell the two apart.
+
 ## Operating
 
 | | |
@@ -176,12 +200,8 @@ what the alerts mean and how to read a delivery failure.
 
 Stated plainly, because a mail server that half works loses mail:
 
-- **Recorded but not acted on.** Vacation responder, signature and the Sieve
-  rules built in the UI are stored, but nothing consumes them yet — enabling a
-  vacation reply does not send one.
-- **Read-only console panels.** The guided domain onboarding checklist, the DNS
-  desired-vs-actual diff and the CSV import report on state rather than driving
-  it.
+- **Read-only console panels.** The guided domain onboarding checklist reports
+  on state rather than driving it.
 - **Not implemented.** JMAP, BIMI, CalDAV/CardDAV, multi-node. Backups are
   documented but not automated.
 - **DANE** is off unless `TLS_MODE=acme`, and deliberately so: under a

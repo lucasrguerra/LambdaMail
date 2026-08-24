@@ -43,13 +43,16 @@ func (a *adminTlsAPI) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := map[string]any{
-		"tls_mode":            a.tlsMode,
-		"mail_host":           a.mailHost,
-		"has_certificate":     a.source.HasCertificateFor(a.mailHost),
-		"unknown_sni_total":   a.source.UnknownSNICount(),
-		"last_reload":         nil,
-		"last_change":         nil,
-		"watcher_healthy":     false,
+		"tls_mode":          a.tlsMode,
+		"mail_host":         a.mailHost,
+		"has_certificate":   a.source.HasCertificateFor(a.mailHost),
+		"unknown_sni_total": a.source.UnknownSNICount(),
+		"last_reload":       nil,
+		"last_change":       nil,
+		// Null, not false. A source that reloads from disk reports a time and
+		// gets a verdict; one that issues its own certificate has no watcher to
+		// be unhealthy, and saying "unavailable" there is a false alarm.
+		"watcher_healthy":     nil,
 		"certificate_expires": nil,
 		"expires_in_days":     nil,
 		"state":               "UNKNOWN",

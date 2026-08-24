@@ -318,12 +318,23 @@ export default function AdminSecurityPage() {
 
               <div className="flex flex-col gap-1 rounded-xl bg-dark-card p-3.5 shadow-edge">
                 <div className="text-xs text-slate-400">{t("admin.watcherHealthy")}</div>
+                {/* Null means there is no watcher to judge - the certificate
+                    is issued by this server rather than read from disk - so no
+                    verdict is shown instead of a standing false alarm. */}
                 <div
                   className={`text-[15px] font-medium ${
-                    tlsStatus.watcher_healthy ? "text-indigo-400" : "text-amber-400"
+                    tlsStatus.watcher_healthy === null || tlsStatus.watcher_healthy === undefined
+                      ? "text-slate-400"
+                      : tlsStatus.watcher_healthy
+                        ? "text-indigo-400"
+                        : "text-amber-400"
                   }`}
                 >
-                  {tlsStatus.watcher_healthy ? t("ui.healthy") : t("common.unavailable")}
+                  {tlsStatus.watcher_healthy === null || tlsStatus.watcher_healthy === undefined
+                    ? t("common.notApplicable")
+                    : tlsStatus.watcher_healthy
+                      ? t("ui.healthy")
+                      : t("common.unavailable")}
                 </div>
                 <div className="text-[11.5px] text-slate-500">
                   {t("admin.lastReload")}:{" "}
