@@ -104,7 +104,9 @@
     "serverChecks": "Server",
     "userChecks": "User",
     "runChecks": "Run",
-    "checksRun": "{count} checks"
+    "checksRun": "{count} checks",
+    "pickADomain": "Pick a domain.",
+    "aliasSource": "Alias address"
   },
   "auth": {
     "adminLoginTitle": "Admin console",
@@ -413,5 +415,10 @@
     "queueHasFrozen": "Frozen messages in the queue",
     "usersOverQuota": "Users over their quota",
     "noUsersOverQuota": "No user is over quota"
+  },
+  "roles": {
+    "user": "User",
+    "domainAdmin": "Domain admin",
+    "superAdmin": "Super admin"
   }
 }

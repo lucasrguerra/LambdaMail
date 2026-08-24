@@ -22,6 +22,8 @@ import { useTranslations } from "../../../../i18n/provider";
 import { Badge } from "../../../../components/ui/Badge";
 import { Pagination } from "../../../../components/ui/Pagination";
 import { useDebounced } from "../../../../lib/useDebounced";
+import { formatBytes, usageRatio } from "../../../../lib/formatBytes";
+import { roleLabel } from "../../../../lib/roleLabel";
 import { initialsFor } from "../../../../lib/initials";
 import { Button } from "../../../../components/ui/Button";
 
@@ -29,8 +31,8 @@ interface Mailbox {
   id: string;
   email: string;
   role: string;
-  storageUsedMb: number;
-  quotaMb: number;
+  usedBytes: number;
+  quotaBytes: number;
   mfaEnabled: boolean;
   locked: boolean;
   locale: string;
@@ -76,6 +78,8 @@ export default function AdminMailboxesPage() {
   const [activeTab, setActiveTab] = useState<"mailboxes" | "aliases" | "csv">("mailboxes");
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
   const [aliases, setAliases] = useState<Alias[]>([]);
+  const [domains, setDomains] = useState<{ id: string; name: string }[]>([]);
+  const [newDomainId, setNewDomainId] = useState("");
   const [mfaPolicy, setMfaPolicy] = useState<"optional" | "required_admins" | "required_all">("required_admins");
 
   // Create mailbox state
@@ -111,6 +115,8 @@ export default function AdminMailboxesPage() {
   const [editLocale, setEditLocale] = useState("");
   const [editAliases, setEditAliases] = useState<Alias[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const [newAliasForUser, setNewAliasForUser] = useState("");
+  const [aliasBusy, setAliasBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -125,6 +131,14 @@ export default function AdminMailboxesPage() {
         ),
         fetch("/api/v1/admin/aliases").then((r) => (r.ok ? r.json() : [])),
       ]);
+
+      // The address to create is local part plus a chosen domain. Without the
+      // list there is nothing to choose from, and the server falls back to the
+      // signed-in admin's own domain.
+      const dom = await fetch("/api/v1/admin/domains").then((r) => (r.ok ? r.json() : []));
+      const domainRows = (dom as { id: string; name: string }[]) ?? [];
+      setDomains(domainRows);
+      setNewDomainId((prev) => (domainRows.some((d) => d.id === prev) ? prev : (domainRows[0]?.id ?? "")));
       const users = mb as PagedUsers;
       setPageInfo({
         total: users.total ?? 0,
@@ -137,8 +151,10 @@ export default function AdminMailboxesPage() {
           id: m.id,
           email: m.email_address,
           role: m.role,
-          storageUsedMb: Math.round(Number(m.used_bytes ?? 0) / 1048576),
-          quotaMb: Math.round(Number(m.quota_bytes ?? 0) / 1048576),
+          // Kept as bytes. Rounding to whole megabytes here is what made a
+          // mailbox holding 137.5 KB read as "0 / 2 MB" with an empty bar.
+          usedBytes: Number(m.used_bytes ?? 0),
+          quotaBytes: Number(m.quota_bytes ?? 0),
           mfaEnabled: Boolean(m.mfa_enrolled),
           locked: !m.is_active,
           locale: m.locale ?? "",
@@ -170,11 +186,20 @@ export default function AdminMailboxesPage() {
   const handleCreateMailbox = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const localPart = newEmail.split("@")[0];
+    // The domain half used to be split off and thrown away, and no domain_id
+    // was sent - so the server fell back to the signed-in admin's own domain
+    // and "lucas@cienciaembarcada.com.br" was created as
+    // "lucas@lucasrguerra.dev.br", silently.
+    const localPart = newEmail.split("@")[0].trim();
+    if (!newDomainId) {
+      setError(t("admin.pickADomain"));
+      return;
+    }
     const res = await fetch("/api/v1/admin/mailboxes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        domain_id: newDomainId,
         local_part: localPart,
         password: newPassword,
         role: newRole,
@@ -219,7 +244,7 @@ export default function AdminMailboxesPage() {
   const openUser = async (mb: Mailbox) => {
     setEditing(mb);
     setEditRole(mb.role);
-    setEditQuotaMb(mb.quotaMb);
+    setEditQuotaMb(Math.round(mb.quotaBytes / 1048576));
     setEditLocale(mb.locale);
     setEditAliases(null);
     try {
@@ -235,6 +260,54 @@ export default function AdminMailboxesPage() {
       );
     } catch {
       setEditAliases([]);
+    }
+  };
+
+  /**
+   * Adds an alias that delivers to the user being edited.
+   *
+   * The domain is taken from the address typed, so an alias for a second
+   * domain does not silently land in the admin's own - the same trap the
+   * mailbox form fell into.
+   */
+  const addAliasForUser = async () => {
+    if (!editing || !newAliasForUser.trim()) return;
+    setAliasBusy(true);
+    setError(null);
+    try {
+      const source = newAliasForUser.trim().toLowerCase();
+      const domainName = source.split("@")[1] ?? "";
+      const domain = domains.find((d) => d.name.toLowerCase() === domainName);
+      if (!domain) {
+        setError(t("admin.pickADomain"));
+        return;
+      }
+      const res = await fetch("/api/v1/admin/aliases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain_id: domain.id, source, destinations: [editing.email] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message);
+      setNewAliasForUser("");
+      await openUser(editing);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : t("errors.serverError"));
+    } finally {
+      setAliasBusy(false);
+    }
+  };
+
+  const removeAliasForUser = async (id: string) => {
+    if (!editing) return;
+    setAliasBusy(true);
+    try {
+      await fetch(`/api/v1/admin/aliases/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await openUser(editing);
+      await load();
+    } finally {
+      setAliasBusy(false);
     }
   };
 
@@ -438,13 +511,32 @@ export default function AdminMailboxesPage() {
                 </label>
                 <input
                   id="new-email"
-                  type="email"
+                  type="text"
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="nova.conta@domain.com"
+                  placeholder="nova.conta"
                   required
                   className={input}
                 />
+              </div>
+              {/* The domain is chosen, not typed. Typing a full address let
+                  the domain half be discarded without anyone noticing. */}
+              <div className="min-w-[200px] flex-1">
+                <label htmlFor="new-domain" className={fieldLabel}>
+                  {t("admin.domainsTitle")}
+                </label>
+                <select
+                  id="new-domain"
+                  value={newDomainId}
+                  onChange={(e) => setNewDomainId(e.target.value)}
+                  className={input}
+                >
+                  {domains.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      @{d.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="min-w-[180px] flex-1">
                 <label htmlFor="new-mailbox-password" className={fieldLabel}>
@@ -470,9 +562,9 @@ export default function AdminMailboxesPage() {
                   onChange={(e) => setNewRole(e.target.value)}
                   className={input}
                 >
-                  <option value="USER">USER</option>
-                  <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
-                  <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                  <option value="USER">{roleLabel(t, "USER")}</option>
+                  <option value="DOMAIN_ADMIN">{roleLabel(t, "DOMAIN_ADMIN")}</option>
+                  <option value="SUPER_ADMIN">{roleLabel(t, "SUPER_ADMIN")}</option>
                 </select>
               </div>
               <div className="min-w-[130px] flex-1">
@@ -515,9 +607,9 @@ export default function AdminMailboxesPage() {
               className="rounded-[10px] border border-white/[0.14] bg-dark-panel px-3 py-2 text-[13px] text-slate-100"
             >
               <option value="">{t("ui.all")}</option>
-              <option value="USER">USER</option>
-              <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
-              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+              <option value="USER">{roleLabel(t, "USER")}</option>
+              <option value="DOMAIN_ADMIN">{roleLabel(t, "DOMAIN_ADMIN")}</option>
+              <option value="SUPER_ADMIN">{roleLabel(t, "SUPER_ADMIN")}</option>
             </select>
             <select
               value={activeFilter}
@@ -556,7 +648,7 @@ export default function AdminMailboxesPage() {
                       </td>
                       <td>
                         <Badge variant="neutral" className="whitespace-nowrap">
-                          {mb.role}
+                          {roleLabel(t, mb.role)}
                         </Badge>
                       </td>
                       <td>
@@ -564,13 +656,12 @@ export default function AdminMailboxesPage() {
                           <span className="block h-1.5 flex-1 overflow-hidden rounded-full bg-dark-card">
                             <span
                               className="block h-full rounded-full bg-indigo-500"
-                              style={{
-                                width: `${Math.min((mb.storageUsedMb / (mb.quotaMb || 1)) * 100, 100)}%`,
-                              }}
+                              style={{ width: `${usageRatio(mb.usedBytes, mb.quotaBytes) * 100}%` }}
                             />
                           </span>
                           <span className="whitespace-nowrap text-[11.5px] tabular-nums text-slate-400">
-                            {mb.storageUsedMb} / {mb.quotaMb} MB
+                            {formatBytes(mb.usedBytes)} /{" "}
+                            {mb.quotaBytes > 0 ? formatBytes(mb.quotaBytes) : t("checks.quotaUnlimited")}
                           </span>
                         </div>
                       </td>
@@ -660,9 +751,9 @@ export default function AdminMailboxesPage() {
                   onChange={(e) => setEditRole(e.target.value)}
                   className={input}
                 >
-                  <option value="USER">USER</option>
-                  <option value="DOMAIN_ADMIN">DOMAIN_ADMIN</option>
-                  <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                  <option value="USER">{roleLabel(t, "USER")}</option>
+                  <option value="DOMAIN_ADMIN">{roleLabel(t, "DOMAIN_ADMIN")}</option>
+                  <option value="SUPER_ADMIN">{roleLabel(t, "SUPER_ADMIN")}</option>
                 </select>
               </div>
               <div>
@@ -700,12 +791,47 @@ export default function AdminMailboxesPage() {
                 ) : (
                   <ul className="mt-2 flex flex-col gap-1.5">
                     {editAliases.map((a) => (
-                      <li key={a.id} className="break-all font-mono text-[12px] text-slate-200">
-                        {a.aliasAddress}
+                      <li
+                        key={a.id}
+                        className="flex items-center gap-2 rounded-lg bg-dark-panel px-2.5 py-1.5"
+                      >
+                        <span className="min-w-0 flex-1 break-all font-mono text-[12px] text-slate-200">
+                          {a.aliasAddress}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void removeAliasForUser(a.id)}
+                          disabled={aliasBusy}
+                          title={t("common.delete")}
+                          aria-label={`${t("common.delete")} ${a.aliasAddress}`}
+                          className={`${iconButton} inline-flex flex-none hover:text-rose-400`}
+                        >
+                          <Trash2 className="h-[14px] w-[14px]" />
+                        </button>
                       </li>
                     ))}
                   </ul>
                 )}
+
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                  <input
+                    type="email"
+                    value={newAliasForUser}
+                    onChange={(e) => setNewAliasForUser(e.target.value)}
+                    placeholder={t("admin.aliasSource")}
+                    aria-label={t("admin.aliasSource")}
+                    className={`${input} min-w-[200px] flex-1`}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void addAliasForUser()}
+                    disabled={aliasBusy || !newAliasForUser.trim()}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>{t("admin.addAlias")}</span>
+                  </Button>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-1">

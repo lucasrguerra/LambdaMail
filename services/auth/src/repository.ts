@@ -896,24 +896,31 @@ export async function listAliasesForMailbox(
   mailboxId: string,
 ): Promise<unknown[] | null> {
   const { sql, params } = scopeClause(scope, "m.domain_id");
-  const owner = await queryOne<{ email_address: string; domain_id: string }>(
-    `SELECT m.email_address, m.domain_id FROM mailboxes m WHERE m.id = $${params.length + 1} AND ${sql}`,
+  const owner = await queryOne<{ email_address: string }>(
+    `SELECT m.email_address FROM mailboxes m WHERE m.id = $${params.length + 1} AND ${sql}`,
     [...params, mailboxId],
   );
   // Out of scope and non-existent are answered the same way, so the console
   // of one domain cannot probe for ids belonging to another.
   if (!owner) return null;
 
+  // Every domain in the caller's scope, not only the one the user's own
+  // address sits in. One mailbox commonly receives postmaster, abuse, dmarc
+  // and tlsrpt for several domains at once, and scoping this to the owner's
+  // domain hid all the others - the panel showed four aliases where eight
+  // were delivering.
+  const { sql: aliasSql, params: aliasParams } = scopeClause(scope, "a.domain_id");
   return query(
-    `SELECT a.id, a.source_address, a.destination_addresses, a.is_catch_all, a.is_active
-       FROM aliases a
-      WHERE a.domain_id = $1
+    `SELECT a.id, a.source_address, a.destination_addresses, a.is_catch_all, a.is_active,
+            d.name AS domain_name
+       FROM aliases a JOIN domains d ON d.id = a.domain_id
+      WHERE ${aliasSql}
         AND EXISTS (
               SELECT 1 FROM unnest(a.destination_addresses) AS dest
-               WHERE lower(dest) = lower($2)
+               WHERE lower(dest) = lower($${aliasParams.length + 1})
             )
       ORDER BY a.source_address`,
-    [owner.domain_id, owner.email_address],
+    [...aliasParams, owner.email_address],
   );
 }
 

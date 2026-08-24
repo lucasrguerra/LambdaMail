@@ -1,6 +1,6 @@
 {
   "admin": {
-    "addAlias": "Añadir apelido",
+    "addAlias": "Anadir alias",
     "aliasTarget": "Dirección de destino",
     "aliasesTitle": "Alias",
     "auditLog": "Registro de auditoría",
@@ -104,7 +104,9 @@
     "serverChecks": "Servidor",
     "userChecks": "Usuario",
     "runChecks": "Ejecutar",
-    "checksRun": "{count} comprobaciones"
+    "checksRun": "{count} comprobaciones",
+    "pickADomain": "Elija un dominio.",
+    "aliasSource": "Direccion del alias"
   },
   "auth": {
     "adminLoginTitle": "Consola de administración",
@@ -413,5 +415,10 @@
     "queueHasFrozen": "Hay mensajes congelados en la cola",
     "usersOverQuota": "Usuarios con la cuota excedida",
     "noUsersOverQuota": "Ningun usuario con la cuota excedida"
+  },
+  "roles": {
+    "user": "Usuario",
+    "domainAdmin": "Admin del dominio",
+    "superAdmin": "Super admin"
   }
 }

@@ -104,7 +104,9 @@
     "serverChecks": "Servidor",
     "userChecks": "Utilizador",
     "runChecks": "Correr",
-    "checksRun": "{count} verificacoes"
+    "checksRun": "{count} verificacoes",
+    "pickADomain": "Escolha um dominio.",
+    "aliasSource": "Endereco do apelido"
   },
   "auth": {
     "adminLoginTitle": "Console de administração",
@@ -413,5 +415,10 @@
     "queueHasFrozen": "Ha mensagens congeladas na fila",
     "usersOverQuota": "Utilizadores com a quota excedida",
     "noUsersOverQuota": "Nenhum utilizador com a quota excedida"
+  },
+  "roles": {
+    "user": "Utilizador",
+    "domainAdmin": "Admin do dominio",
+    "superAdmin": "Super admin"
   }
 }

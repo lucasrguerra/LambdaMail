@@ -826,6 +826,26 @@ describeDb("auth API against a real database", () => {
       expect(res.status).toBe(404);
     });
 
+    // One mailbox commonly receives postmaster, abuse, dmarc and tlsrpt for
+    // several domains at once. Scoping the lookup to the domain the user's own
+    // address sits in hid every alias belonging to the others.
+    it("lists aliases from every domain, not only the user's own", async () => {
+      const mine = `cross-domain-alias@pagedtest-${PAGED_DOMAIN}.invalid`;
+      await query(
+        `INSERT INTO aliases (domain_id, source_address, destination_addresses)
+         VALUES ($1, $2, ARRAY[$3]) ON CONFLICT DO NOTHING`,
+        [PAGED_DOMAIN, mine, userEmail()],
+      );
+
+      const res = await get(`/api/v1/admin/mailboxes/${USER_ID}/aliases`, admin);
+      expect(res.status).toBe(200);
+      const sources = (res.body as unknown as { source_address: string }[]).map((a) => a.source_address);
+
+      // USER_ID lives in DOMAIN_ID; this alias lives in PAGED_DOMAIN and
+      // delivers to them all the same.
+      expect(sources).toContain(mine);
+    });
+
     it("answers 404 for a user that does not exist rather than leaking the difference", async () => {
       const res = await get(`/api/v1/admin/mailboxes/44444444-4444-4444-4444-444444444444/aliases`, admin);
       expect(res.status).toBe(404);
