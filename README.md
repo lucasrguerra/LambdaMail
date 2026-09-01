@@ -183,6 +183,32 @@ reads as a certificate problem and is usually a permissions problem.
 `/admin/security` names the issuer and says outright when the certificate is
 self-signed, which is the fastest way to tell the two apart.
 
+### DANE
+
+Off by default, and worth understanding before turning on: a TLSA record that
+does not match the key being served does not degrade delivery, it **stops** it
+at every validating sender. Two things have to be true first.
+
+- **DNSSEC on the zone, with the DS record published at the registrar.** DANE
+  trusts the TLSA record because DNSSEC signs it; without the chain there is
+  nothing to trust, and validators treat the record as absent.
+- **`TLS_MODE=acme`.** LambdaMail has to own the key to publish the association
+  for the *next* one before switching to it. Under `TLS_MODE=traefik` the proxy
+  renews on its own schedule and the record would silently stop matching.
+
+Then set `OUTBOUND_DANE_ENABLED=true`. The manager publishes `3 1 1` — DANE-EE
+over the SubjectPublicKeyInfo, the only usage a receiving MTA should offer —
+and handles the rollover by publishing the current and next associations
+together, waiting for propagation before issuing against the new key.
+
+`/admin/security` shows the digest of the certificate actually being served.
+That number and the TLSA record in DNS must be the same; when they drift, mail
+is refused and nothing else reports why:
+
+```bash
+dig +short TLSA _25._tcp.mail.example.com
+```
+
 ## Operating
 
 | | |
@@ -204,10 +230,9 @@ Stated plainly, because a mail server that half works loses mail:
   on state rather than driving it.
 - **Not implemented.** JMAP, BIMI, CalDAV/CardDAV, multi-node. Backups are
   documented but not automated.
-- **DANE** is off unless `TLS_MODE=acme`, and deliberately so: under a
-  Traefik-managed certificate the key changes at every renewal and the published
-  TLSA record stops matching, which permanently rejects mail at every validating
-  MTA.
+- **DANE** is off by default. See [DANE](#dane) for turning it on; under
+  `TLS_MODE=traefik` it stays off deliberately, because the proxy's key changes
+  at every renewal and the published TLSA record stops matching.
 
 ## Contributing
 
