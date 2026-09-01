@@ -2,8 +2,10 @@ package tlsprovider
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"time"
 
 	"lambdamail/protocols/internal/application/port"
@@ -93,4 +95,19 @@ func (s *ProviderStatus) CertificateSummary(host string) (string, bool, bool) {
 	selfSigned := bytes.Equal(leaf.RawSubject, leaf.RawIssuer) &&
 		leaf.CheckSignature(leaf.SignatureAlgorithm, leaf.RawTBSCertificate, leaf.Signature) == nil
 	return issuer, selfSigned, true
+}
+
+// CertificateSpkiDigest is the SHA-256 over the certificate's
+// SubjectPublicKeyInfo: the number a TLSA "3 1 1" record has to carry.
+//
+// Published so an operator can compare what is in DNS against what the server
+// is actually serving. When those two disagree, every DANE-validating sender
+// refuses the mail, and nothing else on the panel would show why.
+func (s *ProviderStatus) CertificateSpkiDigest(host string) (string, bool) {
+	leaf := s.leafFor(host)
+	if leaf == nil {
+		return "", false
+	}
+	sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	return hex.EncodeToString(sum[:]), true
 }

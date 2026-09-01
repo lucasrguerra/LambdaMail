@@ -23,6 +23,12 @@ type TlsCertificateInspector interface {
 	CertificateSummary(host string) (issuer string, selfSigned bool, ok bool)
 }
 
+// TlsDaneInspector reports the digest a TLSA "3 1 1" record must carry for the
+// certificate currently being served.
+type TlsDaneInspector interface {
+	CertificateSpkiDigest(host string) (string, bool)
+}
+
 type adminTlsAPI struct {
 	source     TlsStatusSource
 	mailHost   string
@@ -96,6 +102,15 @@ func (a *adminTlsAPI) handleStatus(w http.ResponseWriter, r *http.Request) {
 			if selfSigned {
 				status["state"] = "SELF_SIGNED"
 			}
+		}
+	}
+
+	// The number a DANE association has to match. Published so an operator can
+	// compare it against the TLSA record in DNS: if the two drift apart, every
+	// validating sender refuses the mail and nothing else here would say why.
+	if dane, ok := a.source.(TlsDaneInspector); ok {
+		if digest, found := dane.CertificateSpkiDigest(a.mailHost); found {
+			status["tlsa_digest"] = digest
 		}
 	}
 

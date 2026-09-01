@@ -306,6 +306,17 @@ export default function AdminSecurityPage() {
                 </div>
               </div>
 
+              {/* The number a TLSA "3 1 1" record has to carry. If DNS and this
+                  disagree, every DANE-validating sender refuses the mail. */}
+              {tlsStatus.tlsa_digest ? (
+                <div className="flex flex-col gap-1 rounded-xl bg-dark-card p-3.5 shadow-edge md:col-span-3">
+                  <div className="text-xs text-slate-400">{t("admin.tlsaDigest")}</div>
+                  <div className="break-all font-mono text-[12px] text-slate-200">
+                    {String(tlsStatus.tlsa_digest)}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="flex flex-col gap-1 rounded-xl bg-dark-card p-3.5 shadow-edge">
                 <div className="text-xs text-slate-400">{t("admin.mailHost")}</div>
                 <div className="break-all text-[15px] font-medium text-slate-100">

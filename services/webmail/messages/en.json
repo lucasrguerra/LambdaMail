@@ -112,7 +112,8 @@
     "passwordReset": "Password changed. This user's sessions were signed out.",
     "passwordResetWarning": "Signs out every session this user holds, including one open right now.",
     "removeTotp": "Remove second factor",
-    "totpRemoved": "Second factor removed, with its recovery codes."
+    "totpRemoved": "Second factor removed, with its recovery codes.",
+    "tlsaDigest": "Digest for the TLSA record (DANE 3 1 1)"
   },
   "auth": {
     "adminLoginTitle": "Admin console",

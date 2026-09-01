@@ -112,7 +112,8 @@
     "passwordReset": "Palavra-passe alterada. As sessoes deste utilizador foram terminadas.",
     "passwordResetWarning": "Termina todas as sessoes deste utilizador, incluindo a que esteja aberta agora.",
     "removeTotp": "Remover segundo factor",
-    "totpRemoved": "Segundo factor removido, com os codigos de recuperacao."
+    "totpRemoved": "Segundo factor removido, com os codigos de recuperacao.",
+    "tlsaDigest": "Digest para o registo TLSA (DANE 3 1 1)"
   },
   "auth": {
     "adminLoginTitle": "Console de administração",
