@@ -230,15 +230,11 @@ func run(cfg config) {
 		// list stops disagreeing with the page next to it.
 		router.SetDnsStatusWriter(postgres.NewDomainRepository(pool))
 		router.SetAdminDnsAPI(
-			&dnsSpecSource{cfg: cfg, dkim: dkimRepo, bimi: postgres.NewBimiRepository(pool)},
+			&dnsSpecSource{cfg: cfg, dkim: dkimRepo},
 			netdns.NewPublicVerifier(),
 			cfg.JwtSecret,
 		)
 	}
-	// The BIMI mark: served to receivers over the well-known URL, managed from
-	// the domains panel.
-	router.SetBimiAPI(bimiStore{postgres.NewBimiRepository(pool)}, cfg.JwtSecret, cfg.domain())
-
 	// The TLS panel reads the live watcher instead of the constants the admin
 	// service used to return, which reported a healthy certificate whatever
 	// the process actually held.
@@ -702,7 +698,6 @@ func runHealthcheck() {
 type dnsSpecSource struct {
 	cfg  config
 	dkim *postgres.DkimRepository
-	bimi *postgres.BimiRepository
 }
 
 func (s *dnsSpecSource) ExpectedRecords(ctx context.Context, domain string) ([]entity.DnsRecord, error) {
@@ -713,15 +708,6 @@ func (s *dnsSpecSource) ExpectedRecords(ctx context.Context, domain string) ([]e
 		ServerIPv6:      s.cfg.PublicIPv6,
 		DaneEnabled:     s.cfg.OutboundDane,
 		RelaySpfInclude: relayConfig(s.cfg).SpfInclude(),
-	}
-
-	// The BIMI record is published only when a mark is actually stored, so
-	// the panel never advertises a logo that would 404.
-	if s.bimi != nil {
-		if logo, err := s.bimi.Load(ctx, domain); err == nil && logo != nil {
-			spec.BimiLogoURL = httppresentation.BimiLogoURL(s.cfg.PrimaryMailHost)
-			spec.BimiVmcURL = logo.VmcURL
-		}
 	}
 
 	// Read rather than provisioned: verifying must not create keys as a side

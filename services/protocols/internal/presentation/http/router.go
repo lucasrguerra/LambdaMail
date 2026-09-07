@@ -40,7 +40,6 @@ type Router struct {
 	// dnsReconciler is held here so it survives being set before dns exists.
 	dnsReconciler DomainReconciler
 	dnsStatus     DnsStatusWriter
-	bimi          *bimiAPI
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued
@@ -79,8 +78,6 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/health", r.handleHealth)
 	r.mux.HandleFunc("/.well-known/mta-sts.txt", r.handleMtaSts)
 	r.mux.HandleFunc("/.well-known/security.txt", r.handleSecurityTxt)
-	r.mux.HandleFunc("/.well-known/bimi/default.svg", r.handleBimiLogo)
-	r.mux.HandleFunc("/api/v1/admin/bimi", r.handleBimiAdmin)
 	r.mux.HandleFunc("/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/.well-known/autoconfig/mail/config-v1.1.xml", r.handleThunderbirdAutoconfig)
 	r.mux.HandleFunc("/autodiscover/autodiscover.xml", r.handleOutlookAutodiscover)

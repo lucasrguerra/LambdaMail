@@ -15,7 +15,6 @@ import {
   Plus,
   Lock,
   Languages,
-  UserRound,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Badge } from "../../../../components/ui/Badge";
@@ -25,8 +24,6 @@ import { LanguageSwitcher } from "../../../../i18n/LanguageSwitcher";
 import { signatureToHtml, sanitizeSignature } from "../../../../lib/signature";
 import { buildSieve, parseSieve, type Rule, type RuleField, type RuleCondition, type RuleAction } from "../../../../lib/rules";
 import { useFolders } from "../../../../lib/useFolders";
-import { AvatarEditor } from "../../../../components/AvatarEditor";
-import { useAccount } from "../../../../lib/useAccount";
 import { moveTargets } from "../../../../lib/mailCounts";
 
 interface SieveRule {
@@ -54,20 +51,11 @@ interface WebSession {
   current: boolean;
 }
 
-type SettingsTab = "profile" | "security" | "filters" | "vacation" | "signature" | "language";
+type SettingsTab = "security" | "filters" | "vacation" | "signature" | "language";
 
 export default function UserSettingsPage() {
   const t = useTranslations();
-  const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
-  // Bumped after a save so the browser refetches instead of showing the photo
-  // it already holds under the same URL.
-  const [avatarVersion, setAvatarVersion] = useState(0);
-  const account = useAccount("user");
-  // Null until the account loads, so the editor is not told "no photo" before
-  // it is known whether there is one.
-  const avatarSrc = account?.email
-    ? `/api/v1/avatar?address=${encodeURIComponent(account.email)}&v=${avatarVersion}`
-    : null;
+  const [activeTab, setActiveTab] = useState<SettingsTab>("security");
 
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [qrSecret, setQrSecret] = useState<string | null>(null);
@@ -297,7 +285,6 @@ export default function UserSettingsPage() {
      separated by everything else. The same panels now sit behind a tab strip,
      in the order the redesign groups them. */
   const tabs = [
-    { id: "profile" as const, label: t("avatar.title"), icon: UserRound },
     { id: "security" as const, label: t("settings.security"), icon: Shield },
     { id: "filters" as const, label: t("settings.sieveTitle"), icon: Filter },
     { id: "vacation" as const, label: t("settings.vacationTitle"), icon: Palmtree },
@@ -347,21 +334,6 @@ export default function UserSettingsPage() {
             <CheckCircle2 className="h-4 w-4 flex-none text-indigo-500" />
             <span>{message}</span>
           </div>
-        )}
-
-        {activeTab === "profile" && (
-          <section className={panel}>
-            <h2 className="text-[17px] font-medium leading-tight text-slate-100">{t("avatar.title")}</h2>
-            <p className="text-[12.5px] leading-relaxed text-slate-400">{t("avatar.explainer")}</p>
-            <AvatarEditor
-              src={avatarSrc}
-              onSaved={() => {
-                // The query string changes so the browser fetches the new
-                // photo instead of the one it already has under this URL.
-                setAvatarVersion((v) => v + 1);
-              }}
-            />
-          </section>
         )}
 
         {activeTab === "security" && (

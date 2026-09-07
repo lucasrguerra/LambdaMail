@@ -12,7 +12,6 @@ import {
 } from "./surfaceAccess.js";
 import * as repo from "./repository.js";
 import { parsePageParams, paged } from "./pagination.js";
-import { checkAvatar, MAX_AVATAR_BYTES } from "./imageValidation.js";
 import { checkUser, checkServer, overallStatus } from "./diagnostics.js";
 
 const CHALLENGE_TTL_SECONDS = 300;
@@ -143,12 +142,6 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
 
     if (url === "/api/v1/user/me" && method === "GET") return me(res, session!);
     if (url === "/api/v1/user/locale" && method === "PUT") return updateLocale(req, res, session!);
-    if (url === "/api/v1/user/avatar" && method === "PUT") return userSaveAvatar(req, res, session!);
-    if (url === "/api/v1/user/avatar" && method === "DELETE") return userDeleteAvatar(req, res, session!);
-    if (url.split("?")[0] === "/api/v1/avatar" && method === "GET") {
-      const wanted = new URL(req.url || "/", "http://localhost").searchParams.get("address") || "";
-      return getAvatar(req, res, session, wanted);
-    }
     if (url === "/api/v1/user/preferences" && method === "GET") return userGetPreferences(res, session!);
     if (url === "/api/v1/user/preferences" && method === "POST") return userUpdatePreferences(req, res, session!);
     if (url === "/api/v1/user/sieve" && method === "GET") return userGetSieve(res, session!);
@@ -236,30 +229,6 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
   }
 }
 
-/**
- * Reads a binary body, refusing anything over the cap as it arrives.
- *
- * Kept separate from readBody, which concatenates into a string: an image
- * turned into a UTF-8 string and back is no longer the same bytes.
- */
-function readBinaryBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > maxBytes) {
-        reject(new Error("PAYLOAD_TOO_LARGE"));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
 async function parseJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
   const raw = await readBody(req);
   try {
@@ -267,95 +236,6 @@ async function parseJsonBody(req: IncomingMessage): Promise<Record<string, unkno
   } catch {
     return null;
   }
-}
-
-// ------------------------------------------------------------------ avatars
-
-/**
- * Stores the photo the editor produced.
- *
- * The body is the image itself rather than a multipart form or a base64 field:
- * the editor already has the exact bytes from a canvas, and the other two
- * shapes only make them bigger on the way here.
- */
-async function userSaveAvatar(
-  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload,
-): Promise<void> {
-  let body: Buffer;
-  try {
-    body = await readBinaryBody(req, MAX_AVATAR_BYTES + 1);
-  } catch {
-    return sendJson(res, 413, { error: "TOO_LARGE", message: "The image is too large" });
-  }
-
-  const check = checkAvatar(body);
-  if (!check.ok) {
-    const status = check.reason === "TOO_LARGE" ? 413 : 400;
-    return sendJson(res, status, {
-      error: check.reason,
-      message:
-        check.reason === "TOO_LARGE"
-          ? "The image is too large"
-          : "The upload is not a PNG, JPEG or WebP image",
-    });
-  }
-
-  const etag = await repo.saveAvatar(session.sub, check.contentType!, body);
-  await repo.recordAudit(session.sub, clientIp(req), "user.avatar_set", "mailbox", session.sub, {
-    content_type: check.contentType,
-    bytes: body.length,
-  });
-  sendJson(res, 200, { ok: true, etag });
-}
-
-/**
- * Serves a mailbox's photo, by address.
- *
- * Behind a session on purpose, and checked here rather than by the prefix
- * guard, which only covers /user/ and /admin/. An open endpoint keyed by
- * address answers "this mailbox exists" to anyone willing to ask, for every
- * address they care to try.
- */
-async function getAvatar(
-  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload | null, address: string,
-): Promise<void> {
-  if (!session) {
-    return sendJson(res, 401, { error: "UNAUTHORIZED", message: "A signed-in session is required" });
-  }
-
-  const avatar = address ? await repo.loadAvatarByAddress(address) : null;
-  if (!avatar) {
-    // 404 rather than a placeholder: the caller decides what to draw instead,
-    // and initials are drawn client-side already.
-    return sendJson(res, 404, { error: "NOT_FOUND", message: "No photo" });
-  }
-
-  // A photo appears beside every message from that person, so re-sending it
-  // each time is the difference between one request and a hundred.
-  if (req.headers["if-none-match"] === `"${avatar.etag}"`) {
-    res.statusCode = 304;
-    res.end();
-    return;
-  }
-
-  res.statusCode = 200;
-  res.setHeader("Content-Type", avatar.contentType);
-  res.setHeader("ETag", `"${avatar.etag}"`);
-  // Private: this is served to a signed-in reader, and a shared cache must not
-  // hand one person's photo to the next request that comes along.
-  res.setHeader("Cache-Control", "private, max-age=300");
-  // The bytes were sniffed on the way in, but a browser that ignores the type
-  // and sniffs for itself must not be allowed to find something else.
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.end(avatar.bytes);
-}
-
-async function userDeleteAvatar(
-  req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload,
-): Promise<void> {
-  await repo.deleteAvatar(session.sub);
-  await repo.recordAudit(session.sub, clientIp(req), "user.avatar_cleared", "mailbox", session.sub, {});
-  sendJson(res, 200, { ok: true });
 }
 
 // ------------------------------------------------------------------- login

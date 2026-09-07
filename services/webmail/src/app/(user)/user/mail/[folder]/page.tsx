@@ -38,7 +38,6 @@ import { sanitizeEmailHtml, blockRemoteImages, unblockRemoteImages } from "../..
 import { isSenderTrusted, trustSender, revokeSender } from "../../../../../lib/remoteImages";
 import { resolveInlineImages, buildReaderDocument, type InlineImages } from "../../../../../lib/emailBody";
 import { Button } from "../../../../../components/ui/Button";
-import { Avatar } from "../../../../../components/Avatar";
 
 interface MessageSummary {
   uid: number;
@@ -458,16 +457,16 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                   data-active={isSelected}
                   className="lm-row w-full text-left"
                 >
-                  <Avatar
-                    address={msg.sender_address}
-                    initials={initials(msg.from_display_name, msg.sender_address)}
-                    size={38}
-                    className={
+                  <span
+                    className={`flex h-[34px] w-[34px] flex-none items-center justify-center rounded-full text-xs ${
                       msg.seen
                         ? "bg-dark-card text-slate-400"
                         : "bg-indigo-900 text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]"
-                    }
-                  />
+                    }`}
+                    aria-hidden="true"
+                  >
+                    {initials(msg.from_display_name, msg.sender_address)}
+                  </span>
 
                   <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
                     <span className="flex items-baseline gap-2">
@@ -653,12 +652,9 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
                 </h1>
 
                 <div className="flex items-start gap-3">
-                  <Avatar
-                    address={selectedRow?.sender_address ?? selected.from}
-                    initials={initials(selectedRow?.from_display_name ?? "", selected.from)}
-                    size={38}
-                    className="bg-indigo-900 text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]"
-                  />
+                  <div className="flex h-[38px] w-[38px] flex-none items-center justify-center rounded-full bg-indigo-900 text-[13px] text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]">
+                    {initials(selectedRow?.from_display_name ?? "", selected.from)}
+                  </div>
                   <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
                     <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                       <span className="break-all text-sm text-slate-100">{selected.from}</span>

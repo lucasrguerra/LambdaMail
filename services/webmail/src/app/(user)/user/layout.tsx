@@ -27,7 +27,7 @@ import { LanguageSwitcher } from "../../../i18n/LanguageSwitcher";
 import { useAccount, isAdminRole } from "../../../lib/useAccount";
 import { useFolders } from "../../../lib/useFolders";
 import { folderBadge, customFolders } from "../../../lib/mailCounts";
-import { Avatar } from "../../../components/Avatar";
+import { initialsFor } from "../../../lib/initials";
 
 export default function UserWebmailLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations();
@@ -279,7 +279,9 @@ export default function UserWebmailLayout({ children }: { children: React.ReactN
           onClick={() => setMobileOpen(false)}
           className="flex items-center gap-2.5 rounded-xl bg-dark-panel p-2.5 shadow-edge transition-colors hover:bg-dark-card"
         >
-          <Avatar address={account?.email} size={30} className="bg-indigo-900 text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]" />
+          <span className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-indigo-900 text-[12px] uppercase text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]">
+            {initialsFor(account?.email)}
+          </span>
           <span className="min-w-0 flex-1">
             <span
               className="block truncate text-[12.5px] leading-tight"
