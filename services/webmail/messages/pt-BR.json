@@ -428,5 +428,15 @@
     "user": "Utilizador",
     "domainAdmin": "Admin do dominio",
     "superAdmin": "Super admin"
+  },
+  "avatar": {
+    "title": "Foto de perfil",
+    "explainer": "Esta foto aparece dentro do LambdaMail. Servicos externos como Gmail e Outlook nao a leem: para eles, veja BIMI na pagina de dominios.",
+    "none": "Sem foto",
+    "choose": "Escolher foto",
+    "replace": "Trocar foto",
+    "zoom": "Zoom",
+    "dragToPosition": "Arraste para posicionar",
+    "notAnImage": "Nao foi possivel ler esse ficheiro como imagem."
   }
 }

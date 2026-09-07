@@ -927,6 +927,64 @@ describeDb("auth API against a real database", () => {
       expect(still).toHaveLength(1);
     });
 
+    it("stores a profile photo and serves it back with a cache tag", async () => {
+      const token = (await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD }))
+        .body.token as unknown as string;
+
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+      const put = await fetch(`${base}/api/v1/user/avatar`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "image/png" },
+        body: png,
+      });
+      expect(put.status).toBe(200);
+
+      const got = await fetch(`${base}/api/v1/avatar?address=${encodeURIComponent(userEmail())}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(got.status).toBe(200);
+      expect(got.headers.get("content-type")).toBe("image/png");
+      expect(Buffer.from(await got.arrayBuffer())).toEqual(png);
+
+      // A photo appears beside every message from that person; without the
+      // conditional answer it would be re-sent on every one of them.
+      const etag = got.headers.get("etag")!;
+      const again = await fetch(`${base}/api/v1/avatar?address=${encodeURIComponent(userEmail())}`, {
+        headers: { Authorization: `Bearer ${token}`, "If-None-Match": etag },
+      });
+      expect(again.status).toBe(304);
+    }, 60000);
+
+    // The stored type is decided from the bytes. A caller that labels an HTML
+    // document as a PNG must not get it stored and served from our own origin.
+    it("refuses an upload that is not really an image", async () => {
+      const token = (await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD }))
+        .body.token as unknown as string;
+
+      const res = await fetch(`${base}/api/v1/user/avatar`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "image/png" },
+        body: Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>"),
+      });
+      expect(res.status).toBe(400);
+    }, 60000);
+
+    // An open avatar endpoint would answer "this address exists" to anyone
+    // who asked, for every address they cared to try.
+    it("does not serve photos to a caller with no session", async () => {
+      const res = await fetch(`${base}/api/v1/avatar?address=${encodeURIComponent(userEmail())}`);
+      expect(res.status).toBe(401);
+    });
+
+    it("answers 404 for an address with no photo", async () => {
+      const token = (await post("/api/v1/auth/user/login", { email: userEmail(), password: PASSWORD }))
+        .body.token as unknown as string;
+      const res = await fetch(`${base}/api/v1/avatar?address=nobody@nowhere.invalid`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(404);
+    }, 60000);
+
     it("answers 404 for a user that does not exist rather than leaking the difference", async () => {
       const res = await get(`/api/v1/admin/mailboxes/44444444-4444-4444-4444-444444444444/aliases`, admin);
       expect(res.status).toBe(404);

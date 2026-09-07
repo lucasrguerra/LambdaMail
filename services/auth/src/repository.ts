@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { query, queryOne } from "./db.js";
 import { verifyPassword, hashPassword, encryptSecret, decryptSecret } from "./crypto.js";
 import { verifyTotpCode } from "./totp.js";
@@ -714,6 +715,65 @@ export async function adminRemoveTotp(scope: AdminScope, mailboxId: string): Pro
   await query(`DELETE FROM mfa_totp WHERE mailbox_id = $1`, [mailboxId]);
   await query(`DELETE FROM mfa_recovery_codes WHERE mailbox_id = $1`, [mailboxId]).catch(() => undefined);
   return true;
+}
+
+// ------------------------------------------------------------- avatars
+
+export interface StoredAvatar {
+  contentType: string;
+  bytes: Buffer;
+  etag: string;
+}
+
+/** Replaces a mailbox's profile photo. */
+export async function saveAvatar(
+  mailboxId: string,
+  contentType: string,
+  bytes: Buffer,
+): Promise<string> {
+  // The digest is of the image itself, so an unchanged photo keeps its tag and
+  // the browsers that already hold it are not made to fetch it again.
+  const etag = crypto.createHash("sha256").update(bytes).digest("hex");
+  await query(
+    `INSERT INTO mailbox_avatars (mailbox_id, content_type, bytes, etag, updated_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (mailbox_id) DO UPDATE
+        SET content_type = EXCLUDED.content_type,
+            bytes = EXCLUDED.bytes,
+            etag = EXCLUDED.etag,
+            updated_at = NOW()`,
+    [mailboxId, contentType, bytes, etag],
+  );
+  return etag;
+}
+
+export async function loadAvatar(mailboxId: string): Promise<StoredAvatar | null> {
+  const row = await queryOne<{ content_type: string; bytes: Buffer; etag: string }>(
+    `SELECT content_type, bytes, etag FROM mailbox_avatars WHERE mailbox_id = $1`,
+    [mailboxId],
+  );
+  if (!row) return null;
+  return { contentType: row.content_type, bytes: row.bytes, etag: row.etag };
+}
+
+/** Looks up an avatar by address, for showing a sender in the message list. */
+export async function loadAvatarByAddress(address: string): Promise<StoredAvatar | null> {
+  const row = await queryOne<{ content_type: string; bytes: Buffer; etag: string }>(
+    `SELECT a.content_type, a.bytes, a.etag
+       FROM mailbox_avatars a JOIN mailboxes m ON m.id = a.mailbox_id
+      WHERE lower(m.email_address) = lower($1)`,
+    [address],
+  );
+  if (!row) return null;
+  return { contentType: row.content_type, bytes: row.bytes, etag: row.etag };
+}
+
+export async function deleteAvatar(mailboxId: string): Promise<boolean> {
+  const rows = await query<{ mailbox_id: string }>(
+    `DELETE FROM mailbox_avatars WHERE mailbox_id = $1 RETURNING mailbox_id`,
+    [mailboxId],
+  );
+  return rows.length === 1;
 }
 
 // ------------------------------------------------------------- audit log
