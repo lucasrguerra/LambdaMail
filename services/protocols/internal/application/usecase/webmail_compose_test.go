@@ -102,9 +102,20 @@ func TestBccNeverAppearsInTheHeaders(t *testing.T) {
 
 	payload := string(buildMimeMessage(input, recipients, "mail.example.test"))
 	headers, _, _ := strings.Cut(payload, "\r\n\r\n")
-	if strings.Contains(strings.ToLower(headers), "bcc") ||
-		strings.Contains(headers, "secret@example.test") {
-		t.Errorf("bcc leaked into the headers:\n%s", headers)
+
+	// The field, not the letters. Searching the whole block for "bcc" matched
+	// the random Message-ID whenever its UUID happened to contain that run of
+	// characters - <1bcc5e82-...> is a real example - so this failed a few
+	// times in a thousand on changes that had nothing to do with it.
+	for _, line := range strings.Split(headers, "\r\n") {
+		name, _, found := strings.Cut(line, ":")
+		if found && strings.EqualFold(strings.TrimSpace(name), "bcc") {
+			t.Errorf("a Bcc header was emitted:\n%s", headers)
+		}
+	}
+	// The address itself must not appear anywhere, under any field.
+	if strings.Contains(headers, "secret@example.test") {
+		t.Errorf("the blind copy address leaked into the headers:\n%s", headers)
 	}
 }
 
