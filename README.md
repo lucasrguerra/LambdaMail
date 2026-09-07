@@ -24,6 +24,7 @@ paid tiers and no artificial limits on domains or mailboxes.
 | **Delivery** | Durable outbound queue in Postgres with the retry ladder and RFC 3464 bounces; smarthost fallback for hosts with port 25 blocked |
 | **DNS** | Cloudflare reconciliation of the expected records for every active domain, idempotent, with per-record verification against public resolvers |
 | **Filing** | Sieve rules built in the UI, custom folders, and an RFC 5230 vacation responder that replies in thread and once per sender per week |
+| **Identity** | Per-user profile photos with a circular crop editor, shown inside the webmail; BIMI logo hosting and validation for the mark external clients render |
 | **Web** | Webmail at `/user/*` and an admin console at `/admin/*`, isolated by session audience, with TOTP two-factor, recovery codes, app passwords, and English, Portuguese and Spanish |
 | **Console** | Server-side paging and filtering, user editing (role, quota, language, password, second factor), per-user aliases, and a diagnostics page at `/admin/tests` |
 
@@ -183,6 +184,32 @@ reads as a certificate problem and is usually a permissions problem.
 `/admin/security` names the issuer and says outright when the certificate is
 self-signed, which is the fastest way to tell the two apart.
 
+### Profile photos and BIMI
+
+These are two different things, and the difference is the whole story.
+
+A **profile photo** is per user and is shown inside LambdaMail. No external
+mail client reads it, and no protocol exists that would let one: the avatar
+Gmail or Outlook shows beside a message comes from the *recipient's* own
+contacts, or from the sender's Google or Microsoft account. A self-hosted
+server cannot put an image there.
+
+**BIMI** is what external clients do read, and it is per domain — one mark for
+everyone who sends from it. Publishing one needs:
+
+- DMARC at `p=quarantine` or `p=reject`, which this server already sets;
+- a logo in SVG Tiny Portable/Secure — square viewBox, one `<title>`, nothing
+  active or external. `/admin/domains` validates an upload against every rule
+  at once and names the ones it fails, because a receiver that rejects a mark
+  simply shows nothing;
+- a **Verified Mark Certificate** for Gmail and Outlook to render it. It is
+  issued against a registered trademark, costs on the order of US$1000 a year,
+  and without it the record is still valid — some clients use it, those two do
+  not.
+
+The logo is served from `https://<mail host>/.well-known/bimi/default.svg` and
+the record is published with the rest of the zone.
+
 ### DANE
 
 Off by default, and worth understanding before turning on: a TLSA record that
@@ -228,7 +255,7 @@ Stated plainly, because a mail server that half works loses mail:
 
 - **Read-only console panels.** The guided domain onboarding checklist reports
   on state rather than driving it.
-- **Not implemented.** JMAP, BIMI, CalDAV/CardDAV, multi-node. Backups are
+- **Not implemented.** JMAP, CalDAV/CardDAV, multi-node. Backups are
   documented but not automated.
 - **DANE** is off by default. See [DANE](#dane) for turning it on; under
   `TLS_MODE=traefik` it stays off deliberately, because the proxy's key changes

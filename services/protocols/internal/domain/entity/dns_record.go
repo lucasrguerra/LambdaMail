@@ -35,6 +35,15 @@ type DnsRecordSpec struct {
 	// this domain. Without it every message the relay forwards fails SPF
 	// (PLAN.md section 10.4).
 	RelaySpfInclude string
+	// BimiLogoURL is where the published mark is served from. Empty when the
+	// domain has no logo, and then no BIMI record is published at all: an
+	// advertised record pointing at nothing is worse than none, because a
+	// receiver stops looking once it finds one.
+	BimiLogoURL string
+	// BimiVmcURL is the Verified Mark Certificate. Gmail and Outlook render
+	// the logo only when the record carries one; without it the record is
+	// still valid and other clients may use it.
+	BimiVmcURL string
 }
 
 // BuildDnsRecordSpecs generates the DNS records of PLAN.md section 7: the 13
@@ -193,6 +202,21 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 			TTL:     1, // Auto
 			Proxied: false,
 			Comment: "LambdaMail Mail Host A Record",
+		})
+	}
+
+	// BIMI, published only when there is a logo to point at.
+	if spec.BimiLogoURL != "" {
+		value := fmt.Sprintf("v=BIMI1; l=%s;", spec.BimiLogoURL)
+		if spec.BimiVmcURL != "" {
+			value = fmt.Sprintf("v=BIMI1; l=%s; a=%s;", spec.BimiLogoURL, spec.BimiVmcURL)
+		}
+		records = append(records, DnsRecord{
+			Type:    "TXT",
+			Name:    fmt.Sprintf("default._bimi.%s", domainName),
+			Value:   value,
+			TTL:     1,
+			Comment: "LambdaMail BIMI Record",
 		})
 	}
 

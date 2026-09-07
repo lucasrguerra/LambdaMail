@@ -113,7 +113,16 @@
     "passwordResetWarning": "Cierra todas las sesiones de este usuario, incluida una abierta ahora.",
     "removeTotp": "Quitar segundo factor",
     "totpRemoved": "Segundo factor eliminado, con sus codigos de recuperacion.",
-    "tlsaDigest": "Digest para el registro TLSA (DANE 3 1 1)"
+    "tlsaDigest": "Digest para el registro TLSA (DANE 3 1 1)",
+    "bimiTitle": "BIMI de {domain}",
+    "bimiExplainer": "BIMI es el unico mecanismo que muestra una imagen junto a su correo en clientes externos. Es por dominio, no por usuario. Gmail y Outlook solo lo dibujan cuando el registro apunta a un VMC.",
+    "bimiConfigured": "Logotipo publicado",
+    "bimiNotConfigured": "Sin logotipo",
+    "bimiNoVmc": "Sin VMC: Gmail y Outlook no mostraran este logotipo.",
+    "bimiSvg": "Logotipo (SVG Tiny PS)",
+    "bimiVmc": "URL del VMC (opcional)",
+    "bimiRejected": "El logotipo no cumple SVG Tiny Portable/Secure:",
+    "bimiSaved": "Logotipo guardado."
   },
   "auth": {
     "adminLoginTitle": "Consola de administración",
