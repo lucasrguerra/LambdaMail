@@ -305,6 +305,13 @@ services:
     pull_policy: always
     restart: *restart
     logging: *default-logging
+    # Declared so the proxy can discover the port on its own. Without it and
+    # without a port pinned on the domain, Coolify generates a Traefik service
+    # pointing at port 80, where nothing listens: every request ends in a 502
+    # while the container is perfectly healthy. Rebuilding the app on a new
+    # server is exactly when that pinning gets lost.
+    expose:
+      - "3000"
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
