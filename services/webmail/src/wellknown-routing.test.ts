@@ -32,3 +32,30 @@ describe("the MTA-STS policy senders fetch", () => {
     expect(config).not.toMatch(/redirects\(\)/);
   });
 });
+
+/**
+ * Everything the protocols service owns has to be named twice: once where the
+ * route is registered, and once here where the proxy decides which upstream a
+ * request goes to. Adding it in only one place is silent - an admin route
+ * lands on the auth service and comes back "API endpoint not found", and a
+ * well-known document comes back as this app's own 404 page.
+ */
+describe("the routes the protocols service owns", () => {
+  const proxy = readFileSync(
+    resolve(process.cwd(), "src/app/api/v1/[...path]/route.ts"),
+    "utf8",
+  );
+
+  // Each of these is served by protocols because that process holds something
+  // the auth service does not.
+  it.each(["dkim", "tls", "dns", "bimi"])("routes /admin/%s to protocols", (area) => {
+    expect(proxy).toMatch(new RegExp(`PROTOCOLS_ADMIN_AREAS[\\s\\S]{0,120}"${area}"`));
+  });
+
+  // Fetched by receiving mail providers evaluating a message. They hold no
+  // session, so this one has to be reachable without any.
+  it("routes the BIMI logo to the service that stores it", () => {
+    expect(config).toContain("/.well-known/bimi/default.svg");
+    expect(config).toMatch(/bimi\/default\.svg[\s\S]{0,200}PROTOCOLS_SERVICE_URL/);
+  });
+});

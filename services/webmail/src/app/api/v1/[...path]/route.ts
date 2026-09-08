@@ -28,7 +28,7 @@ const PROTOCOLS_SERVICE_URL = process.env.PROTOCOLS_SERVICE_URL ?? "http://proto
  * a session problem, and the reason to keep this list beside the services it
  * names.
  */
-const PROTOCOLS_ADMIN_AREAS = new Set(["dkim", "tls", "dns"]);
+const PROTOCOLS_ADMIN_AREAS = new Set(["dkim", "tls", "dns", "bimi"]);
 
 function upstreamFor(path: string[]): string {
   if (path[0] === "mail") return PROTOCOLS_SERVICE_URL;

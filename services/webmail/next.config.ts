@@ -31,6 +31,12 @@ const nextConfig: NextConfig = {
         destination: `${PROTOCOLS_SERVICE_URL}/.well-known/mta-sts.txt`,
       },
       {
+        // Fetched by receiving mail providers evaluating a message, which
+        // hold no session and never will.
+        source: "/.well-known/bimi/default.svg",
+        destination: `${PROTOCOLS_SERVICE_URL}/.well-known/bimi/default.svg`,
+      },
+      {
         source: "/.well-known/security.txt",
         destination: `${PROTOCOLS_SERVICE_URL}/.well-known/security.txt`,
       },
