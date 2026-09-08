@@ -78,6 +78,14 @@ export default function AdminDomainsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [reconciling, setReconciling] = useState(false);
+
+  // The BIMI mark for the selected domain: the one thing an external mail
+  // client will ever render for this sender.
+  const [bimi, setBimi] = useState<{ configured: boolean; vmc_url?: string; bytes?: number } | null>(null);
+  const [bimiSvg, setBimiSvg] = useState("");
+  const [bimiVmc, setBimiVmc] = useState("");
+  const [bimiBusy, setBimiBusy] = useState(false);
+  const [bimiProblems, setBimiProblems] = useState<string[]>([]);
   const [verification, setVerification] = useState<DnsVerification | null>(null);
   // What the last reconciliation actually did, so the panel can say it rather
   // than leaving the operator to infer it from the verification that follows.
@@ -118,6 +126,73 @@ export default function AdminDomainsPage() {
   // Asks the protocols service to resolve every expected record and report
   // each one. It used to post to the auth service, which has no resolver and
   // could only re-read the status already in the database.
+  // Reloaded whenever the selected domain changes: the mark belongs to the
+  // domain, not to the console.
+  useEffect(() => {
+    if (!selected) {
+      setBimi(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/v1/admin/bimi?domain=${encodeURIComponent(selected.name)}`);
+        const data = res.ok ? await res.json() : { configured: false };
+        if (cancelled) return;
+        setBimi(data);
+        setBimiVmc(data.vmc_url ?? "");
+        setBimiSvg("");
+        setBimiProblems([]);
+      } catch {
+        if (!cancelled) setBimi({ configured: false });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.name]);
+
+  const saveBimi = async () => {
+    if (!selected || !bimiSvg.trim()) return;
+    setBimiBusy(true);
+    setBimiProblems([]);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/admin/bimi?domain=${encodeURIComponent(selected.name)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ svg: bimiSvg, vmc_url: bimiVmc.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Every rule that failed, not the first: a receiver that rejects the
+        // mark shows nothing at all, so one round trip per rule is the worst
+        // possible way to learn this format.
+        setBimiProblems(data.violations ?? [data.message ?? t("errors.serverError")]);
+        return;
+      }
+      setBimi({ configured: true, vmc_url: bimiVmc.trim(), bytes: bimiSvg.length });
+      setBimiSvg("");
+      setNotice(t("admin.bimiSaved"));
+    } catch {
+      setError(t("errors.serverError"));
+    } finally {
+      setBimiBusy(false);
+    }
+  };
+
+  const removeBimi = async () => {
+    if (!selected) return;
+    setBimiBusy(true);
+    try {
+      await fetch(`/api/v1/admin/bimi?domain=${encodeURIComponent(selected.name)}`, { method: "DELETE" });
+      setBimi({ configured: false });
+      setBimiVmc("");
+    } finally {
+      setBimiBusy(false);
+    }
+  };
+
   const handleReconcile = async () => {
     if (!selected) return;
     setReconciling(true);
@@ -443,6 +518,70 @@ export default function AdminDomainsPage() {
               <span>{onboarding ? t("common.loading") : t("common.add")}</span>
             </Button>
           </form>
+        </section>
+      )}
+
+      {/* BIMI: the only mark an external mail client ever renders for this
+          sender, and the reason a profile photo does not travel. */}
+      {activeTab === "domains" && selected && (
+        <section className={panel}>
+          <h2 className="text-[17px] font-medium leading-tight text-slate-100">
+            {t("admin.bimiTitle", { domain: selected.name })}
+          </h2>
+          <p className="text-[12.5px] leading-relaxed text-slate-400">{t("admin.bimiExplainer")}</p>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Badge variant={bimi?.configured ? "success" : "neutral"}>
+              {bimi?.configured ? t("admin.bimiConfigured") : t("admin.bimiNotConfigured")}
+            </Badge>
+            {bimi?.configured && !bimi.vmc_url && (
+              <span className="text-[11.5px] leading-relaxed text-amber-400">{t("admin.bimiNoVmc")}</span>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="bimi-svg" className={fieldLabel}>{t("admin.bimiSvg")}</label>
+            <textarea
+              id="bimi-svg"
+              value={bimiSvg}
+              onChange={(e) => setBimiSvg(e.target.value)}
+              rows={7}
+              spellCheck={false}
+              className={`${input} font-mono text-[12px]`}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="bimi-vmc" className={fieldLabel}>{t("admin.bimiVmc")}</label>
+            <input
+              id="bimi-vmc"
+              type="url"
+              value={bimiVmc}
+              onChange={(e) => setBimiVmc(e.target.value)}
+              placeholder="https://.../vmc.pem"
+              className={input}
+            />
+          </div>
+
+          {bimiProblems.length > 0 && (
+            <div className="flex flex-col gap-1 rounded-xl bg-rose-900/50 px-3.5 py-3 shadow-edge">
+              <span className="text-[12.5px] text-rose-100">{t("admin.bimiRejected")}</span>
+              {bimiProblems.map((p) => (
+                <span key={p} className="font-mono text-[11.5px] leading-relaxed text-rose-200">{p}</span>
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" size="sm" onClick={() => void saveBimi()} disabled={bimiBusy || !bimiSvg.trim()}>
+              {bimiBusy ? t("common.loading") : t("common.save")}
+            </Button>
+            {bimi?.configured && (
+              <Button variant="ghost" size="sm" onClick={() => void removeBimi()} disabled={bimiBusy}>
+                {t("common.delete")}
+              </Button>
+            )}
+          </div>
         </section>
       )}
 

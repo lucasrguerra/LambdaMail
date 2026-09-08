@@ -113,7 +113,16 @@
     "passwordResetWarning": "Signs out every session this user holds, including one open right now.",
     "removeTotp": "Remove second factor",
     "totpRemoved": "Second factor removed, with its recovery codes.",
-    "tlsaDigest": "Digest for the TLSA record (DANE 3 1 1)"
+    "tlsaDigest": "Digest for the TLSA record (DANE 3 1 1)",
+    "bimiTitle": "BIMI for {domain}",
+    "bimiExplainer": "BIMI is the only mechanism that shows an image beside your mail in external clients. It is per domain, not per user. Gmail and Outlook render it only when the record points at a VMC.",
+    "bimiConfigured": "Logo published",
+    "bimiNotConfigured": "No logo",
+    "bimiNoVmc": "No VMC: Gmail and Outlook will not show this logo.",
+    "bimiSvg": "Logo (SVG Tiny PS)",
+    "bimiVmc": "VMC URL (optional)",
+    "bimiRejected": "The logo does not meet SVG Tiny Portable/Secure:",
+    "bimiSaved": "Logo saved."
   },
   "auth": {
     "adminLoginTitle": "Admin console",
@@ -428,5 +437,15 @@
     "user": "User",
     "domainAdmin": "Domain admin",
     "superAdmin": "Super admin"
+  },
+  "avatar": {
+    "title": "Profile photo",
+    "explainer": "This photo appears inside LambdaMail. External services like Gmail and Outlook do not read it: for those, see BIMI on the domains page.",
+    "none": "No photo",
+    "choose": "Choose a photo",
+    "replace": "Replace photo",
+    "zoom": "Zoom",
+    "dragToPosition": "Drag to position",
+    "notAnImage": "That file could not be read as an image."
   }
 }
