@@ -2,7 +2,7 @@
  * Reading and answering address lists.
  *
  * The compose field used to split on every comma, which cuts a display name
- * like `"Silva, João" <joao@x.test>` in half and sends to two broken
+ * like `"Silva, Joao" <joao@x.test>` in half and sends to two broken
  * addresses. Reply-all had no home at all: the composer took one `replyTo`
  * and nothing else, so answering a thread meant retyping everyone on it.
  */

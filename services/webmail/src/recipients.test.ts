@@ -17,10 +17,10 @@ describe("parseAddressList", () => {
   });
 
   it("does not cut a quoted name that contains a comma", () => {
-    const list = parseAddressList('"Silva, João" <joao@x.test>, ana@x.test');
+    const list = parseAddressList('"Silva, Joao" <joao@x.test>, ana@x.test');
     expect(list).toHaveLength(2);
     expect(list[0].address).toBe("joao@x.test");
-    expect(list[0].label).toBe("Silva, João");
+    expect(list[0].label).toBe("Silva, Joao");
     expect(list[0].valid).toBe(true);
   });
 
