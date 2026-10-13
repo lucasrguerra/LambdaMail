@@ -1,6 +1,6 @@
 module lambdamail/protocols
 
-go 1.25.0
+go 1.26.0
 
 require (
 	blitiri.com.ar/go/spf v1.5.1
@@ -16,7 +16,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/miekg/dns v1.1.72
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.57.0
 )
 
 require (
@@ -27,10 +27,10 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
-	golang.org/x/mod v0.40.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 )
