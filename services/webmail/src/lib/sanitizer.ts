@@ -53,7 +53,7 @@ export function sanitizeEmailHtml(rawHtml: string): string {
     ],
     ALLOWED_ATTR: [
       "align", "alt", "bgcolor", "border", "cellpadding", "cellspacing", "cite",
-      "class", "color", "colspan", "dir", "height", "href", "lang", "rowspan",
+      "background", "class", "color", "colspan", "dir", "height", "href", "lang", "rowspan",
       "src", "style", "title", "width", "target", "rel", "data-blocked-src",
     ],
     // style, link, meta and base are gone: a stylesheet in a message can cover
@@ -67,24 +67,44 @@ export function sanitizeEmailHtml(rawHtml: string): string {
     // message's own inline parts, and rejecting them stripped the src from
     // every embedded picture. image/svg+xml is deliberately absent: an SVG is
     // a document that carries script.
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|cid|tel):|data:image\/(?:png|gif|jpe?g|webp|bmp|x-icon|vnd\.microsoft\.icon);)/i,
+    //
+    // The last two alternatives are DOMPurify's own default for values that are
+    // not a URL at all ("600", "50%", "center", "#fff"). A custom pattern
+    // replaces that default, and without them every attribute whose value is
+    // not a link - width, height, colspan, align, bgcolor, cellpadding - was
+    // stripped, which is what flattened table layouts. A value with an
+    // unlisted scheme (javascript:, vbscript:, data:text/html) matches neither:
+    // the scheme name has to be followed by something other than a colon.
+    ALLOWED_URI_REGEXP:
+      /^(?:(?:https?|mailto|cid|tel):|data:image\/(?:png|gif|jpe?g|webp|bmp|x-icon|vnd\.microsoft\.icon);|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
 }
 
+/** Marks a CSS url() the browser cannot fetch, and that unblocking can undo. */
+const BLOCKED_SCHEME = "lm-blocked-";
+
 /**
- * Replaces remote image sources with data-blocked-src so a tracking pixel
- * cannot fire before the reader asks for images.
+ * Holds remote images back so a tracking pixel cannot fire before the reader
+ * asks for images.
+ *
+ * Every rewrite is reversible. Backgrounds used to be deleted outright, so
+ * choosing "show images" restored the <img> tags and never the banner behind
+ * them - the part of a marketing message that carries its look.
  */
 export function blockRemoteImages(html: string): string {
   if (!html) return "";
   return html
     .replace(/(<img\b[^>]*?\b)src\s*=\s*("|')(https?:[^"']*)\2/gi, "$1data-blocked-src=$2$3$2")
-    .replace(/(<[^>]+)background\s*=\s*("|')https?:[^"']*\2/gi, "$1")
-    .replace(/url\(\s*['"]?https?:[^)]*\)/gi, "none");
+    .replace(/(<[^>]+?\s)background\s*=\s*("|')(https?:[^"']*)\2/gi, "$1data-blocked-background=$2$3$2")
+    // An unknown scheme is never fetched, and is not a valid image either.
+    .replace(/url\(\s*(['"]?)(https?:)/gi, `url($1${BLOCKED_SCHEME}$2`);
 }
 
 /** Restores the blocked sources once the reader opts in. */
 export function unblockRemoteImages(html: string): string {
   if (!html) return "";
-  return html.replace(/(<img[^>]+)data-blocked-src\s*=\s*("|')([^"']+)\2/gi, "$1src=$2$3$2");
+  return html
+    .replace(/(<img[^>]+)data-blocked-src\s*=\s*("|')([^"']+)\2/gi, "$1src=$2$3$2")
+    .replace(/(<[^>]+?\s)data-blocked-background\s*=\s*("|')([^"']+)\2/gi, "$1background=$2$3$2")
+    .replace(new RegExp(`${BLOCKED_SCHEME}(https?:)`, "gi"), "$1");
 }

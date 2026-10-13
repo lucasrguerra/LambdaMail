@@ -56,7 +56,7 @@ describe("what the autosave actually stores", () => {
 
   it("does not save a draft that has no content anywhere", () => {
     const compose = code(COMPOSE);
-    expect(compose).toMatch(/if \(!to && !subject && !body/);
+    expect(compose).toMatch(/if \(to\.length === 0 && !subject && !body/);
   });
 });
 

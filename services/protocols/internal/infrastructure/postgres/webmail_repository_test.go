@@ -209,3 +209,44 @@ func TestDeleteMovesToTrashThenExpungesFromTrash(t *testing.T) {
 		t.Errorf("the message survived being emptied from Trash: %d rows", len(trashRows))
 	}
 }
+
+// Marking important round-trips through the list, can be undone, and cannot
+// reach a message the mailbox does not own.
+func TestMarkFlaggedRoundTripsAndStaysInsideTheMailbox(t *testing.T) {
+	pool := testPool(t)
+	repo := NewWebmailRepository(pool)
+	mailboxID := seedMailbox(t, pool)
+	ctx := context.Background()
+
+	uid := deliver(t, pool, mailboxID, "INBOX", "important one", false)
+
+	flaggedNow := func() bool {
+		msgs, err := repo.ListMessages(ctx, mailboxID, "inbox", "", 50, 0)
+		if err != nil || len(msgs) == 0 {
+			t.Fatalf("list: %v (%d messages)", err, len(msgs))
+		}
+		return msgs[0].Flagged
+	}
+
+	if err := repo.MarkFlagged(ctx, mailboxID, "inbox", uid, true); err != nil {
+		t.Fatalf("flag: %v", err)
+	}
+	if !flaggedNow() {
+		t.Error("message is not flagged after MarkFlagged(true)")
+	}
+	// Flagging twice is not an error and does not duplicate the flag.
+	if err := repo.MarkFlagged(ctx, mailboxID, "inbox", uid, true); err != nil {
+		t.Errorf("flagging twice: %v", err)
+	}
+	if err := repo.MarkFlagged(ctx, mailboxID, "inbox", uid, false); err != nil {
+		t.Fatalf("unflag: %v", err)
+	}
+	if flaggedNow() {
+		t.Error("message is still flagged after MarkFlagged(false)")
+	}
+
+	other := seedMailbox(t, pool)
+	if err := repo.MarkFlagged(ctx, other, "inbox", uid, true); err != ErrMessageNotFound {
+		t.Errorf("another mailbox flagging this UID got %v, want ErrMessageNotFound", err)
+	}
+}

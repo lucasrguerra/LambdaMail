@@ -16,17 +16,17 @@ import {
   X,
   Sparkles,
   CheckCircle2,
+  Flag,
 } from "lucide-react";
 import { useTranslations } from "../../../../i18n/provider";
 import { Button } from "../../../../components/ui/Button";
 import { signatureToHtml } from "../../../../lib/signature";
+import { RecipientInput } from "../../../../components/RecipientInput";
+import { parseAddress, parseAddressList, prefixSubject } from "../../../../lib/recipients";
 
-/** Splits a comma or semicolon separated field, dropping empty entries. */
-function splitAddresses(value: string): string[] {
-  return value
-    .split(/[,;]/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+/** Entries from a query-string list, which may be several addresses. */
+function entriesFrom(value: string | undefined): string[] {
+  return value ? parseAddressList(value).map((p) => p.entry) : [];
 }
 
 interface AttachedFile {
@@ -39,16 +39,30 @@ interface AttachedFile {
 export default function ComposePage({
   searchParams,
 }: {
-  searchParams?: Promise<{ replyTo?: string; subject?: string; inReplyTo?: string; draft?: string }>;
+  searchParams?: Promise<{
+    replyTo?: string;
+    cc?: string;
+    subject?: string;
+    inReplyTo?: string;
+    mode?: string;
+    draft?: string;
+  }>;
 }) {
   const t = useTranslations();
   const params = searchParams ? use(searchParams) : {};
 
-  const [to, setTo] = useState(params?.replyTo || "");
-  const [cc, setCc] = useState("");
-  const [bcc, setBcc] = useState("");
-  const [showCcBcc, setShowCcBcc] = useState(false);
-  const [subject, setSubject] = useState(params?.subject ? `Re: ${params.subject.replace(/^(Re:\s*)+/i, "")}` : "");
+  // Recipients are lists of entries, not one string to be split later: a
+  // reply-all arrives with several people already in To and Cc.
+  const [to, setTo] = useState<string[]>(() => entriesFrom(params?.replyTo));
+  const [cc, setCc] = useState<string[]>(() => entriesFrom(params?.cc));
+  const [bcc, setBcc] = useState<string[]>([]);
+  const [showCcBcc, setShowCcBcc] = useState(() => entriesFrom(params?.cc).length > 0);
+  const [subject, setSubject] = useState(
+    params?.subject ? prefixSubject(params.subject, params.mode === "forward" ? "forward" : "reply") : "",
+  );
+  // The Message-ID being answered, so the reply threads under it.
+  const [inReplyTo, setInReplyTo] = useState(params?.mode === "forward" ? "" : params?.inReplyTo || "");
+  const [important, setImportant] = useState(false);
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
   const [sending, setSending] = useState(false);
   const [undoSeconds, setUndoSeconds] = useState<number | null>(null);
@@ -101,8 +115,10 @@ export default function ComposePage({
         if (cancelled) return;
 
         draftUidRef.current = uid;
-        setTo((message.to ?? []).join(", "));
-        setCc((message.cc ?? []).join(", "));
+        setTo(message.to ?? []);
+        setCc(message.cc ?? []);
+        setImportant(Boolean(message.important));
+        setInReplyTo(message.in_reply_to ?? "");
         if ((message.cc ?? []).length > 0) setShowCcBcc(true);
         setSubject(message.subject ?? "");
         const html = message.html || message.text || "";
@@ -123,18 +139,20 @@ export default function ComposePage({
   // closing the tab lost the message while the screen had just said otherwise.
   const saveDraft = useCallback(async () => {
     const html = editorRef.current?.innerHTML ?? body;
-    if (!to && !subject && !body.trim() && !html.trim()) return;
+    if (to.length === 0 && !subject && !body.trim() && !html.trim()) return;
     setDraftStatus(t("mail.draftSaving"));
     try {
       const res = await fetch("/api/v1/mail/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: splitAddresses(to),
-          cc: splitAddresses(cc),
-          bcc: splitAddresses(bcc),
+          to,
+          cc,
+          bcc,
           subject,
           html,
+          important,
+          in_reply_to: inReplyTo,
           replace_uid: draftUidRef.current,
         }),
       });
@@ -146,7 +164,7 @@ export default function ComposePage({
     } catch {
       setDraftStatus(t("mail.draftSaveFailed"));
     }
-  }, [to, cc, bcc, subject, body, t]);
+  }, [to, cc, bcc, subject, body, important, inReplyTo, t]);
 
   // Debounced so a draft is written after a pause in typing rather than on
   // every keystroke. Skipped once the message is on its way out.
@@ -155,10 +173,10 @@ export default function ComposePage({
     // The body alone is enough: a message typed before its recipient is still
     // worth keeping, and requiring an address here is half of why drafts were
     // being stored with nothing in them.
-    if (!to && !subject && !body.trim()) return;
+    if (to.length === 0 && !subject && !body.trim()) return;
     const timer = setTimeout(() => void saveDraft(), 2500);
     return () => clearTimeout(timer);
-  }, [to, subject, cc, bcc, body, sending, saveDraft]);
+  }, [to, subject, cc, bcc, body, important, sending, saveDraft]);
 
   const executeFormat = (command: string, value: string | undefined = undefined) => {
     document.execCommand(command, false, value);
@@ -183,8 +201,24 @@ export default function ComposePage({
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
+  // Anything in a recipient field that is not an address. These stay on screen
+  // as red chips; sending with one would queue mail to a destination that
+  // cannot exist and report success.
+  const invalidRecipients = [...to, ...cc, ...bcc].filter((entry) => !parseAddress(entry).valid);
+  const hasRecipient = to.length + cc.length + bcc.length > 0;
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!hasRecipient) {
+      setSendError(t("mail.noRecipients"));
+      return;
+    }
+    if (invalidRecipients.length > 0) {
+      setSendError(t("mail.fixRecipients"));
+      setShowCcBcc(true);
+      return;
+    }
+    setSendError(null);
     setSending(true);
     setUndoSeconds(10);
 
@@ -208,11 +242,13 @@ export default function ComposePage({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: splitAddresses(to),
-          cc: splitAddresses(cc),
-          bcc: splitAddresses(bcc),
+          to,
+          cc,
+          bcc,
           subject,
           html: htmlBody,
+          important,
+          in_reply_to: inReplyTo,
           // The draft this message grew out of, so the server can discard it.
           // Without this the draft outlived the message it became and sat in
           // Drafts as a duplicate of mail already sent.
@@ -261,6 +297,19 @@ export default function ComposePage({
             )}
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setImportant((v) => !v)}
+              aria-pressed={important}
+              disabled={sending}
+              title={t("mail.highImportanceHint")}
+              className={`inline-flex h-10 items-center gap-2 rounded-xl px-3.5 text-sm shadow-edge transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
+                important ? "bg-rose-900/70 text-rose-100" : "bg-dark-card text-slate-200 hover:bg-white/[0.07]"
+              }`}
+            >
+              <Flag className="h-4 w-4" fill={important ? "currentColor" : "none"} />
+              <span>{t("mail.highImportance")}</span>
+            </button>
             <Link href="/user/mail/inbox">
               <Button variant="secondary" size="md">
                 {t("mail.discard")}
@@ -304,15 +353,13 @@ export default function ComposePage({
             <label htmlFor="compose-to" className={fieldLabel}>
               {t("ui.toRecipients")}
             </label>
-            <input
+            <RecipientInput
               id="compose-to"
-              type="text"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              onChange={setTo}
               placeholder="recipient@example.com"
-              required
               disabled={sending}
-              className={bareInput}
+              invalid={to.some((e) => !parseAddress(e).valid)}
             />
             <button
               type="button"
@@ -329,28 +376,26 @@ export default function ComposePage({
                 <label htmlFor="compose-cc" className={fieldLabel}>
                   {t("mail.ccLabel")}
                 </label>
-                <input
+                <RecipientInput
                   id="compose-cc"
-                  type="text"
                   value={cc}
-                  onChange={(e) => setCc(e.target.value)}
+                  onChange={setCc}
                   placeholder="cc@domain.com"
                   disabled={sending}
-                  className={bareInput}
+                  invalid={cc.some((e) => !parseAddress(e).valid)}
                 />
               </div>
               <div className={fieldRow}>
                 <label htmlFor="compose-bcc" className={fieldLabel}>
                   {t("mail.bccLabel")}
                 </label>
-                <input
+                <RecipientInput
                   id="compose-bcc"
-                  type="text"
                   value={bcc}
-                  onChange={(e) => setBcc(e.target.value)}
+                  onChange={setBcc}
                   placeholder="bcc@domain.com"
                   disabled={sending}
-                  className={bareInput}
+                  invalid={bcc.some((e) => !parseAddress(e).valid)}
                 />
               </div>
             </>

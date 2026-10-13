@@ -169,3 +169,25 @@ func TestExtractAttachment_FindsInlineNamedParts(t *testing.T) {
 		t.Errorf("ExtractAttachment = %q/%q", data, ctype)
 	}
 }
+
+func TestRenderMessage_ReadsPriorityAndMessageID(t *testing.T) {
+	cases := map[string]bool{
+		"Importance: high\r\n":        true,
+		"Importance: High\r\n":        true,
+		"X-Priority: 1 (Highest)\r\n": true,
+		"X-Priority: 2 (High)\r\n":    true,
+		"X-Priority: 3 (Normal)\r\n":  false,
+		"Importance: normal\r\n":      false,
+		"":                            false,
+	}
+	for header, want := range cases {
+		raw := "From: a@b.test\r\nMessage-ID: <m1@b.test>\r\n" + header + "Subject: s\r\n\r\nbody\r\n"
+		got := RenderMessage([]byte(raw), 1)
+		if got.Important != want {
+			t.Errorf("%q: Important = %v, want %v", header, got.Important, want)
+		}
+		if got.MessageID != "<m1@b.test>" {
+			t.Errorf("MessageID = %q", got.MessageID)
+		}
+	}
+}

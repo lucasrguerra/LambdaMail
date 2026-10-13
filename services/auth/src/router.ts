@@ -216,12 +216,12 @@ async function route(req: IncomingMessage, res: ServerResponse, url: string): Pr
     if (url.startsWith("/api/v1/admin/diagnostics/user/") && method === "GET") {
       return adminDiagnosticsUser(res, session!, url.substring("/api/v1/admin/diagnostics/user/".length));
     }
-    if (url === "/api/v1/admin/dashboard" && method === "GET") return adminDashboard(res);
+    if (url === "/api/v1/admin/dashboard" && method === "GET") return adminDashboard(res, session!);
     if (url === "/api/v1/admin/domains" && method === "GET") return adminDomains(res, session!);
     if (url.split("?")[0] === "/api/v1/admin/mailboxes" && method === "GET") return adminMailboxes(req, res, session!);
-    if (url === "/api/v1/admin/dmarc" && method === "GET") return adminDmarc(res);
-    if (url.split("?")[0] === "/api/v1/admin/queue" && method === "GET") return adminQueue(req, res);
-    if (url === "/api/v1/admin/preflight" && method === "GET") return adminPreflight(res);
+    if (url === "/api/v1/admin/dmarc" && method === "GET") return adminDmarc(res, session!);
+    if (url.split("?")[0] === "/api/v1/admin/queue" && method === "GET") return adminQueue(req, res, session!);
+    if (url === "/api/v1/admin/preflight" && method === "GET") return adminPreflight(res, session!);
 
     return sendJson(res, 404, { error: "NOT_FOUND", message: "API endpoint not found" });
   } catch (err) {
@@ -870,8 +870,8 @@ async function adminQueueAction(
   sendJson(res, 200, { ok: true });
 }
 
-async function adminDashboard(res: ServerResponse): Promise<void> {
-  const stats = await repo.dashboardStats();
+async function adminDashboard(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  const stats = await repo.dashboardStats(scopeOf(session));
   sendJson(res, 200, stats);
 }
 
@@ -990,16 +990,16 @@ function scopeOf(session: SessionTokenPayload): repo.AdminScope {
   return { role: session.role, domainId: session.domainId };
 }
 
-async function adminDmarc(res: ServerResponse): Promise<void> {
-  sendJson(res, 200, await repo.dmarcSummary());
+async function adminDmarc(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.dmarcSummary(scopeOf(session)));
 }
 
-async function adminQueue(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function adminQueue(req: IncomingMessage, res: ServerResponse, session: SessionTokenPayload): Promise<void> {
   const url = new URL(req.url || "/", "http://localhost");
   const page = parsePageParams(url);
   const status = (url.searchParams.get("status") || "").toUpperCase();
 
-  const summary = await repo.queueSummary({
+  const summary = await repo.queueSummary(scopeOf(session), {
     search: page.search,
     status: status || null,
     offset: page.offset,
@@ -1014,8 +1014,8 @@ async function adminQueue(req: IncomingMessage, res: ServerResponse): Promise<vo
   });
 }
 
-async function adminPreflight(res: ServerResponse): Promise<void> {
-  sendJson(res, 200, await repo.preflightSummary());
+async function adminPreflight(res: ServerResponse, session: SessionTokenPayload): Promise<void> {
+  sendJson(res, 200, await repo.preflightSummary(scopeOf(session)));
 }
 
 // ------------------------------------------------ user handlers

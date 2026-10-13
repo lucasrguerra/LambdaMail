@@ -348,19 +348,27 @@ export async function setLocale(mailboxId: string, locale: string): Promise<void
 // which meant the console showed a healthy system no matter what the server
 // was actually doing.
 
-export async function dashboardStats(): Promise<Record<string, unknown>> {
+export async function dashboardStats(scope: AdminScope): Promise<Record<string, unknown>> {
+  // Every figure is confined to the caller's domain. They were all global, so
+  // a domain admin saw the whole server's totals - how many domains existed,
+  // how much mail every other tenant received - which is both wrong for them
+  // and a view into tenants they have no business seeing.
+  const dom = scopeClause(scope, "id");
+  const msg = mailboxScope(scope, "mailbox_id");
+  const mbx = scopeClause(scope, "domain_id");
   const row = await queryOne<Record<string, string>>(
     `SELECT
-       (SELECT count(*) FROM email_messages WHERE received_at > NOW() - INTERVAL '24 hours')::text AS inbound_24h,
-       (SELECT count(*) FROM outbound_jobs WHERE created_at > NOW() - INTERVAL '24 hours')::text AS outbound_24h,
-       (SELECT count(*) FROM outbound_jobs WHERE status IN ('QUEUED','DEFERRED','SENDING'))::text AS queue_depth,
-       (SELECT count(*) FROM outbound_jobs WHERE status = 'BOUNCED'
+       (SELECT count(*) FROM email_messages WHERE ${msg.sql} AND received_at > NOW() - INTERVAL '24 hours')::text AS inbound_24h,
+       (SELECT count(*) FROM outbound_jobs WHERE ${msg.sql} AND created_at > NOW() - INTERVAL '24 hours')::text AS outbound_24h,
+       (SELECT count(*) FROM outbound_jobs WHERE ${msg.sql} AND status IN ('QUEUED','DEFERRED','SENDING'))::text AS queue_depth,
+       (SELECT count(*) FROM outbound_jobs WHERE ${msg.sql} AND status = 'BOUNCED'
           AND created_at > NOW() - INTERVAL '24 hours')::text AS bounced_24h,
-       (SELECT count(*) FROM domains WHERE dns_status = 'VERIFIED')::text AS domains_verified,
-       (SELECT count(*) FROM domains)::text AS domains_total,
-       (SELECT count(*) FROM mailboxes WHERE is_active)::text AS mailboxes_active,
-       (SELECT COALESCE(sum(used_bytes),0) FROM mailboxes)::text AS storage_used_bytes,
-       (SELECT COALESCE(sum(quota_bytes),0) FROM mailboxes)::text AS storage_quota_bytes`,
+       (SELECT count(*) FROM domains WHERE ${dom.sql} AND dns_status = 'VERIFIED')::text AS domains_verified,
+       (SELECT count(*) FROM domains WHERE ${dom.sql})::text AS domains_total,
+       (SELECT count(*) FROM mailboxes WHERE ${mbx.sql} AND is_active)::text AS mailboxes_active,
+       (SELECT COALESCE(sum(used_bytes),0) FROM mailboxes WHERE ${mbx.sql})::text AS storage_used_bytes,
+       (SELECT COALESCE(sum(quota_bytes),0) FROM mailboxes WHERE ${mbx.sql})::text AS storage_quota_bytes`,
+    scope.role === "SUPER_ADMIN" ? [] : [scope.domainId],
   );
 
   const num = (k: string) => Number(row?.[k] ?? 0);
@@ -389,6 +397,20 @@ export interface AdminScope {
 function scopeClause(scope: AdminScope, column: string): { sql: string; params: unknown[] } {
   if (scope.role === "SUPER_ADMIN") return { sql: "TRUE", params: [] };
   return { sql: `${column} = $1`, params: [scope.domainId] };
+}
+
+/**
+ * The same confinement for a table that belongs to a mailbox rather than to a
+ * domain: outbound jobs and stored messages carry mailbox_id, and the domain is
+ * reached through it. The parameter is always $1, so a query that uses this
+ * must pass scope.params first.
+ */
+function mailboxScope(scope: AdminScope, column: string): { sql: string; params: unknown[] } {
+  if (scope.role === "SUPER_ADMIN") return { sql: "TRUE", params: [] };
+  return {
+    sql: `${column} IN (SELECT id FROM mailboxes WHERE domain_id = $1)`,
+    params: [scope.domainId],
+  };
 }
 
 export async function listDomains(scope: AdminScope): Promise<unknown[]> {
@@ -466,18 +488,29 @@ export async function listMailboxes(
   return { items, total: Number(totalRow?.count ?? 0) };
 }
 
-export async function dmarcSummary(): Promise<Record<string, unknown>> {
+export async function dmarcSummary(scope: AdminScope): Promise<Record<string, unknown>> {
+  // A report names the domain it is about, either by id or - when the domain
+  // was not recognised at ingestion - only by name, so both are matched.
+  const reports =
+    scope.role === "SUPER_ADMIN"
+      ? "TRUE"
+      : `report_id IN (SELECT r.id FROM dmarc_reports r
+            WHERE r.domain_id = $1
+               OR lower(r.domain) = (SELECT lower(name) FROM domains WHERE id = $1))`;
+  const params = scope.role === "SUPER_ADMIN" ? [] : [scope.domainId];
   const totals = await queryOne<Record<string, string>>(
     `SELECT COALESCE(sum(count),0)::text AS total_messages,
             COALESCE(sum(count) FILTER (WHERE spf_result = 'pass'),0)::text AS spf_pass_count,
             COALESCE(sum(count) FILTER (WHERE dkim_result = 'pass'),0)::text AS dkim_pass_count,
             COALESCE(sum(count) FILTER (WHERE disposition = 'none'),0)::text AS dmarc_pass_count
-       FROM dmarc_report_records`,
+       FROM dmarc_report_records WHERE ${reports}`,
+    params,
   );
   const sources = await query(
     `SELECT source_ip::text AS ip, sum(count)::int AS count,
             max(spf_result) AS spf, max(dkim_result) AS dkim
-       FROM dmarc_report_records GROUP BY source_ip ORDER BY sum(count) DESC LIMIT 20`,
+       FROM dmarc_report_records WHERE ${reports} GROUP BY source_ip ORDER BY sum(count) DESC LIMIT 20`,
+    params,
   );
   return {
     total_messages: Number(totals?.total_messages ?? 0),
@@ -502,16 +535,21 @@ export interface QueueFilter {
  * had backed up could not be inspected past its own head - which is precisely
  * when someone needs to look at it.
  */
-export async function queueSummary(filter: QueueFilter): Promise<Record<string, unknown>> {
+export async function queueSummary(scope: AdminScope, filter: QueueFilter): Promise<Record<string, unknown>> {
   // The totals are of the whole queue, deliberately: they are the summary the
   // page leads with, and filtering them to the current search would make the
   // counts change as somebody types.
+  //
+  // Confined to the caller's domain like everything else here: the queue holds
+  // other tenants' envelope addresses and error text.
+  const scoped = mailboxScope(scope, "mailbox_id");
   const byStatus = await query<{ status: string; count: string }>(
-    `SELECT status, count(*)::text AS count FROM outbound_jobs GROUP BY status`,
+    `SELECT status, count(*)::text AS count FROM outbound_jobs WHERE ${scoped.sql} GROUP BY status`,
+    scoped.params,
   );
 
-  const where: string[] = ["TRUE"];
-  const args: unknown[] = [];
+  const where: string[] = [scoped.sql];
+  const args: unknown[] = [...scoped.params];
 
   if (filter.search) {
     args.push(`%${filter.search}%`);
@@ -548,12 +586,14 @@ export async function queueSummary(filter: QueueFilter): Promise<Record<string, 
   };
 }
 
-export async function preflightSummary(): Promise<Record<string, unknown>> {
+export async function preflightSummary(scope: AdminScope): Promise<Record<string, unknown>> {
   // The authoritative preflight lives in the Go service, which owns the
   // sockets and the resolver. What the console can report on its own is the
   // persisted state, so it reports that and says where the rest comes from.
+  const domainScope = scopeClause(scope, "id");
   const domains = await query<{ name: string; dns_status: string; dane_enabled: boolean }>(
-    `SELECT name, dns_status, dane_enabled FROM domains ORDER BY name`,
+    `SELECT name, dns_status, dane_enabled FROM domains WHERE ${domainScope.sql} ORDER BY name`,
+    domainScope.params,
   );
   // Each check carries a key and its subject rather than a finished English
   // sentence. The console builds the label from these, so a reader with the
@@ -1087,8 +1127,10 @@ export async function serverDiagnosticFacts(scope: AdminScope): Promise<Record<s
     params,
   );
 
+  const queueScope = mailboxScope(scope, "mailbox_id");
   const queue = await query<{ status: string; count: string }>(
-    `SELECT status, count(*)::text AS count FROM outbound_jobs GROUP BY status`,
+    `SELECT status, count(*)::text AS count FROM outbound_jobs WHERE ${queueScope.sql} GROUP BY status`,
+    queueScope.params,
   );
 
   const { sql: mSql, params: mParams } = scopeClause(scope, "m.domain_id");

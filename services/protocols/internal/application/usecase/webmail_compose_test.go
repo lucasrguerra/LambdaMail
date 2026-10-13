@@ -155,6 +155,9 @@ func (s *stubWebmailRepo) GetMessageBlob(context.Context, string, string, uint32
 	return uuid.Nil, nil
 }
 func (s *stubWebmailRepo) MarkSeen(context.Context, string, string, uint32, bool) error { return nil }
+func (s *stubWebmailRepo) MarkFlagged(context.Context, string, string, uint32, bool) error {
+	return nil
+}
 func (s *stubWebmailRepo) Expunge(_ context.Context, _, _ string, uid uint32) error {
 	s.expunged = append(s.expunged, uid)
 	return s.expungeErr
@@ -470,5 +473,45 @@ func TestMoveRejectsAnEmptyTarget(t *testing.T) {
 	}
 	if err := uc.Move(context.Background(), "me@example.test", "inbox", 5, "  "); err == nil {
 		t.Error("an empty target should be refused")
+	}
+}
+
+// High importance is written as both headers clients read, and only on request.
+func TestImportantMessageCarriesPriorityHeaders(t *testing.T) {
+	in := ComposeInput{From: "a@x.test", To: []string{"b@y.test"}, Subject: "s", Text: "t", Important: true}
+	got := string(buildMimeMessage(in, []string{"b@y.test"}, "x.test"))
+	for _, h := range []string{"Importance: high\r\n", "X-Priority: 1\r\n"} {
+		if !strings.Contains(got, h) {
+			t.Errorf("missing %q in\n%s", h, got)
+		}
+	}
+	in.Important = false
+	if got := string(buildMimeMessage(in, []string{"b@y.test"}, "x.test")); strings.Contains(got, "Importance") || strings.Contains(got, "X-Priority") {
+		t.Error("an ordinary message was marked with a priority")
+	}
+}
+
+// A reply threads under the original through In-Reply-To and References.
+func TestReplyCarriesThreadingHeaders(t *testing.T) {
+	in := ComposeInput{From: "a@x.test", To: []string{"b@y.test"}, Subject: "Re: s", Text: "t", InReplyTo: "<orig-1@y.test>"}
+	got := string(buildMimeMessage(in, []string{"b@y.test"}, "x.test"))
+	for _, h := range []string{"In-Reply-To: <orig-1@y.test>\r\n", "References: <orig-1@y.test>\r\n"} {
+		if !strings.Contains(got, h) {
+			t.Errorf("missing %q", h)
+		}
+	}
+}
+
+// The reply id comes from the request and lands in a header, so anything that
+// could start a new header must be dropped, not written.
+func TestInReplyToCannotInjectHeaders(t *testing.T) {
+	for _, bad := range []string{
+		"<a@b>\r\nBcc: evil@x.test", "<a@b>\nX: y", "no-brackets@b", "<a b@c>", "<a@b><c@d>", "", "<>",
+	} {
+		in := ComposeInput{From: "a@x.test", To: []string{"b@y.test"}, Subject: "s", Text: "t", InReplyTo: bad}
+		got := string(buildMimeMessage(in, []string{"b@y.test"}, "x.test"))
+		if strings.Contains(got, "In-Reply-To") || strings.Contains(got, "evil@x.test") {
+			t.Errorf("accepted %q:\n%s", bad, got)
+		}
 	}
 }

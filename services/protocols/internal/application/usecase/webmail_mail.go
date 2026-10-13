@@ -123,6 +123,15 @@ func (uc *WebmailUseCase) SetSeen(ctx context.Context, address, folder string, u
 	return uc.repo.MarkSeen(ctx, id, folder, uid, seen)
 }
 
+// SetFlagged marks a message important, or takes the mark off.
+func (uc *WebmailUseCase) SetFlagged(ctx context.Context, address, folder string, uid uint32, flagged bool) error {
+	id, err := uc.mailboxID(ctx, address)
+	if err != nil {
+		return err
+	}
+	return uc.repo.MarkFlagged(ctx, id, folder, uid, flagged)
+}
+
 // ComposeInput is one message written in the webmail.
 type ComposeInput struct {
 	From string
@@ -145,6 +154,12 @@ type ComposeInput struct {
 	// went out and its draft stayed in Drafts: a duplicate of mail already on
 	// its way, which no screen in the webmail could then delete.
 	DraftUID uint32
+	// Important sends the message with high priority, in the two spellings
+	// mail clients read: Importance (RFC 4021) and the older X-Priority.
+	Important bool
+	// InReplyTo is the Message-ID of the message being answered. It is what
+	// lets the recipient's client thread the reply under the original.
+	InReplyTo string
 }
 
 // ErrNoRecipients rejects a submission with nobody to deliver to, before it
@@ -418,6 +433,13 @@ func buildMimeMessage(input ComposeInput, recipients []string, localHost string)
 	if len(input.Cc) > 0 {
 		b.WriteString("Cc: " + strings.Join(input.Cc, ", ") + "\r\n")
 	}
+	if id := cleanMessageID(input.InReplyTo); id != "" {
+		b.WriteString("In-Reply-To: " + id + "\r\n")
+		b.WriteString("References: " + id + "\r\n")
+	}
+	if input.Important {
+		b.WriteString("Importance: high\r\nX-Priority: 1\r\n")
+	}
 	b.WriteString("Subject: " + encodeHeaderValue(input.Subject) + "\r\n")
 	b.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
 	b.WriteString(fmt.Sprintf("Message-ID: <%s@%s>\r\n", uuid.NewString(), localHost))
@@ -516,4 +538,20 @@ func encodeHeaderValue(value string) string {
 func mimeEncode(value string) string {
 	clean := strings.NewReplacer("\r", " ", "\n", " ").Replace(value)
 	return mime.BEncoding.Encode("utf-8", clean)
+}
+
+// cleanMessageID returns id only when it is a single, well-formed <...>
+// Message-ID. The value comes from the request and is written into a header,
+// so anything with a line break - which would start a new header - or
+// anything that is not an angle-bracketed token is dropped rather than
+// repaired.
+func cleanMessageID(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) < 3 || len(id) > 998 || id[0] != '<' || id[len(id)-1] != '>' {
+		return ""
+	}
+	if strings.ContainsAny(id, "\r\n\x00 \t,;") || strings.Count(id, "<") != 1 || strings.Count(id, ">") != 1 {
+		return ""
+	}
+	return id
 }

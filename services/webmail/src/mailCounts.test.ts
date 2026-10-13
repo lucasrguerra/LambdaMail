@@ -4,6 +4,7 @@ import {
   badgeCount,
   messageCounts,
   filterMessages,
+  applyFlagged,
   listHeaderCount,
   applySeen,
   type FolderSummary,
@@ -80,16 +81,28 @@ describe("the number on a sidebar folder", () => {
 const messages: MessageSummary[] = [
   { uid: 1, seen: false, has_attachments: true },
   { uid: 2, seen: true, has_attachments: false },
-  { uid: 3, seen: false, has_attachments: false },
+  { uid: 3, seen: false, has_attachments: false, flagged: true },
 ];
+
+describe("important messages", () => {
+  it("filters to the flagged ones", () => {
+    expect(filterMessages(messages, "important").map((m) => m.uid)).toEqual([3]);
+  });
+
+  it("sets and clears the flag on one row only", () => {
+    const on = applyFlagged(messages, 1, true);
+    expect(on.map((m) => !!m.flagged)).toEqual([true, false, true]);
+    expect(applyFlagged(on, 1, false).map((m) => !!m.flagged)).toEqual([false, false, true]);
+  });
+});
 
 describe("counting the loaded page", () => {
   it("counts what is on it by unread and by attachment", () => {
-    expect(messageCounts(messages)).toEqual({ loaded: 3, unread: 2, withAttachments: 1 });
+    expect(messageCounts(messages)).toEqual({ loaded: 3, unread: 2, withAttachments: 1, important: 1 });
   });
 
   it("counts an empty page as zeros", () => {
-    expect(messageCounts([])).toEqual({ loaded: 0, unread: 0, withAttachments: 0 });
+    expect(messageCounts([])).toEqual({ loaded: 0, unread: 0, withAttachments: 0, important: 0 });
   });
 });
 

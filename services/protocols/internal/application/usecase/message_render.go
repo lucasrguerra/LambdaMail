@@ -34,6 +34,15 @@ type RenderedMessage struct {
 	Text        string   `json:"text"`
 	HTML        string   `json:"html"`
 	Attachments []string `json:"attachments"`
+	// MessageID is the Message-ID header, so a reply can thread under this
+	// message. Empty when the message has none.
+	MessageID string `json:"message_id"`
+	// InReplyTo is the Message-ID this message answers, so reopening a draft
+	// keeps the reply threaded.
+	InReplyTo string `json:"in_reply_to"`
+	// Important is true when the sender asked for priority: Importance: high,
+	// or X-Priority 1 or 2.
+	Important bool `json:"important"`
 	// InlineImages maps a part's Content-ID - without the angle brackets, the
 	// way the HTML body spells it in src="cid:..." - to a self-contained
 	// data: URI.
@@ -79,6 +88,9 @@ func RenderMessage(raw []byte, uid uint32) RenderedMessage {
 			}
 		}
 	}
+	out.MessageID = strings.TrimSpace(header.Get("Message-Id"))
+	out.InReplyTo = strings.TrimSpace(header.Get("In-Reply-To"))
+	out.Important = isHighPriority(header.Get("Importance"), header.Get("X-Priority"))
 	// A missing Date header parses without error into the zero time, which
 	// would render as the year 0001 in the reader. Left empty, the UI falls
 	// back to the received timestamp it already has.
@@ -213,4 +225,15 @@ func ExtractAttachment(entity *message.Entity, targetName string) ([]byte, strin
 		}
 	}
 	return nil, ""
+}
+
+// isHighPriority reads the two headers clients use to mark urgent mail.
+// X-Priority is "1 (Highest)" or "2 (High)"; anything else, or nothing, is
+// ordinary.
+func isHighPriority(importance, xPriority string) bool {
+	if strings.EqualFold(strings.TrimSpace(importance), "high") {
+		return true
+	}
+	fields := strings.Fields(xPriority)
+	return len(fields) > 0 && (fields[0] == "1" || fields[0] == "2")
 }

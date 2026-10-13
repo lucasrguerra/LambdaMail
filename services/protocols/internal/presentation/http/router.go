@@ -94,6 +94,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/api/v1/mail/messages", r.handleMailMessages)
 	r.mux.HandleFunc("/api/v1/mail/message/", r.handleMailMessage)
 	r.mux.HandleFunc("/api/v1/mail/seen", r.handleMailSeen)
+	r.mux.HandleFunc("/api/v1/mail/flagged", r.handleMailFlagged)
 	r.mux.HandleFunc("/api/v1/mail/send", r.handleMailSend)
 	r.mux.HandleFunc("/api/v1/mail/draft", r.handleMailDraft)
 	r.mux.HandleFunc("/api/v1/mail/delete", r.handleMailDelete)
@@ -300,6 +301,16 @@ func (r *Router) handleMailSeen(w http.ResponseWriter, req *http.Request) {
 	}
 	if r.mailReady(w) {
 		r.mail.handleSeen(w, req)
+	}
+}
+
+func (r *Router) handleMailFlagged(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "POST required")
+		return
+	}
+	if r.mailReady(w) {
+		r.mail.handleFlagged(w, req)
 	}
 }
 

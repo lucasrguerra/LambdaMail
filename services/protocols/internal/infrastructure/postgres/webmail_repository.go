@@ -223,6 +223,63 @@ func (r *WebmailRepository) MarkSeen(
 	return tx.Commit(ctx)
 }
 
+// MarkFlagged sets or clears \Flagged. Unlike \Seen it moves no counter, but a
+// real change still bumps the folder's modseq: that is how an IMAP client
+// holding the folder open learns the flag changed without a full resync.
+func (r *WebmailRepository) MarkFlagged(
+	ctx context.Context, mailboxID, folderName string, uid uint32, flagged bool,
+) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var messageID uuid.UUID
+	var receivedAt any
+	var folderID string
+	err = tx.QueryRow(ctx, `
+		SELECT e.id, e.received_at, f.id::text FROM email_messages e
+		  JOIN folders f ON f.id = e.folder_id
+		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
+		   AND e.uid = $3 AND e.expunged_at IS NULL
+	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &receivedAt, &folderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrMessageNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	var changed int64
+	if flagged {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO message_flags (message_id, received_at, flag)
+			VALUES ($1, $2, '\Flagged') ON CONFLICT DO NOTHING
+		`, messageID, receivedAt)
+		if err != nil {
+			return err
+		}
+		changed = tag.RowsAffected()
+	} else {
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM message_flags WHERE message_id = $1 AND received_at = $2 AND flag = '\Flagged'
+		`, messageID, receivedAt)
+		if err != nil {
+			return err
+		}
+		changed = tag.RowsAffected()
+	}
+
+	if changed > 0 {
+		if _, err := tx.Exec(ctx,
+			`UPDATE folders SET highest_modseq = highest_modseq + 1 WHERE id = $1`, folderID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // Expunge marks one message deleted and keeps the folder counters in step.
 //
 // Soft delete, matching the expunged_at column the rest of the schema uses: the

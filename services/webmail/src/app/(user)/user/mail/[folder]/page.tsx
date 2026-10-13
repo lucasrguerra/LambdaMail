@@ -1,25 +1,17 @@
 "use client";
 
-import React, { use, useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import React, { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
+  Star,
   Paperclip,
-  Reply,
-  Forward,
   Inbox,
-  Image as ImageIcon,
   Mail,
   Clock,
-  MailOpen,
-  Download,
-  FolderInput,
-  Pencil,
   RefreshCw,
   Trash2,
-  X,
 } from "lucide-react";
 import { useI18n } from "../../../../../i18n/provider";
 import { useMailEvents } from "../../../../../lib/useMailEvents";
@@ -30,6 +22,7 @@ import {
   messageCounts,
   listHeaderCount,
   applySeen,
+  applyFlagged,
   readerActions,
   moveTargets,
   type ListFilter,
@@ -38,6 +31,14 @@ import { sanitizeEmailHtml, blockRemoteImages, unblockRemoteImages } from "../..
 import { isSenderTrusted, trustSender, revokeSender } from "../../../../../lib/remoteImages";
 import { resolveInlineImages, buildReaderDocument, type InlineImages } from "../../../../../lib/emailBody";
 import { Button } from "../../../../../components/ui/Button";
+import {
+  clampListWidth,
+  DEFAULT_LIST_WIDTH,
+  readStoredWidth,
+  storeWidth,
+} from "../../../../../lib/paneWidth";
+import { useAccount } from "../../../../../lib/useAccount";
+import { MessageReader } from "../../../../../components/MessageReader";
 import { Avatar } from "../../../../../components/Avatar";
 
 interface MessageSummary {
@@ -50,6 +51,7 @@ interface MessageSummary {
   received_at: string;
   has_attachments: boolean;
   seen: boolean;
+  flagged: boolean;
   spam_verdict: string;
   dmarc_result: string;
 }
@@ -64,6 +66,8 @@ interface RenderedMessage {
   text: string;
   html: string;
   attachments: string[];
+  message_id?: string;
+  important?: boolean;
   // The message's own pictures, keyed by Content-ID. Without these every
   // cid: reference in the body is unresolvable and renders as a broken icon.
   inline_images: InlineImages;
@@ -120,8 +124,6 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   // Whether this sender has a standing decision, so the banner can offer to
   // take it back rather than only to grant it.
   const [rememberSender, setRememberSender] = useState(false);
-  // Whether the "move to" menu is open.
-  const [moveOpen, setMoveOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<ListFilter>(null);
   const [loading, setLoading] = useState(true);
@@ -129,6 +131,26 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   // The frame is sized from the message rather than pinned to a guess: 500px
   // clipped every long message and left white space under every short one.
   const [readerHeight, setReaderHeight] = useState(420);
+
+  const account = useAccount("user");
+  // The list's width, draggable on a wide screen like the Outlook divider.
+  // Remembered between visits; below md the panes stack and it does not apply.
+  const [listWidth, setListWidth] = useState(DEFAULT_LIST_WIDTH);
+  const [dragging, setDragging] = useState(false);
+  const paneRowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const stored = readStoredWidth();
+    if (stored !== null) setListWidth(stored);
+  }, []);
+
+  /** Applies a width within the limits the current window allows. */
+  const resizeList = useCallback((width: number, persist: boolean) => {
+    const container = paneRowRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+    const next = clampListWidth(width, container);
+    setListWidth(next);
+    if (persist) storeWidth(next);
+  }, []);
 
   const { folders } = useFolders();
   const metrics = folderMetrics(folders, folder);
@@ -222,6 +244,31 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   );
 
   /**
+   * Marks a message important, or takes the mark off.
+   *
+   * Optimistic like read state: the star changes at the click and goes back if
+   * the server refuses, so a failed request is never left looking like a
+   * success.
+   */
+  const setFlagged = useCallback(
+    async (uid: number, flagged: boolean) => {
+      setMessages((current) => applyFlagged(current, uid, flagged));
+      try {
+        const res = await fetch("/api/v1/mail/flagged", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder, uid, flagged }),
+        });
+        if (!res.ok) throw new Error(t("errors.serverError"));
+      } catch (err) {
+        setMessages((current) => applyFlagged(current, uid, !flagged));
+        setError(err instanceof Error ? err.message : t("errors.serverError"));
+      }
+    },
+    [folder, t]
+  );
+
+  /**
    * Deletes one message: to Trash from an ordinary folder, and for good from
    * Trash itself, which is what the server does with the same call.
    *
@@ -259,7 +306,6 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
     async (uid: number, target: string) => {
       setMessages((current) => current.filter((m) => m.uid !== uid));
       setSelected((current) => (current?.uid === uid ? null : current));
-      setMoveOpen(false);
       try {
         const res = await fetch("/api/v1/mail/move", {
           method: "POST",
@@ -348,6 +394,7 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
     { key: null, label: t("mail.allMessages"), count: header.count },
     { key: "unread", label: t("mail.unreadFilter"), count: counts.unread },
     { key: "attachment", label: t("mail.attachmentsFilter"), count: counts.withAttachments },
+    { key: "important", label: t("mail.importantFilter"), count: counts.important },
   ];
 
 
@@ -365,10 +412,11 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
   const folderTitle = FOLDER_LABELS[folder.toLowerCase()] ?? folder;
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div ref={paneRowRef} className="flex flex-1 overflow-hidden">
       {/* Messages List Column */}
       <div
-        className={`${selected ? "hidden md:flex" : "flex"} w-full flex-col bg-dark-bg shadow-[inset_-1px_0_0_0_rgba(233,233,237,0.09)] md:w-[380px] md:flex-none lg:w-[420px] xl:w-[460px] 2xl:w-[500px]`}
+        style={{ "--list-w": `${listWidth}px` } as React.CSSProperties}
+        className={`${selected ? "hidden md:flex" : "flex"} w-full flex-col bg-dark-bg md:w-[var(--list-w)] md:flex-none`}
       >
         {/* Folder heading, with the counts that belong to the folder rather
             than to the page of it that happens to be loaded. */}
@@ -514,6 +562,13 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
 
                   {/* An unread row is marked by a dot in a reserved column, so
                       the subject does not shift sideways when it is read. */}
+                  {msg.flagged && (
+                    <Star
+                      className="mt-1 h-3.5 w-3.5 flex-none text-amber-300"
+                      fill="currentColor"
+                      aria-label={t("mail.markedImportant")}
+                    />
+                  )}
                   <span className="mt-3 w-[7px] flex-none">
                     {!msg.seen && <span className="block h-[7px] w-[7px] rounded-full bg-indigo-500" />}
                   </span>
@@ -537,250 +592,84 @@ export default function MailFolderPage({ params }: { params: Promise<{ folder: s
         </div>
       </div>
 
+      {/* The divider between the panes. Wide screens only: below md they stack
+          and there is nothing to divide. A pointer drag, the arrow keys and a
+          double-click to restore all move it, so it is not mouse-only. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t("mail.resizeList")}
+        aria-valuenow={listWidth}
+        tabIndex={0}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setDragging(true);
+        }}
+        onPointerMove={(e) => {
+          if (!dragging) return;
+          const left = paneRowRef.current?.getBoundingClientRect().left ?? 0;
+          resizeList(e.clientX - left, false);
+        }}
+        onPointerUp={(e) => {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+          setDragging(false);
+          storeWidth(listWidth);
+        }}
+        onDoubleClick={() => resizeList(DEFAULT_LIST_WIDTH, true)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") resizeList(listWidth - 24, true);
+          else if (e.key === "ArrowRight") resizeList(listWidth + 24, true);
+          else if (e.key === "Home") resizeList(0, true);
+          else if (e.key === "End") resizeList(Infinity, true);
+          else return;
+          e.preventDefault();
+        }}
+        className={`group relative hidden w-1.5 flex-none cursor-col-resize touch-none select-none md:block ${
+          dragging ? "bg-indigo-500/40" : "bg-white/[0.07] hover:bg-indigo-500/30"
+        } focus-visible:bg-indigo-500/50 focus-visible:outline-none`}
+      >
+        {/* A wider invisible target, so the thin line is easy to grab. */}
+        <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+      </div>
+
       {/* Message Reader Column */}
-      <div className={`${selected ? "flex" : "hidden md:flex"} flex-1 flex-col overflow-y-auto bg-dark-bg`}>
+      <div className={`${selected ? "flex" : "hidden md:flex"} min-w-0 flex-1 flex-col overflow-hidden bg-dark-bg`}>
         <AnimatePresence mode="wait">
           {selected ? (
-            <motion.article
+            <MessageReader
               key={selected.uid}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.15 }}
-              className="mx-auto flex w-full max-w-[860px] flex-col gap-5 px-5 pb-10 pt-6 sm:px-7 xl:max-w-[1000px] 2xl:max-w-[1140px]"
-            >
-              {/* Toolbar: closing, replying and read state all in one row, so
-                  the reader is not the only pane with no way out of itself. */}
-              <div className="flex flex-wrap items-center gap-2">
-                {/* A draft is unfinished, so the thing to do with it is carry
-                    on writing. It used to offer Reply and Forward on the
-                    user's own half-written message and no way to edit it. */}
-                {actions.canEdit && (
-                  <Link href={`/user/compose?draft=${selected.uid}`}>
-                    <Button variant="primary" size="sm">
-                      <Pencil className="h-3.5 w-3.5" />
-                      <span>{t("mail.continueDraft")}</span>
-                    </Button>
-                  </Link>
-                )}
-                {actions.canReply && (
-                  <Link
-                    href={`/user/compose?replyTo=${encodeURIComponent(selected.from)}&subject=${encodeURIComponent(selected.subject)}`}
-                  >
-                    <Button variant="primary" size="sm">
-                      <Reply className="h-3.5 w-3.5" />
-                      <span>{t("mail.reply")}</span>
-                    </Button>
-                  </Link>
-                )}
-                {/* Forward carries the subject but no recipient: it used to
-                    prefill the original sender, which sends the message
-                    straight back to whoever wrote it. */}
-                {actions.canForward && (
-                  <Link href={`/user/compose?subject=${encodeURIComponent(selected.subject)}`}>
-                    <Button variant="secondary" size="sm">
-                      <Forward className="h-3.5 w-3.5" />
-                      <span>{t("mail.forward")}</span>
-                    </Button>
-                  </Link>
-                )}
-                {/* Not offered in Sent or Drafts: nothing delivers to those
-                    folders, so an unread flag there says nothing. */}
-                {actions.canMarkUnread && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      const nowSeen = !(selectedRow?.seen ?? true);
-                      void setSeen(selected.uid, nowSeen, { persist: true });
-                    }}
-                  >
-                    <MailOpen className="h-3.5 w-3.5" />
-                    <span>{selectedRow?.seen === false ? t("mail.markRead") : t("mail.markUnread")}</span>
-                  </Button>
-                )}
-                {/* Filing a message elsewhere: the one ordinary action the
-                    reader still had no button for. */}
-                <div className="relative">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setMoveOpen((open) => !open)}
-                    title={t("mail.moveTo")}
-                  >
-                    <FolderInput className="h-3.5 w-3.5" />
-                    <span>{t("mail.moveTo")}</span>
-                  </Button>
-                  {moveOpen && (
-                    <div className="absolute left-0 top-full z-20 mt-1 min-w-[190px] overflow-hidden rounded-xl bg-dark-panel py-1 shadow-edge">
-                      {moveTargets(folders, folder).map((target) => (
-                        <button
-                          key={target.name}
-                          type="button"
-                          onClick={() => void moveMessage(selected.uid, target.name)}
-                          className="block w-full px-3.5 py-2 text-left text-[13px] text-slate-200 transition-colors hover:bg-white/[0.07]"
-                        >
-                          {FOLDER_LABELS[(target.special_use || target.name).toLowerCase()] ?? target.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void deleteMessage(selected.uid)}
-                  title={actions.deleteIsPermanent ? t("mail.deleteForever") : t("common.delete")}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>{actions.deleteIsPermanent ? t("mail.deleteForever") : t("common.delete")}</span>
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setSelected(null)}
-                  className="ml-auto h-9 w-9 flex-none p-0"
-                  title={t("mail.backToList")}
-                  aria-label={t("mail.backToList")}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-
-              <header className="flex flex-col gap-3.5">
-                <h1 className="text-[25px] font-medium leading-tight tracking-[-0.015em] text-slate-100 [text-wrap:pretty]">
-                  {selected.subject || t("mail.noSubject")}
-                </h1>
-
-                <div className="flex items-start gap-3">
-                  <Avatar
-                    address={selectedRow?.sender_address ?? selected.from}
-                    initials={initials(selectedRow?.from_display_name ?? "", selected.from)}
-                    size={38}
-                    className="bg-indigo-900 text-indigo-300 shadow-[inset_0_0_0_1px_#5d5294]"
-                  />
-                  <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-                      <span className="break-all text-sm text-slate-100">{selected.from}</span>
-                      {selectedRow && selectedRow.size_bytes > 0 && (
-                        <span className="text-[11px] tabular-nums text-slate-500">
-                          {formatBytes(selectedRow.size_bytes)}
-                        </span>
-                      )}
-                    </div>
-                    {/* Recipients are labelled with translated headings; they
-                        used to be introduced by a Portuguese word regardless of
-                        the interface language. */}
-                    {selected.to.length > 0 && (
-                      <div className="break-words text-[12.5px] leading-relaxed text-slate-400">
-                        <span className="text-slate-500">{t("ui.toRecipients")} </span>
-                        {selected.to.join(", ")}
-                      </div>
-                    )}
-                    {selected.cc.length > 0 && (
-                      <div className="break-words text-[12.5px] leading-relaxed text-slate-400">
-                        <span className="text-slate-500">{t("ui.ccRecipients")} </span>
-                        {selected.cc.join(", ")}
-                      </div>
-                    )}
-                  </div>
-                  <span className="flex-none text-xs tabular-nums text-slate-400">
-                    {selected.date
-                      ? new Date(selected.date).toLocaleString(locale)
-                      : selectedRow
-                        ? new Date(selectedRow.received_at).toLocaleString(locale)
-                        : ""}
-                  </span>
-                </div>
-              </header>
-
-              {/* Remote content banner, shown only when something was actually
-                  held back rather than over every message. The wording is the
-                  reassurance, not the colour: this is not an error. */}
-              {(hasBlockedContent || rememberSender) && (
-                <div className="flex flex-wrap items-center gap-2 rounded-xl bg-dark-card p-3 shadow-edge">
-                  <ImageIcon className="h-4 w-4 flex-none text-indigo-400" />
-                  <span className="min-w-[200px] flex-1 text-[12.5px] leading-relaxed text-slate-300">
-                    {t("mail.remoteContentBlocked")}
-                  </span>
-                  {/* Two separate decisions: show them now, and stop asking
-                      about this sender. Keeping them apart lets a reader look
-                      at one message without granting anything permanently. */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setLoadRemoteImages(!loadRemoteImages)}
-                  >
-                    {loadRemoteImages ? t("mail.hideImages") : t("mail.loadImages")}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (rememberSender) {
-                        revokeSender(selected.from);
-                        setRememberSender(false);
-                        setLoadRemoteImages(false);
-                      } else {
-                        trustSender(selected.from);
-                        setRememberSender(true);
-                        setLoadRemoteImages(true);
-                      }
-                    }}
-                  >
-                    {rememberSender ? t("mail.forgetSender") : t("mail.alwaysFromSender")}
-                  </Button>
-                </div>
-              )}
-
-              {/* Attachment Download Chips */}
-              {selected.attachments.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <div className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                    {t("mail.attachments", { count: selected?.attachments.length ?? 1 })}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {selected.attachments.map((filename, idx) => (
-                      <a
-                        key={`${filename}-${idx}`}
-                        href={`/api/v1/mail/message/${selected.uid}/attachment/${encodeURIComponent(filename)}?folder=${encodeURIComponent(folder)}`}
-                        download={filename}
-                        className="group flex max-w-full items-center gap-2.5 rounded-xl bg-dark-card px-3 py-2.5 text-slate-200 shadow-edge transition-shadow hover:shadow-edge-accent"
-                      >
-                        <Paperclip className="h-[18px] w-[18px] flex-none text-indigo-400" />
-                        <span className="min-w-0 break-all text-[13px]">{filename}</span>
-                        <Download className="h-4 w-4 flex-none text-slate-500 group-hover:text-indigo-300" />
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Message Body */}
-              {readerDocument ? (
-                <div className="overflow-hidden rounded-2xl bg-white shadow-edge">
-                  <iframe
-                    title={t("ui.messageBody")}
-                    srcDoc={readerDocument}
-                    /* allow-scripts, and deliberately not allow-same-origin: the
-                       frame stays on an opaque origin - it cannot read a cookie
-                       or touch this document - while still running the few lines
-                       that report its height and open links outward. Message
-                       markup is sanitised before it gets here. */
-                    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-                    referrerPolicy="no-referrer"
-                    style={{ height: `${readerHeight}px` }}
-                    className="block w-full border-0"
-                  />
-                </div>
-              ) : (
-                <div className="rounded-2xl bg-dark-panel px-6 py-6 shadow-edge">
-                  <pre className="whitespace-pre-wrap break-words font-sans text-[14.5px] leading-relaxed text-slate-200">
-                    {selected.text || t("mail.emptyBody")}
-                  </pre>
-                </div>
-              )}
-            </motion.article>
+              message={selected}
+              row={selectedRow}
+              ownAddress={account?.email ?? ""}
+              folder={folder}
+              actions={actions}
+              moveTargets={moveTargets(folders, folder).map((target) => ({
+                name: target.name,
+                label: FOLDER_LABELS[(target.special_use || target.name).toLowerCase()] ?? target.name,
+              }))}
+              document={readerDocument}
+              frameHeight={readerHeight}
+              hasBlockedContent={hasBlockedContent}
+              imagesLoaded={loadRemoteImages}
+              senderRemembered={rememberSender}
+              onClose={() => setSelected(null)}
+              onToggleFlagged={() => void setFlagged(selected.uid, !(selectedRow?.flagged ?? false))}
+              onToggleSeen={() => void setSeen(selected.uid, !(selectedRow?.seen ?? true), { persist: true })}
+              onDelete={() => void deleteMessage(selected.uid)}
+              onMove={(target) => void moveMessage(selected.uid, target)}
+              onToggleImages={() => setLoadRemoteImages(!loadRemoteImages)}
+              onToggleRemember={() => {
+                if (rememberSender) {
+                  revokeSender(selected.from);
+                  setRememberSender(false);
+                  setLoadRemoteImages(false);
+                } else {
+                  trustSender(selected.from);
+                  setRememberSender(true);
+                  setLoadRemoteImages(true);
+                }
+              }}
+            />
           ) : (
             <motion.div
               initial={{ opacity: 0 }}

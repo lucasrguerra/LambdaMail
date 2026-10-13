@@ -21,6 +21,8 @@ export interface MessageSummary {
   uid: number;
   seen: boolean;
   has_attachments: boolean;
+  /** Marked important (\\Flagged). */
+  flagged?: boolean;
 }
 
 export interface FolderMetrics {
@@ -28,7 +30,7 @@ export interface FolderMetrics {
   total: number;
 }
 
-export type ListFilter = "unread" | "attachment" | null;
+export type ListFilter = "unread" | "attachment" | "important" | null;
 
 /** Clamps a counter to something displayable: no negatives, no NaN. */
 function counter(value: unknown): number {
@@ -73,17 +75,20 @@ export function messageCounts(messages: MessageSummary[]): {
   loaded: number;
   unread: number;
   withAttachments: number;
+  important: number;
 } {
   return {
     loaded: messages.length,
     unread: messages.filter((m) => !m.seen).length,
     withAttachments: messages.filter((m) => m.has_attachments).length,
+    important: messages.filter((m) => m.flagged).length,
   };
 }
 
 export function filterMessages<T extends MessageSummary>(messages: T[], filter: ListFilter): T[] {
   if (filter === "unread") return messages.filter((m) => !m.seen);
   if (filter === "attachment") return messages.filter((m) => m.has_attachments);
+  if (filter === "important") return messages.filter((m) => m.flagged);
   return messages;
 }
 
@@ -119,6 +124,10 @@ export function listHeaderCount(input: {
  */
 export function applySeen<T extends MessageSummary>(messages: T[], uid: number, seen: boolean): T[] {
   return messages.map((m) => (m.uid === uid ? { ...m, seen } : m));
+}
+
+export function applyFlagged<T extends MessageSummary>(messages: T[], uid: number, flagged: boolean): T[] {
+  return messages.map((m) => (m.uid === uid ? { ...m, flagged } : m));
 }
 
 /** What the sidebar shows beside one folder. */

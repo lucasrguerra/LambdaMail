@@ -62,6 +62,9 @@ type WebmailRepository interface {
 	GetMessageBlob(ctx context.Context, mailboxID, folderName string, uid uint32) (uuid.UUID, error)
 	// MarkSeen records that the user opened the message.
 	MarkSeen(ctx context.Context, mailboxID, folderName string, uid uint32, seen bool) error
+	// MarkFlagged sets or clears the \Flagged flag, which is what the webmail
+	// calls "important" and every IMAP client calls starred.
+	MarkFlagged(ctx context.Context, mailboxID, folderName string, uid uint32, flagged bool) error
 	// Expunge soft-deletes one message, keeping the folder counters in step.
 	Expunge(ctx context.Context, mailboxID, folderName string, uid uint32) error
 	// MoveToFolder relocates one message into a named folder and returns its

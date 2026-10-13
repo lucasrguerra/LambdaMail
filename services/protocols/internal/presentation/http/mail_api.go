@@ -245,6 +245,32 @@ func (m *mailAPI) handleSeen(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (m *mailAPI) handleFlagged(w http.ResponseWriter, r *http.Request) {
+	session, ok := m.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Folder  string `json:"folder"`
+		UID     uint32 `json:"uid"`
+		Flagged bool   `json:"flagged"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
+		return
+	}
+	if body.Folder == "" {
+		body.Folder = "inbox"
+	}
+
+	if err := m.useCase.SetFlagged(r.Context(), session.Email, body.Folder, body.UID, body.Flagged); err != nil {
+		m.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (m *mailAPI) handleSend(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.authenticate(w, r)
 	if !ok {
@@ -411,6 +437,9 @@ func (m *mailAPI) decodeCompose(
 		// DraftUID is the autosaved draft this message came from, so sending
 		// can clear it. Without it the draft outlived the message it became.
 		DraftUID uint32 `json:"draft_uid"`
+		// Important sends with high priority; InReplyTo threads a reply.
+		Important bool   `json:"important"`
+		InReplyTo string `json:"in_reply_to"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxComposeBytes)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
@@ -426,14 +455,16 @@ func (m *mailAPI) decodeCompose(
 	// letting the body choose From is how a webmail becomes an open relay for
 	// spoofed mail.
 	return usecase.ComposeInput{
-		From:     sender,
-		To:       body.To,
-		Cc:       body.Cc,
-		Bcc:      body.Bcc,
-		Subject:  body.Subject,
-		Text:     text,
-		HTML:     body.HTML,
-		DraftUID: body.DraftUID,
+		From:      sender,
+		To:        body.To,
+		Cc:        body.Cc,
+		Bcc:       body.Bcc,
+		Subject:   body.Subject,
+		Text:      text,
+		HTML:      body.HTML,
+		DraftUID:  body.DraftUID,
+		Important: body.Important,
+		InReplyTo: body.InReplyTo,
 	}, true
 }
 

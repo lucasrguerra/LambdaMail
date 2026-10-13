@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,6 +35,7 @@ type fakeMailStore struct {
 	addresses map[string]string // address -> mailbox ID
 
 	seenCalls    []string
+	flaggedCalls []string
 	deletedCalls []string
 	movedCalls   []string
 	expungeErr   error
@@ -77,6 +79,11 @@ func (f *fakeMailStore) GetMessageBlob(
 
 func (f *fakeMailStore) MarkSeen(_ context.Context, mailboxID, folder string, uid uint32, seen bool) error {
 	f.seenCalls = append(f.seenCalls, mailboxID+"/"+folder)
+	return nil
+}
+
+func (f *fakeMailStore) MarkFlagged(_ context.Context, mailboxID, folder string, uid uint32, flagged bool) error {
+	f.flaggedCalls = append(f.flaggedCalls, fmt.Sprintf("%s/%s/%d/%t", mailboxID, folder, uid, flagged))
 	return nil
 }
 
@@ -305,6 +312,43 @@ func TestMessageListDefaultsToTheInbox(t *testing.T) {
 	}
 	if len(store.seenCalls) != 1 || store.seenCalls[0] != "mailbox-1/inbox" {
 		t.Errorf("the folder did not default to inbox: %v", store.seenCalls)
+	}
+}
+
+// --- flagging ------------------------------------------------------------
+
+// Marking important is scoped to the session's own mailbox, never to an
+// identifier the request supplies.
+func TestFlaggingActsOnTheSessionsMailbox(t *testing.T) {
+	store := storeWithMail()
+	api := newMailAPI(t, store, nil)
+
+	rec := httptest.NewRecorder()
+	api.handleFlagged(rec, request(http.MethodPost, "/api/v1/mail/flagged", `{"uid":1,"flagged":true}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("answered %d", rec.Code)
+	}
+	if len(store.flaggedCalls) != 1 || store.flaggedCalls[0] != "mailbox-1/inbox/1/true" {
+		t.Errorf("flag call = %v, want [mailbox-1/inbox/1/true]", store.flaggedCalls)
+	}
+}
+
+func TestFlaggingRefusesARequestWithNoSession(t *testing.T) {
+	api := newMailAPI(t, storeWithMail(), nil)
+	rec := httptest.NewRecorder()
+	api.handleFlagged(rec, httptest.NewRequest(http.MethodPost, "/api/v1/mail/flagged", strings.NewReader(`{"uid":1}`)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("answered %d without a session, want 401", rec.Code)
+	}
+}
+
+func TestFlaggingRejectsMalformedJson(t *testing.T) {
+	api := newMailAPI(t, storeWithMail(), nil)
+	rec := httptest.NewRecorder()
+	api.handleFlagged(rec, request(http.MethodPost, "/api/v1/mail/flagged", `{`))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("answered %d, want 400", rec.Code)
 	}
 }
 

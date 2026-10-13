@@ -121,8 +121,12 @@ describe("the reader pane", () => {
     const page = code(MAIL_PAGE);
     expect(page).not.toContain("h-[500px]");
     expect(page).toContain("lm:reader-height");
-    // The height report needs script inside the frame, which sandbox="" forbids.
-    expect(page).toContain("allow-scripts");
+    // The frame itself lives in the reader component. Its height report needs
+    // script inside it, which sandbox="" forbids - and it must never be given
+    // the app's own origin.
+    const reader = code(resolve(process.cwd(), "src/components/MessageReader.tsx"));
+    expect(reader).toContain("allow-scripts");
+    expect(reader).not.toContain("allow-same-origin");
   });
 
   // Every one of these was a Portuguese string typed into a component that had

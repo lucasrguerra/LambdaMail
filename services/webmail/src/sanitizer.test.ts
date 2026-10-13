@@ -68,7 +68,29 @@ describe("remote content blocking", () => {
   });
 
   it("neutralises CSS url() references and background attributes", () => {
-    expect(blockRemoteImages(`<div style="background:url(https://t.test/p.png)">x</div>`)).not.toContain("t.test");
-    expect(blockRemoteImages(`<table background="https://t.test/p.png"><tr><td>x</td></tr></table>`)).not.toContain("t.test");
+    // Nothing may be left that a browser would fetch: no http(s) url() and no
+    // live background attribute.
+    const css = blockRemoteImages(`<div style="background:url(https://t.test/p.png)">x</div>`);
+    expect(css).not.toMatch(/url\(\s*['"]?https?:/i);
+    const attr = blockRemoteImages(`<table background="https://t.test/p.png"><tr><td>x</td></tr></table>`);
+    expect(attr).not.toMatch(/\sbackground=/i);
+  });
+
+  it("restores backgrounds when the reader opts in", () => {
+    const html = `<table background="https://t.test/a.png"><tr><td style="background-image:url('https://t.test/b.png')">x</td></tr></table>`;
+    expect(unblockRemoteImages(blockRemoteImages(html))).toBe(html);
+  });
+
+  it("keeps layout attributes that are not URLs", () => {
+    const out = sanitizeEmailHtml(`<table width="600" cellpadding="0" bgcolor="#fff"><tr><td colspan="2" align="center"><img src="https://t.test/a.png" width="600" height="20"></td></tr></table>`);
+    for (const attr of ['width="600"', 'cellpadding="0"', 'bgcolor="#fff"', 'colspan="2"', 'align="center"', 'height="20"']) {
+      expect(out).toContain(attr);
+    }
+  });
+
+  it("still refuses scripting schemes in attributes", () => {
+    const out = sanitizeEmailHtml(`<a href="javascript:alert(1)">x</a><a href="data:text/html,<script>1</script>">y</a>`);
+    expect(out).not.toMatch(/javascript:/i);
+    expect(out).not.toMatch(/data:text/i);
   });
 });
