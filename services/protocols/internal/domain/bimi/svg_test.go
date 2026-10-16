@@ -2,6 +2,8 @@ package bimi
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -148,5 +150,28 @@ func TestValidate_ReportsEveryViolationAtOnce(t *testing.T) {
 		if !contains(rules, want) {
 			t.Errorf("missing %s; got %v", want, rules)
 		}
+	}
+}
+
+// The webmail's logo studio (services/webmail/src/lib/bimiLogo.ts) produces the
+// files in testdata/studio, and its tests keep them current. This is the other
+// half of the contract: every one of them has to pass the validator that guards
+// the upload. A studio that starts producing something the server refuses
+// fails here, instead of in front of an operator who did everything right.
+func TestWhatTheStudioProducesIsAccepted(t *testing.T) {
+	files, err := filepath.Glob("testdata/studio/*.svg")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no studio output to check (%v)", err)
+	}
+	for _, file := range files {
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			svg, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if violations := Validate(svg); len(violations) != 0 {
+				t.Errorf("the validator refused what the studio made: %v", violations)
+			}
+		})
 	}
 }

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.2" baseProfile="tiny-ps" viewBox="0 0 512 512"><title>Example</title><rect width="512" height="512" fill="#ffffff"/><g transform="matrix(2.048 0 0 2.048 51.2 153.6)"><defs><linearGradient id="g"><stop offset="0" stop-color="#ff0000" stop-opacity="1"/><stop offset="1" stop-color="#0000ff"/></linearGradient></defs>
+  <rect x="10" y="10" width="80" height="80" fill="url(#g)" stroke="none"/>
+  <circle cx="150" cy="50" r="40" fill="#123456"/></g></svg>

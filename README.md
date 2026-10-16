@@ -194,21 +194,45 @@ Gmail or Outlook shows beside a message comes from the *recipient's* own
 contacts, or from the sender's Google or Microsoft account. A self-hosted
 server cannot put an image there.
 
-**BIMI** is what external clients do read, and it is per domain — one mark for
-everyone who sends from it. Publishing one needs:
+**BIMI** is what external clients do read, and it is per domain: one mark for
+everyone who sends from it. Publishing one needs three things, and the console
+(`/admin/domains`, under the domain) handles each:
 
-- DMARC at `p=quarantine` or `p=reject`, which this server already sets;
-- a logo in SVG Tiny Portable/Secure — square viewBox, one `<title>`, nothing
-  active or external. `/admin/domains` validates an upload against every rule
-  at once and names the ones it fails, because a receiver that rejects a mark
-  simply shows nothing;
-- a **Verified Mark Certificate** for Gmail and Outlook to render it. It is
-  issued against a registered trademark, costs on the order of US$1000 a year,
-  and without it the record is still valid — some clients use it, those two do
-  not.
+1. **The logo.** Upload a PNG or an SVG. The studio converts it to what BIMI
+   accepts, SVG Tiny Portable/Secure on a square canvas of at most 32 KB with
+   nothing active or external in it, and lets you place it the way the profile
+   photo editor does: drag, zoom, background colour, with a preview inside the
+   circle or rounded square clients draw. An SVG has what the format forbids
+   removed (scripts, links, embedded bitmaps, editor metadata) and says what; a
+   PNG is traced into vector paths, which loses some detail, so send the SVG
+   when you have it. The server validates the result again against every rule
+   at once, because a receiver that rejects a mark simply shows nothing.
+2. **DMARC at `p=quarantine` or `p=reject`** with `pct=100`, which this server
+   already sets.
+3. **A certificate, for Gmail and Apple Mail to render it.** A Verified Mark
+   Certificate (VMC, for a registered trademark) or a Common Mark Certificate
+   (CMC, for a mark in use) is **issued by a certificate authority**
+   (DigiCert, Entrust, SSL.com and others) after it checks the organisation.
+   It cannot be generated here from an image, and nothing signed here would be
+   trusted. What the console does: gives you the exact SVG to send the
+   authority, takes the `.pem` it returns, and refuses one that would not work
+   (the logo inside it must be byte for byte the published one, it must cover
+   the domain, be in date, and never contain a private key). It then serves it
+   from `https://<mail host>/.well-known/bimi/vmc.pem` and points the `a=` tag
+   there. Without a certificate the record is still valid and some clients use
+   it; Gmail and Apple Mail do not.
+
+"Verificar configuracao" in the panel looks at what a receiver would: the logo
+file, DMARC, the BIMI record in DNS, the public URL of the logo, the
+certificate and its public URL, and names the one that is wrong.
 
 The logo is served from `https://<mail host>/.well-known/bimi/default.svg` and
-the record is published with the rest of the zone.
+the record is published with the rest of the zone. Replacing the logo under a
+held certificate breaks the certificate, and the console says so.
+
+A changed profile photo shows up at once everywhere in the webmail: every
+photo carries a version that is bumped on save, in this tab and the others. The
+server lets a browser reuse one for a minute and then revalidates it.
 
 ### DANE
 
