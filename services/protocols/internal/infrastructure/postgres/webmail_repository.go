@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -27,69 +28,43 @@ func NewWebmailRepository(pool *pgxpool.Pool) *WebmailRepository {
 	return &WebmailRepository{pool: pool, store: NewMailStore(pool)}
 }
 
+// The methods below only read. They do not query on their own: the webmail asks
+// MailStore the same questions IMAP does and shapes the answers for the
+// browser, so a folder shows the same numbers in both.
+
 func (r *WebmailRepository) FindMailboxIDByAddress(ctx context.Context, address string) (string, error) {
-	var id string
-	err := r.pool.QueryRow(ctx, `
-		SELECT m.id::text FROM mailboxes m
-		  JOIN domains d ON d.id = m.domain_id
-		 WHERE m.email_address = $1 AND m.is_active AND d.is_active
-	`, address).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrMessageNotFound
-	}
-	return id, err
+	return r.store.MailboxIDByAddress(ctx, address)
 }
+
+// roleOrder is how the folder list is arranged for people: the folders they use
+// every day first, in a fixed order, then their own by name.
+var roleOrder = map[string]int{"inbox": 0, "drafts": 1, "sent": 2, "archive": 3, "junk": 4, "trash": 5}
 
 func (r *WebmailRepository) ListFolders(ctx context.Context, mailboxID string) ([]port.WebmailFolder, error) {
-	// The counts are derived from the messages themselves rather than read out
-	// of folders.unread_count/total_count.
-	//
-	// Those columns are a denormalised cache maintained by every write path,
-	// and once any one of them was wrong nothing brought it back: the number
-	// the user saw stayed wrong through a reload, a logout and a fresh login,
-	// because the wrongness was stored. Deriving here is authoritative and
-	// self-healing - a folder can only ever report what is actually in it.
-	//
-	// The columns stay maintained for IMAP's sake (STATUS answers from them),
-	// so this is a correction at the read side, not their removal.
-	rows, err := r.pool.Query(ctx, `
-		SELECT f.id::text, f.name, COALESCE(f.special_use, ''),
-		       COUNT(e.id) FILTER (
-		         WHERE NOT EXISTS (SELECT 1 FROM message_flags mf
-		                            WHERE mf.message_id = e.id
-		                              AND mf.received_at = e.received_at
-		                              AND mf.flag = '\Seen')
-		       )::int AS unread_count,
-		       COUNT(e.id)::int AS total_count
-		  FROM folders f
-		  LEFT JOIN email_messages e
-		         ON e.folder_id = f.id AND e.expunged_at IS NULL
-		 WHERE f.mailbox_id = $1
-		 GROUP BY f.id, f.name, f.special_use
-		 ORDER BY CASE f.special_use
-		            WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sent' THEN 2
-		            WHEN 'archive' THEN 3 WHEN 'junk' THEN 4 WHEN 'trash' THEN 5
-		            ELSE 6 END, f.name
-	`, mailboxID)
+	folders, err := r.store.Folders(ctx, mailboxID)
 	if err != nil {
-		return nil, fmt.Errorf("list folders: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	folders := []port.WebmailFolder{}
-	for rows.Next() {
-		var f port.WebmailFolder
-		if err := rows.Scan(&f.ID, &f.Name, &f.SpecialUse, &f.UnreadCount, &f.TotalCount); err != nil {
-			return nil, err
+	out := make([]port.WebmailFolder, 0, len(folders))
+	for _, f := range folders {
+		out = append(out, port.WebmailFolder{ID: f.ID, Name: f.Name, SpecialUse: f.SpecialUse, UnreadCount: f.Unread, TotalCount: f.Total})
+	}
+
+	rank := func(f port.WebmailFolder) int {
+		if n, ok := roleOrder[f.SpecialUse]; ok {
+			return n
 		}
-		folders = append(folders, f)
+		return 6
 	}
-	return folders, rows.Err()
+	sort.SliceStable(out, func(i, j int) bool {
+		if ri, rj := rank(out[i]), rank(out[j]); ri != rj {
+			return ri < rj
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
-
-// folderCondition matches either the special-use role ("inbox") or the literal
-// folder name, so the UI can address a folder the same way IMAP does.
-const folderCondition = `(f.special_use = LOWER($2) OR LOWER(f.name) = LOWER($2))`
 
 func (r *WebmailRepository) ListMessages(
 	ctx context.Context, mailboxID, folderName, search string, limit, offset int,
@@ -97,65 +72,38 @@ func (r *WebmailRepository) ListMessages(
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	if offset < 0 {
-		offset = 0
-	}
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT e.uid, COALESCE(e.subject, ''), e.sender_address::text,
-		       COALESCE(e.from_display_name, ''), COALESCE(e.snippet, ''),
-		       e.size_bytes, e.received_at, e.has_attachments,
-		       EXISTS (SELECT 1 FROM message_flags mf
-		                WHERE mf.message_id = e.id AND mf.received_at = e.received_at AND mf.flag = '\Seen'),
-		       EXISTS (SELECT 1 FROM message_flags mf
-		                WHERE mf.message_id = e.id AND mf.received_at = e.received_at AND mf.flag = '\Flagged'),
-		       EXISTS (SELECT 1 FROM message_flags mf
-		                WHERE mf.message_id = e.id AND mf.received_at = e.received_at AND mf.flag = '\Answered'),
-		       COALESCE(e.spam_verdict, ''), COALESCE(e.dmarc_result, '')
-		  FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.expunged_at IS NULL
-		   AND ($3 = '' OR e.subject ILIKE '%%' || $3 || '%%'
-		                OR e.sender_address::text ILIKE '%%' || $3 || '%%'
-		                OR e.snippet ILIKE '%%' || $3 || '%%')
-		 ORDER BY e.received_at DESC, e.uid DESC
-		 LIMIT $4 OFFSET $5
-	`, mailboxID, folderName, search, limit, offset)
+	folderID, err := r.store.ResolveFolder(ctx, mailboxID, folderName)
+	if errors.Is(err, port.ErrFolderMissing) {
+		return []port.WebmailMessage{}, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list messages: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	messages := []port.WebmailMessage{}
-	for rows.Next() {
-		var m port.WebmailMessage
-		if err := rows.Scan(
-			&m.UID, &m.Subject, &m.SenderAddress, &m.FromName, &m.Snippet,
-			&m.SizeBytes, &m.ReceivedAt, &m.HasAttachments,
-			&m.Seen, &m.Flagged, &m.Answered, &m.SpamVerdict, &m.DmarcResult,
-		); err != nil {
-			return nil, err
-		}
-		messages = append(messages, m)
+	messages, err := r.store.Messages(ctx, folderID, MessageQuery{NewestFirst: true, Search: search, Limit: limit, Offset: offset})
+	if err != nil {
+		return nil, err
 	}
-	return messages, rows.Err()
+
+	out := make([]port.WebmailMessage, 0, len(messages))
+	for _, m := range messages {
+		out = append(out, port.WebmailMessage{
+			UID: m.UID, Subject: m.Subject, SenderAddress: m.SenderAddress, FromName: m.FromName, Snippet: m.Snippet,
+			SizeBytes: m.Size, ReceivedAt: m.ReceivedAt, HasAttachments: m.HasAttachments,
+			Seen: m.HasFlag(`\Seen`), Flagged: m.HasFlag(`\Flagged`), Answered: m.HasFlag(`\Answered`),
+			SpamVerdict: m.SpamVerdict, DmarcResult: m.DmarcResult,
+		})
+	}
+	return out, nil
 }
 
-func (r *WebmailRepository) GetMessageBlob(
-	ctx context.Context, mailboxID, folderName string, uid uint32,
-) (uuid.UUID, error) {
-	var blobID uuid.UUID
-	err := r.pool.QueryRow(ctx, `
-		SELECT e.blob_id FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.uid = $3 AND e.expunged_at IS NULL
-	`, mailboxID, folderName, int64(uid)).Scan(&blobID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, ErrMessageNotFound
+func (r *WebmailRepository) GetMessageBlob(ctx context.Context, mailboxID, folderName string, uid uint32) (uuid.UUID, error) {
+	folderID, err := r.messageFolder(ctx, mailboxID, folderName)
+	if err != nil {
+		return uuid.Nil, err
 	}
-	return blobID, err
+	return r.store.MessageBlob(ctx, folderID, uid)
 }
 
 // The methods below change state. They do not do it themselves: the webmail
