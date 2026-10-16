@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/alexedwards/argon2id"
 	"github.com/google/uuid"
 
 	"lambdamail/protocols/internal/application/port"
@@ -42,7 +41,7 @@ func (uc *Pop3SessionUseCase) Login(ctx context.Context, username, password stri
 	if rec == nil {
 		return "", ErrAuthFailed
 	}
-	match, err := argon2id.ComparePasswordAndHash(password, rec.PasswordHash)
+	match, err := verifyCredential(ctx, uc.authRepo, rec, password, ScopePOP3)
 	if err != nil {
 		return "", fmt.Errorf("verify password hash: %w", err)
 	}

@@ -82,7 +82,7 @@ func (uc *ProcessOutboundEmailUseCase) Authenticate(ctx context.Context, address
 		return nil, ErrSubmissionAuthFailed
 	}
 
-	match, err := argon2id.ComparePasswordAndHash(password, rec.PasswordHash)
+	match, err := verifyCredential(ctx, uc.auth, rec, password, ScopeSMTP)
 	if err != nil || !match {
 		return nil, ErrSubmissionAuthFailed
 	}

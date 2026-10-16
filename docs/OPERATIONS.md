@@ -93,6 +93,23 @@ make reset-password EMAIL=… PASSWORD='…'   # recovers a lockout, ends its se
 make reset-mfa EMAIL=…                     # clears every second factor
 ```
 
+### App passwords for mail clients
+
+A mail client cannot answer a second factor, so an account signs a client in
+with an **app password**: create one in the webmail (Settings, app passwords),
+copy it once, and give it to the client as the account password. It is shown a
+single time and stored only as an Argon2id hash.
+
+An app password works for SMTP submission, IMAP and POP3, as its `scopes`
+column allows (the default is all three). A scope limits it: an app password
+with only `imap` can read mail and cannot send. ManageSieve takes the mailbox
+password only. The mailbox password keeps working everywhere, and a login with
+an app password stamps its `last_used_at`, which the settings screen shows.
+
+Until this was wired in, the protocols compared every password only against the
+mailbox password, so an app password was created, shown and then refused by
+SMTP, IMAP and POP3 with `535 Authentication credentials invalid`.
+
 An account locks itself for 15 minutes after 5 failed passwords. That is the
 lockout working, not a fault; `reset-password` clears it.
 

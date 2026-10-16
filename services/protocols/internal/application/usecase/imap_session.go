@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/alexedwards/argon2id"
 	"github.com/google/uuid"
 
 	"lambdamail/protocols/internal/application/port"
@@ -64,7 +63,7 @@ func (uc *ImapSessionUseCase) Login(ctx context.Context, address, password strin
 	if rec == nil {
 		return "", ErrAuthFailed
 	}
-	match, err := argon2id.ComparePasswordAndHash(password, rec.PasswordHash)
+	match, err := verifyCredential(ctx, uc.auth, rec, password, ScopeIMAP)
 	if err != nil {
 		return "", err
 	}

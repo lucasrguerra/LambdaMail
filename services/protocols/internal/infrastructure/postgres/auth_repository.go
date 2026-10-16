@@ -38,5 +38,37 @@ func (r *AuthRepository) FindByAddress(ctx context.Context, address string) (*po
 		return nil, err
 	}
 	rec.ID = id
+
+	// The newest few only: each one costs an Argon2 comparison on a failed login,
+	// so the number considered is bounded.
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, password_hash, scopes
+		FROM app_passwords
+		WHERE mailbox_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, id, port.MaxAppPasswordsChecked)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var app port.AppPasswordAuth
+		if err := rows.Scan(&app.ID, &app.Hash, &app.Scopes); err != nil {
+			return nil, err
+		}
+		rec.AppPasswords = append(rec.AppPasswords, app)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return &rec, nil
+}
+
+// RecordAppPasswordUse stamps the moment an app password last signed a client in.
+func (r *AuthRepository) RecordAppPasswordUse(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE app_passwords SET last_used_at = NOW() WHERE id = $1`, id)
+	return err
 }
