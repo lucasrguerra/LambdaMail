@@ -13,22 +13,19 @@
  *   node dist/cli.js reset-mfa <email>
  */
 
+import { pathToFileURL } from "node:url";
 import { query, queryOne, closePool } from "./db.js";
 import { hashPassword } from "./crypto.js";
 
 const SYSTEM_ALIASES = ["postmaster", "abuse", "dmarc", "tlsrpt"];
-const STANDARD_FOLDERS: Array<[string, string]> = [
-  ["INBOX", "inbox"],
-  ["Sent", "sent"],
-  ["Drafts", "drafts"],
-  ["Trash", "trash"],
-  ["Junk", "junk"],
-  ["Archive", "archive"],
-];
 
+/** A refusal the operator should read, as opposed to a bug. */
+export class CliError extends Error {}
+
+// Thrown rather than exiting here, so the commands can be exercised from a test;
+// main() prints it as "error: ..." and exits 1, exactly as this used to.
 function fail(message: string): never {
-  console.error(`error: ${message}`);
-  process.exit(1);
+  throw new CliError(message);
 }
 
 function parseAddress(email: string): { localPart: string; domain: string } {
@@ -37,7 +34,7 @@ function parseAddress(email: string): { localPart: string; domain: string } {
   return { localPart: email.slice(0, at).toLowerCase(), domain: email.slice(at + 1).toLowerCase() };
 }
 
-async function createAdmin(email: string, password: string, force: boolean): Promise<void> {
+export async function createAdmin(email: string, password: string, force: boolean): Promise<void> {
   if (password.length < 12) fail("the password must be at least 12 characters");
   const { localPart, domain } = parseAddress(email);
 
@@ -69,13 +66,10 @@ async function createAdmin(email: string, password: string, force: boolean): Pro
   );
 
   // Delivery needs these: a mailbox with no INBOX cannot receive at all, and
-  // one with no Junk used to fail the spam path outright.
-  for (const [name, specialUse] of STANDARD_FOLDERS) {
-    await query(
-      `INSERT INTO folders (mailbox_id, name, special_use) VALUES ($1, $2, $3)`,
-      [mailbox!.id, name, specialUse],
-    );
-  }
+  // one with no Junk used to fail the spam path outright. The list lives in the
+  // database (migration 0014) so the console and this command cannot disagree
+  // about it, as they once did over the Reports folder.
+  await query(`SELECT provision_default_folders($1)`, [mailbox!.id]);
 
   // PLAN.md section 7.4b: the published DNS records name these, and reports
   // bounce if they do not resolve.
@@ -174,10 +168,13 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .then(() => closePool())
-  .catch(async (err) => {
-    console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
-    await closePool().catch(() => undefined);
-    process.exit(1);
-  });
+// Only when run as a command, not when a test imports the functions above
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .then(() => closePool())
+    .catch(async (err) => {
+      console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+      await closePool().catch(() => undefined);
+      process.exit(1);
+    });
+}

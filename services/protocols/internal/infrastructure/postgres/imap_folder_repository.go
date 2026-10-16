@@ -3,57 +3,50 @@ package postgres
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lambdamail/protocols/internal/application/port"
 )
 
-// ImapFolderRepository implements port.ImapFolderRepository against Postgres.
+// ImapFolderRepository resolves a mailbox's folders for LIST and SELECT. The
+// question is answered by MailStore, the same one the webmail asks, so a folder
+// reports the same number of messages on both.
 type ImapFolderRepository struct {
-	pool *pgxpool.Pool
+	store *MailStore
 }
 
 func NewImapFolderRepository(pool *pgxpool.Pool) *ImapFolderRepository {
-	return &ImapFolderRepository{pool: pool}
+	return &ImapFolderRepository{store: NewMailStore(pool)}
+}
+
+func imapRecord(f FolderInfo) port.ImapFolderRecord {
+	return port.ImapFolderRecord{
+		ID:            f.ID,
+		Name:          f.Name,
+		UIDNext:       uint32(f.UIDNext),
+		UIDValidity:   uint32(f.UIDValidity),
+		NumMessages:   uint32(f.Total),
+		HighestModSeq: uint64(f.HighestModSeq),
+	}
 }
 
 func (r *ImapFolderRepository) FindByName(ctx context.Context, mailboxID, name string) (*port.ImapFolderRecord, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT f.id, f.name, f.uid_next, f.uid_validity, f.total_count, f.highest_modseq
-		FROM folders f
-		WHERE f.mailbox_id = $1 AND f.name = $2
-	`, mailboxID, name)
-
-	var rec port.ImapFolderRecord
-	if err := row.Scan(&rec.ID, &rec.Name, &rec.UIDNext, &rec.UIDValidity, &rec.NumMessages, &rec.HighestModSeq); err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil
-		}
+	f, err := r.store.FolderByName(ctx, mailboxID, name)
+	if err != nil || f == nil {
 		return nil, err
 	}
+	rec := imapRecord(*f)
 	return &rec, nil
 }
 
 func (r *ImapFolderRepository) ListFolders(ctx context.Context, mailboxID string) ([]port.ImapFolderRecord, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT f.id, f.name, f.uid_next, f.uid_validity, f.total_count, f.highest_modseq
-		FROM folders f
-		WHERE f.mailbox_id = $1
-		ORDER BY f.name
-	`, mailboxID)
+	folders, err := r.store.Folders(ctx, mailboxID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	var out []port.ImapFolderRecord
-	for rows.Next() {
-		var rec port.ImapFolderRecord
-		if err := rows.Scan(&rec.ID, &rec.Name, &rec.UIDNext, &rec.UIDValidity, &rec.NumMessages, &rec.HighestModSeq); err != nil {
-			return nil, err
-		}
-		out = append(out, rec)
+	for _, f := range folders {
+		out = append(out, imapRecord(f))
 	}
-	return out, rows.Err()
+	return out, nil
 }

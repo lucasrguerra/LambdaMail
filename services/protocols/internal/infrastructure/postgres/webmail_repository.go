@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -19,76 +20,51 @@ var ErrMessageNotFound = errors.New("webmail: message not found")
 
 // WebmailRepository implements the webmail read side against Postgres.
 type WebmailRepository struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	store *MailStore
 }
 
 func NewWebmailRepository(pool *pgxpool.Pool) *WebmailRepository {
-	return &WebmailRepository{pool: pool}
+	return &WebmailRepository{pool: pool, store: NewMailStore(pool)}
 }
+
+// The methods below only read. They do not query on their own: the webmail asks
+// MailStore the same questions IMAP does and shapes the answers for the
+// browser, so a folder shows the same numbers in both.
 
 func (r *WebmailRepository) FindMailboxIDByAddress(ctx context.Context, address string) (string, error) {
-	var id string
-	err := r.pool.QueryRow(ctx, `
-		SELECT m.id::text FROM mailboxes m
-		  JOIN domains d ON d.id = m.domain_id
-		 WHERE m.email_address = $1 AND m.is_active AND d.is_active
-	`, address).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrMessageNotFound
-	}
-	return id, err
+	return r.store.MailboxIDByAddress(ctx, address)
 }
+
+// roleOrder is how the folder list is arranged for people: the folders they use
+// every day first, in a fixed order, then their own by name.
+var roleOrder = map[string]int{"inbox": 0, "drafts": 1, "sent": 2, "archive": 3, "junk": 4, "trash": 5}
 
 func (r *WebmailRepository) ListFolders(ctx context.Context, mailboxID string) ([]port.WebmailFolder, error) {
-	// The counts are derived from the messages themselves rather than read out
-	// of folders.unread_count/total_count.
-	//
-	// Those columns are a denormalised cache maintained by every write path,
-	// and once any one of them was wrong nothing brought it back: the number
-	// the user saw stayed wrong through a reload, a logout and a fresh login,
-	// because the wrongness was stored. Deriving here is authoritative and
-	// self-healing - a folder can only ever report what is actually in it.
-	//
-	// The columns stay maintained for IMAP's sake (STATUS answers from them),
-	// so this is a correction at the read side, not their removal.
-	rows, err := r.pool.Query(ctx, `
-		SELECT f.id::text, f.name, COALESCE(f.special_use, ''),
-		       COUNT(e.id) FILTER (
-		         WHERE NOT EXISTS (SELECT 1 FROM message_flags mf
-		                            WHERE mf.message_id = e.id
-		                              AND mf.received_at = e.received_at
-		                              AND mf.flag = '\Seen')
-		       )::int AS unread_count,
-		       COUNT(e.id)::int AS total_count
-		  FROM folders f
-		  LEFT JOIN email_messages e
-		         ON e.folder_id = f.id AND e.expunged_at IS NULL
-		 WHERE f.mailbox_id = $1
-		 GROUP BY f.id, f.name, f.special_use
-		 ORDER BY CASE f.special_use
-		            WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sent' THEN 2
-		            WHEN 'archive' THEN 3 WHEN 'junk' THEN 4 WHEN 'trash' THEN 5
-		            ELSE 6 END, f.name
-	`, mailboxID)
+	folders, err := r.store.Folders(ctx, mailboxID)
 	if err != nil {
-		return nil, fmt.Errorf("list folders: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	folders := []port.WebmailFolder{}
-	for rows.Next() {
-		var f port.WebmailFolder
-		if err := rows.Scan(&f.ID, &f.Name, &f.SpecialUse, &f.UnreadCount, &f.TotalCount); err != nil {
-			return nil, err
+	out := make([]port.WebmailFolder, 0, len(folders))
+	for _, f := range folders {
+		out = append(out, port.WebmailFolder{ID: f.ID, Name: f.Name, SpecialUse: f.SpecialUse, UnreadCount: f.Unread, TotalCount: f.Total})
+	}
+
+	rank := func(f port.WebmailFolder) int {
+		if n, ok := roleOrder[f.SpecialUse]; ok {
+			return n
 		}
-		folders = append(folders, f)
+		return 6
 	}
-	return folders, rows.Err()
+	sort.SliceStable(out, func(i, j int) bool {
+		if ri, rj := rank(out[i]), rank(out[j]); ri != rj {
+			return ri < rj
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
 }
-
-// folderCondition matches either the special-use role ("inbox") or the literal
-// folder name, so the UI can address a folder the same way IMAP does.
-const folderCondition = `(f.special_use = LOWER($2) OR LOWER(f.name) = LOWER($2))`
 
 func (r *WebmailRepository) ListMessages(
 	ctx context.Context, mailboxID, folderName, search string, limit, offset int,
@@ -96,379 +72,130 @@ func (r *WebmailRepository) ListMessages(
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	if offset < 0 {
-		offset = 0
-	}
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT e.uid, COALESCE(e.subject, ''), e.sender_address::text,
-		       COALESCE(e.from_display_name, ''), COALESCE(e.snippet, ''),
-		       e.size_bytes, e.received_at, e.has_attachments,
-		       EXISTS (SELECT 1 FROM message_flags mf
-		                WHERE mf.message_id = e.id AND mf.received_at = e.received_at AND mf.flag = '\Seen'),
-		       EXISTS (SELECT 1 FROM message_flags mf
-		                WHERE mf.message_id = e.id AND mf.received_at = e.received_at AND mf.flag = '\Flagged'),
-		       EXISTS (SELECT 1 FROM message_flags mf
-		                WHERE mf.message_id = e.id AND mf.received_at = e.received_at AND mf.flag = '\Answered'),
-		       COALESCE(e.spam_verdict, ''), COALESCE(e.dmarc_result, '')
-		  FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.expunged_at IS NULL
-		   AND ($3 = '' OR e.subject ILIKE '%%' || $3 || '%%'
-		                OR e.sender_address::text ILIKE '%%' || $3 || '%%'
-		                OR e.snippet ILIKE '%%' || $3 || '%%')
-		 ORDER BY e.received_at DESC, e.uid DESC
-		 LIMIT $4 OFFSET $5
-	`, mailboxID, folderName, search, limit, offset)
+	folderID, err := r.store.ResolveFolder(ctx, mailboxID, folderName)
+	if errors.Is(err, port.ErrFolderMissing) {
+		return []port.WebmailMessage{}, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("list messages: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
 
-	messages := []port.WebmailMessage{}
-	for rows.Next() {
-		var m port.WebmailMessage
-		if err := rows.Scan(
-			&m.UID, &m.Subject, &m.SenderAddress, &m.FromName, &m.Snippet,
-			&m.SizeBytes, &m.ReceivedAt, &m.HasAttachments,
-			&m.Seen, &m.Flagged, &m.Answered, &m.SpamVerdict, &m.DmarcResult,
-		); err != nil {
-			return nil, err
-		}
-		messages = append(messages, m)
+	messages, err := r.store.Messages(ctx, folderID, MessageQuery{NewestFirst: true, Search: search, Limit: limit, Offset: offset})
+	if err != nil {
+		return nil, err
 	}
-	return messages, rows.Err()
+
+	out := make([]port.WebmailMessage, 0, len(messages))
+	for _, m := range messages {
+		out = append(out, port.WebmailMessage{
+			UID: m.UID, Subject: m.Subject, SenderAddress: m.SenderAddress, FromName: m.FromName, Snippet: m.Snippet,
+			SizeBytes: m.Size, ReceivedAt: m.ReceivedAt, HasAttachments: m.HasAttachments,
+			Seen: m.HasFlag(`\Seen`), Flagged: m.HasFlag(`\Flagged`), Answered: m.HasFlag(`\Answered`),
+			SpamVerdict: m.SpamVerdict, DmarcResult: m.DmarcResult,
+		})
+	}
+	return out, nil
 }
 
-func (r *WebmailRepository) GetMessageBlob(
-	ctx context.Context, mailboxID, folderName string, uid uint32,
-) (uuid.UUID, error) {
-	var blobID uuid.UUID
-	err := r.pool.QueryRow(ctx, `
-		SELECT e.blob_id FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.uid = $3 AND e.expunged_at IS NULL
-	`, mailboxID, folderName, int64(uid)).Scan(&blobID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, ErrMessageNotFound
+func (r *WebmailRepository) GetMessageBlob(ctx context.Context, mailboxID, folderName string, uid uint32) (uuid.UUID, error) {
+	folderID, err := r.messageFolder(ctx, mailboxID, folderName)
+	if err != nil {
+		return uuid.Nil, err
 	}
-	return blobID, err
+	return r.store.MessageBlob(ctx, folderID, uid)
 }
 
-// MarkSeen keeps the \Seen flag and the folder's unread counter in step. They
-// are updated together in one transaction, because a counter that disagrees
-// with the flags is what makes an inbox show unread mail that is not there.
-func (r *WebmailRepository) MarkSeen(
-	ctx context.Context, mailboxID, folderName string, uid uint32, seen bool,
-) error {
-	tx, err := r.pool.Begin(ctx)
+// The methods below change state. They do not do it themselves: the webmail
+// names a message by mailbox, folder name and UID, MailStore by folder id and
+// UID, and these translate. Every counter, modseq and quota rule lives in
+// MailStore, which IMAP uses too, so the two can no longer disagree.
+
+// messageFolder resolves the folder a message is addressed in. A folder that is
+// not there and a message that is not there look the same to the caller, so a
+// stranger cannot probe which folders exist.
+func (r *WebmailRepository) messageFolder(ctx context.Context, mailboxID, folderName string) (string, error) {
+	id, err := r.store.ResolveFolder(ctx, mailboxID, folderName)
+	if errors.Is(err, port.ErrFolderMissing) {
+		return "", ErrMessageNotFound
+	}
+	return id, err
+}
+
+// MarkSeen sets or clears \Seen. The unread counter follows inside MailStore.
+func (r *WebmailRepository) MarkSeen(ctx context.Context, mailboxID, folderName string, uid uint32, seen bool) error {
+	return r.setFlag(ctx, mailboxID, folderName, uid, `\Seen`, seen)
+}
+
+// MarkFlagged sets or clears \Flagged.
+func (r *WebmailRepository) MarkFlagged(ctx context.Context, mailboxID, folderName string, uid uint32, flagged bool) error {
+	return r.setFlag(ctx, mailboxID, folderName, uid, `\Flagged`, flagged)
+}
+
+func (r *WebmailRepository) setFlag(ctx context.Context, mailboxID, folderName string, uid uint32, flag string, on bool) error {
+	folderID, err := r.messageFolder(ctx, mailboxID, folderName)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	op := port.FlagOpAdd
+	if !on {
+		op = port.FlagOpDel
+	}
+	_, err = r.store.SetFlags(ctx, folderID, uid, op, []string{flag}, 0)
+	return err
+}
 
-	var messageID uuid.UUID
-	var receivedAt any
-	var folderID string
-	err = tx.QueryRow(ctx, `
-		SELECT e.id, e.received_at, f.id::text FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.uid = $3 AND e.expunged_at IS NULL
-	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &receivedAt, &folderID)
-	if errors.Is(err, pgx.ErrNoRows) {
+// Expunge removes one message for good (soft delete) and gives its bytes back.
+func (r *WebmailRepository) Expunge(ctx context.Context, mailboxID, folderName string, uid uint32) error {
+	folderID, err := r.messageFolder(ctx, mailboxID, folderName)
+	if err != nil {
+		return err
+	}
+	removed, err := r.store.Expunge(ctx, folderID, []uint32{uid})
+	if err != nil {
+		return err
+	}
+	if removed == 0 {
 		return ErrMessageNotFound
 	}
-	if err != nil {
-		return err
-	}
-
-	var changed int64
-	if seen {
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO message_flags (message_id, received_at, flag)
-			VALUES ($1, $2, '\Seen') ON CONFLICT DO NOTHING
-		`, messageID, receivedAt)
-		if err != nil {
-			return err
-		}
-		changed = tag.RowsAffected()
-	} else {
-		tag, err := tx.Exec(ctx, `
-			DELETE FROM message_flags WHERE message_id = $1 AND received_at = $2 AND flag = '\Seen'
-		`, messageID, receivedAt)
-		if err != nil {
-			return err
-		}
-		changed = tag.RowsAffected()
-	}
-
-	// Only a real transition moves the counter, so opening an already-read
-	// message repeatedly cannot drive unread_count negative.
-	if changed > 0 {
-		delta := 1
-		if seen {
-			delta = -1
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE folders SET unread_count = GREATEST(0, unread_count + $2), highest_modseq = highest_modseq + 1
-			 WHERE id = $1
-		`, folderID, delta); err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit(ctx)
-}
-
-// MarkFlagged sets or clears \Flagged. Unlike \Seen it moves no counter, but a
-// real change still bumps the folder's modseq: that is how an IMAP client
-// holding the folder open learns the flag changed without a full resync.
-func (r *WebmailRepository) MarkFlagged(
-	ctx context.Context, mailboxID, folderName string, uid uint32, flagged bool,
-) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	var messageID uuid.UUID
-	var receivedAt any
-	var folderID string
-	err = tx.QueryRow(ctx, `
-		SELECT e.id, e.received_at, f.id::text FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.uid = $3 AND e.expunged_at IS NULL
-	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &receivedAt, &folderID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrMessageNotFound
-	}
-	if err != nil {
-		return err
-	}
-
-	var changed int64
-	if flagged {
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO message_flags (message_id, received_at, flag)
-			VALUES ($1, $2, '\Flagged') ON CONFLICT DO NOTHING
-		`, messageID, receivedAt)
-		if err != nil {
-			return err
-		}
-		changed = tag.RowsAffected()
-	} else {
-		tag, err := tx.Exec(ctx, `
-			DELETE FROM message_flags WHERE message_id = $1 AND received_at = $2 AND flag = '\Flagged'
-		`, messageID, receivedAt)
-		if err != nil {
-			return err
-		}
-		changed = tag.RowsAffected()
-	}
-
-	if changed > 0 {
-		if _, err := tx.Exec(ctx,
-			`UPDATE folders SET highest_modseq = highest_modseq + 1 WHERE id = $1`, folderID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
-}
-
-// Expunge marks one message deleted and keeps the folder counters in step.
-//
-// Soft delete, matching the expunged_at column the rest of the schema uses: the
-// blob stays referenced until the retention sweep, so a mistaken delete is
-// recoverable and IMAP clients holding the UID still resolve it.
-//
-// The message is located by mailbox as well as UID, so a caller cannot expunge
-// somebody else's mail by guessing a number.
-func (r *WebmailRepository) Expunge(
-	ctx context.Context, mailboxID, folderName string, uid uint32,
-) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	var messageID uuid.UUID
-	var folderID string
-	var wasUnread bool
-	err = tx.QueryRow(ctx, `
-		SELECT e.id, f.id::text,
-		       NOT EXISTS (SELECT 1 FROM message_flags mf
-		                    WHERE mf.message_id = e.id
-		                      AND mf.received_at = e.received_at
-		                      AND mf.flag = '\Seen')
-		  FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.uid = $3 AND e.expunged_at IS NULL
-	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &folderID, &wasUnread)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrMessageNotFound
-	}
-	if err != nil {
-		return err
-	}
-
-	if _, err := tx.Exec(ctx,
-		`UPDATE email_messages SET expunged_at = NOW() WHERE id = $1`, messageID); err != nil {
-		return err
-	}
-
-	// GREATEST guards the counters against ever going negative, which a
-	// double expunge of the same row would otherwise cause.
-	unreadDelta := 0
-	if wasUnread {
-		unreadDelta = -1
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE folders
-		   SET total_count = GREATEST(0, total_count - 1),
-		       unread_count = GREATEST(0, unread_count + $2),
-		       highest_modseq = highest_modseq + 1
-		 WHERE id = $1
-	`, folderID, unreadDelta); err != nil {
-		return err
-	}
-
-	return tx.Commit(ctx)
-}
-
-// MoveToTrash relocates one message into the mailbox's Trash folder and
-// returns the UID it was given there.
-//
-// This is what "delete" means in a mail client, and the webmail had no way to
-// do it at all: the only removal in the codebase was Expunge, reachable solely
-// when an autosave superseded a draft. A message the user wanted rid of - the
-// empty draft left behind by a sent message, most visibly - could not be
-// removed from any screen.
-//
-// The message keeps its identity and its blob; only the folder and the UID
-// change, because a UID is meaningful only within one folder. Deleting from
-// Trash itself is Expunge's job, not this one's.
-func (r *WebmailRepository) MoveToTrash(
-	ctx context.Context, mailboxID, folderName string, uid uint32,
-) (uint32, error) {
-	return r.moveInto(ctx, mailboxID, folderName, uid, trashTarget)
-}
-
-// MoveToFolder files one message into a named folder.
-//
-// The target is matched on its special-use role or its name, the same way the
-// rest of this repository addresses folders, so "archive" and "Archive" both
-// reach the same place and a folder the user created themselves - which has no
-// role - is reachable by name.
-func (r *WebmailRepository) MoveToFolder(
-	ctx context.Context, mailboxID, folderName string, uid uint32, target string,
-) (uint32, error) {
-	return r.moveInto(ctx, mailboxID, folderName, uid, target)
+	return nil
 }
 
 // trashTarget is what MoveToTrash resolves; kept as a constant so the two
 // callers cannot drift.
 const trashTarget = "trash"
 
-func (r *WebmailRepository) moveInto(
-	ctx context.Context, mailboxID, folderName string, uid uint32, target string,
-) (uint32, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-
-	var messageID uuid.UUID
-	var sourceFolderID string
-	var wasUnread bool
-	err = tx.QueryRow(ctx, `
-		SELECT e.id, f.id::text,
-		       NOT EXISTS (SELECT 1 FROM message_flags mf
-		                    WHERE mf.message_id = e.id
-		                      AND mf.received_at = e.received_at
-		                      AND mf.flag = '\Seen')
-		  FROM email_messages e
-		  JOIN folders f ON f.id = e.folder_id
-		 WHERE e.mailbox_id = $1 AND `+folderCondition+`
-		   AND e.uid = $3 AND e.expunged_at IS NULL
-	`, mailboxID, folderName, int64(uid)).Scan(&messageID, &sourceFolderID, &wasUnread)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ErrMessageNotFound
-	}
-	if err != nil {
-		return 0, err
-	}
-
-	// Deleting something already in Trash has no further destination, so the
-	// caller is told to expunge instead of the message being moved onto itself.
-	var trashFolderID string
-	var trashUID int64
-	err = tx.QueryRow(ctx, `
-		SELECT id::text, uid_next FROM folders
-		 WHERE mailbox_id = $1 AND (special_use = LOWER($2) OR LOWER(name) = LOWER($2))
-		 ORDER BY special_use IS NOT NULL DESC
-		 LIMIT 1
-		 FOR UPDATE
-	`, mailboxID, target).Scan(&trashFolderID, &trashUID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, port.ErrNoTrashFolder
-	}
-	if err != nil {
-		return 0, err
-	}
-	if trashFolderID == sourceFolderID {
-		return 0, port.ErrAlreadyInTrash
-	}
-
-	var modseq int64
-	if err := tx.QueryRow(ctx, `
-		UPDATE folders SET uid_next = uid_next + 1, highest_modseq = highest_modseq + 1,
-		       total_count = total_count + 1, unread_count = unread_count + $2
-		 WHERE id = $1
-		 RETURNING highest_modseq
-	`, trashFolderID, boolToInt(wasUnread)).Scan(&modseq); err != nil {
-		return 0, err
-	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE email_messages SET folder_id = $2, uid = $3, modseq = $4
-		 WHERE id = $1
-	`, messageID, trashFolderID, trashUID, modseq); err != nil {
-		return 0, err
-	}
-
-	unreadDelta := 0
-	if wasUnread {
-		unreadDelta = -1
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE folders
-		   SET total_count = GREATEST(0, total_count - 1),
-		       unread_count = GREATEST(0, unread_count + $2),
-		       highest_modseq = highest_modseq + 1
-		 WHERE id = $1
-	`, sourceFolderID, unreadDelta); err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return uint32(trashUID), nil
+// MoveToTrash is what "delete" means in a mail client: the message goes to the
+// Trash folder and keeps its identity. Deleting from Trash itself is Expunge's
+// job, so asking to move out of Trash reports port.ErrAlreadyInTrash.
+func (r *WebmailRepository) MoveToTrash(ctx context.Context, mailboxID, folderName string, uid uint32) (uint32, error) {
+	return r.moveInto(ctx, mailboxID, folderName, uid, trashTarget)
 }
 
-func boolToInt(b bool) int {
-	if b {
-		return 1
+// MoveToFolder files one message into a named folder, matched by role or name.
+func (r *WebmailRepository) MoveToFolder(ctx context.Context, mailboxID, folderName string, uid uint32, target string) (uint32, error) {
+	return r.moveInto(ctx, mailboxID, folderName, uid, target)
+}
+
+func (r *WebmailRepository) moveInto(ctx context.Context, mailboxID, folderName string, uid uint32, target string) (uint32, error) {
+	sourceID, err := r.messageFolder(ctx, mailboxID, folderName)
+	if err != nil {
+		return 0, err
 	}
-	return 0
+	destID, err := r.store.ResolveFolder(ctx, mailboxID, target)
+	if errors.Is(err, port.ErrFolderMissing) {
+		if target == trashTarget {
+			return 0, port.ErrNoTrashFolder
+		}
+		return 0, port.ErrFolderMissing
+	}
+	if err != nil {
+		return 0, err
+	}
+	if destID == sourceID {
+		return 0, port.ErrAlreadyInTrash
+	}
+	return r.store.Move(ctx, sourceID, uid, destID)
 }
 
 // --- folders the mailbox owner creates for themselves --------------------
@@ -507,20 +234,12 @@ func (r *WebmailRepository) RenameFolder(ctx context.Context, mailboxID, from, t
 	return nil
 }
 
-// DeleteFolder removes a folder and the mail filed in it.
-//
-// The messages are expunged rather than deleted outright, matching what the
-// rest of the schema does: the blobs stay referenced until the retention sweep,
-// so a folder deleted by mistake is still recoverable from the database.
+// DeleteFolder removes a folder the owner made, and the mail filed in it. The
+// messages are expunged (recoverable) and their bytes go back to the quota,
+// both inside MailStore.
 func (r *WebmailRepository) DeleteFolder(ctx context.Context, mailboxID, name string) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
 	var folderID string
-	err = tx.QueryRow(ctx, `
+	err := r.pool.QueryRow(ctx, `
 		SELECT id::text FROM folders
 		 WHERE mailbox_id = $1 AND LOWER(name) = LOWER($2) AND special_use IS NULL
 	`, mailboxID, name).Scan(&folderID)
@@ -530,16 +249,5 @@ func (r *WebmailRepository) DeleteFolder(ctx context.Context, mailboxID, name st
 	if err != nil {
 		return err
 	}
-
-	if _, err := tx.Exec(ctx, `
-		UPDATE email_messages SET expunged_at = NOW()
-		 WHERE folder_id = $1 AND expunged_at IS NULL
-	`, folderID); err != nil {
-		return fmt.Errorf("expunge the folder's messages: %w", err)
-	}
-
-	if _, err := tx.Exec(ctx, `DELETE FROM folders WHERE id = $1`, folderID); err != nil {
-		return fmt.Errorf("delete folder %q: %w", name, err)
-	}
-	return tx.Commit(ctx)
+	return r.store.DeleteFolder(ctx, folderID)
 }

@@ -32,10 +32,9 @@ type WebmailUseCase struct {
 	submission *ProcessOutboundEmailUseCase
 	auth       port.AuthRepository
 	localHost  string
-	// blobStore and messages file the sender's own copy into Sent, and hold
-	// drafts. Both are optional: when either is nil the copy is skipped rather
-	// than the send failing, because a message that has already been queued
-	// for delivery must not be reported as an error.
+	// blobStore and messages hold drafts. Both are optional: when either is nil
+	// saving a draft reports ErrDraftsUnavailable. (The copy in Sent is filed by
+	// the submission use case, not here.)
 	blobStore port.BlobStorage
 	messages  port.InboundMessageRepository
 }
@@ -53,7 +52,7 @@ func NewWebmailUseCase(
 	return &WebmailUseCase{repo: repo, blobs: blobs, submission: submission, auth: auth, localHost: localHost}
 }
 
-// WithLocalFiling enables the Sent copy and draft storage.
+// WithLocalFiling enables draft storage.
 func (uc *WebmailUseCase) WithLocalFiling(store port.BlobStorage, messages port.InboundMessageRepository) *WebmailUseCase {
 	uc.blobStore = store
 	uc.messages = messages
@@ -188,6 +187,10 @@ func (uc *WebmailUseCase) Send(ctx context.Context, input ComposeInput) error {
 
 	payload := buildMimeMessage(input, recipients, uc.localHost)
 
+	// The copy in Sent is filed by Submit, the same way it is for a client that
+	// sends over SMTP: one rule, one place. It used to be filed here, after the
+	// submission, and not at all for SMTP, so an account that sent by SMTP had an
+	// empty Sent folder.
 	if err := uc.submission.Submit(ctx, ProcessOutboundEmailInput{
 		MailboxID:            account.ID,
 		SenderAddr:           account.EmailAddress,
@@ -195,17 +198,9 @@ func (uc *WebmailUseCase) Send(ctx context.Context, input ComposeInput) error {
 		Recipients:           recipients,
 		Body:                 bytes.NewReader(payload),
 		MaxRecipientsPerHour: account.MaxRecipientsPerHour,
+		FileSentCopy:         true,
 	}); err != nil {
 		return err
-	}
-
-	// Only after the message is durably queued. Filing it first would leave a
-	// copy in Sent for a message that was then rejected by the send limit.
-	//
-	// A failure here is logged and swallowed: the mail is already on its way,
-	// and telling the composer the send failed would invite a duplicate.
-	if err := uc.fileLocalCopy(ctx, account.ID, account.EmailAddress, "Sent", payload); err != nil {
-		log.Printf("webmail: could not file the Sent copy for %s: %v", account.EmailAddress, err)
 	}
 
 	// The draft this message grew out of has been superseded by the real
@@ -286,36 +281,6 @@ func (uc *WebmailUseCase) Delete(ctx context.Context, address, folder string, ui
 	default:
 		return err
 	}
-}
-
-// fileLocalCopy stores a message the user themselves composed into one of
-// their own folders. It reuses the inbound persistence path so the copy gets a
-// real IMAP UID and shows up over IMAP as well as in the webmail.
-func (uc *WebmailUseCase) fileLocalCopy(
-	ctx context.Context, mailboxID uuid.UUID, address, folder string, payload []byte,
-) error {
-	if uc.blobStore == nil || uc.messages == nil {
-		return nil
-	}
-	blob, err := uc.blobStore.Store(ctx, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	headers := ExtractMessageHeaders(payload)
-	_, err = uc.messages.PersistAll(ctx, []port.PersistInboundMessageInput{{
-		MailboxID:        mailboxID,
-		Blob:             blob,
-		SenderAddress:    address,
-		RecipientAddress: address,
-		TargetFolderName: folder,
-		Subject:          headers.Subject,
-		Snippet:          headers.Snippet,
-		FromDisplayName:  headers.FromDisplayName,
-		MessageIDHeader:  headers.MessageID,
-		HasAttachments:   headers.HasAttachments,
-		AlreadySeen:      true,
-	}})
-	return err
 }
 
 // SaveDraft files the message being composed into the Drafts folder.
