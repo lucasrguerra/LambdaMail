@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { initialsFor } from "../lib/initials";
+import { avatarVersionOf, subscribeAvatarVersions } from "../lib/avatarVersion";
 
 interface AvatarProps {
   address: string | null | undefined;
@@ -28,7 +29,23 @@ export function Avatar({ address, size, className = "", initials }: AvatarProps)
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const src = address ? `/api/v1/avatar?address=${encodeURIComponent(address)}` : null;
+  // Bumped when this person's photo is saved or removed, here or in another
+  // tab, so the browser asks again instead of reusing what it cached
+  const version = useSyncExternalStore(
+    subscribeAvatarVersions,
+    () => avatarVersionOf(address),
+    () => 0,
+  );
+
+  const src = address
+    ? `/api/v1/avatar?address=${encodeURIComponent(address)}${version ? `&v=${version}` : ""}`
+    : null;
+
+  // A new version may turn "no photo" (404) into a photo, or the reverse
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [version]);
 
   return (
     <span

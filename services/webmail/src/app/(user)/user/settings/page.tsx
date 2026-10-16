@@ -26,6 +26,7 @@ import { signatureToHtml, sanitizeSignature } from "../../../../lib/signature";
 import { buildSieve, parseSieve, type Rule, type RuleField, type RuleCondition, type RuleAction } from "../../../../lib/rules";
 import { useFolders } from "../../../../lib/useFolders";
 import { AvatarEditor } from "../../../../components/AvatarEditor";
+import { bumpAvatar } from "../../../../lib/avatarVersion";
 import { useAccount } from "../../../../lib/useAccount";
 import { moveTargets } from "../../../../lib/mailCounts";
 
@@ -357,8 +358,10 @@ export default function UserSettingsPage() {
               src={avatarSrc}
               onSaved={() => {
                 // The query string changes so the browser fetches the new
-                // photo instead of the one it already has under this URL.
+                // photo instead of the one it already has under this URL;
+                // bumpAvatar does the same for every <Avatar> on screen.
                 setAvatarVersion((v) => v + 1);
+                bumpAvatar(account?.email);
               }}
             />
           </section>
