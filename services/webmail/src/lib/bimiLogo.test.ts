@@ -148,7 +148,7 @@ describe("buildLogoSvg", () => {
 
   it("counts bytes, not characters", () => {
     expect(byteLength("a")).toBe(1);
-    expect(byteLength("é")).toBe(2);
+    expect(byteLength("\u00e9")).toBe(2);
   });
 });
 
