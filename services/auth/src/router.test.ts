@@ -946,6 +946,14 @@ describeDb("auth API against a real database", () => {
       expect(got.headers.get("content-type")).toBe("image/png");
       expect(Buffer.from(await got.arrayBuffer())).toEqual(png);
 
+      // A new photo has to show up quickly: the browser may reuse the old one
+      // for at most a minute, and must ask again after that. It was five minutes
+      // with no revalidation, which is what made a changed photo "take forever".
+      const cacheControl = got.headers.get("cache-control") ?? "";
+      expect(cacheControl).toContain("private");
+      expect(cacheControl).toContain("must-revalidate");
+      expect(Number(/max-age=(\d+)/.exec(cacheControl)?.[1])).toBeLessThanOrEqual(60);
+
       // A photo appears beside every message from that person; without the
       // conditional answer it would be re-sent on every one of them.
       const etag = got.headers.get("etag")!;

@@ -2,21 +2,28 @@ package httppresentation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"lambdamail/protocols/internal/domain/bimi"
 )
 
-// BimiStore holds the mark a domain publishes.
+// BimiStore holds the mark a domain publishes, and the certificate that
+// vouches for it.
 type BimiStore interface {
 	Save(ctx context.Context, domain string, svg []byte, vmcURL string) (string, error)
 	Load(ctx context.Context, domain string) (*BimiLogo, error)
 	Delete(ctx context.Context, domain string) error
+	// SaveCertificate reports false when the domain has no logo to attach it to.
+	SaveCertificate(ctx context.Context, domain string, pem []byte) (bool, error)
+	DeleteCertificate(ctx context.Context, domain string) error
 }
 
 // BimiLogo is a stored mark as this layer sees it.
@@ -24,6 +31,8 @@ type BimiLogo struct {
 	SVG    []byte
 	ETag   string
 	VmcURL string
+	// VmcPEM is the certificate chain held here, if the operator uploaded one.
+	VmcPEM []byte
 }
 
 type bimiAPI struct {
@@ -32,14 +41,27 @@ type bimiAPI struct {
 	// domainOf maps the host a request arrived on to the mail domain whose
 	// logo should answer, so one deployment can serve several.
 	defaultDomain string
+	// mailHost is where the logo and the certificate are served from: the host
+	// the DNS record names.
+	mailHost string
+	now      func() time.Time
+	dns      bimi.Resolver
+	fetch    bimi.Fetcher
 }
 
 // SetBimiAPI wires the BIMI logo store.
-func (r *Router) SetBimiAPI(store BimiStore, sessionSecret, defaultDomain string) {
+func (r *Router) SetBimiAPI(store BimiStore, sessionSecret, defaultDomain, mailHost string) {
 	if store == nil {
 		return
 	}
-	r.bimi = &bimiAPI{store: store, defaultDomain: defaultDomain}
+	r.bimi = &bimiAPI{
+		store:         store,
+		defaultDomain: defaultDomain,
+		mailHost:      mailHost,
+		now:           time.Now,
+		dns:           netResolver{},
+		fetch:         newBimiFetcher(),
+	}
 	if sessionSecret != "" {
 		r.bimi.sessions = NewWebSessionVerifier(sessionSecret)
 	}
@@ -101,27 +123,37 @@ func (a *bimiAPI) domainFor(req *http.Request) string {
 	return a.defaultDomain
 }
 
-// handleBimiAdmin uploads, inspects or removes a domain's mark.
-func (r *Router) handleBimiAdmin(w http.ResponseWriter, req *http.Request) {
+// requireBimiAdmin answers the admin session and domain checks shared by every
+// BIMI console route. It writes the refusal itself and returns false.
+func (r *Router) requireBimiAdmin(w http.ResponseWriter, req *http.Request) (string, bool) {
 	if r.bimi == nil || r.bimi.sessions == nil {
 		writeError(w, http.StatusServiceUnavailable, "BIMI_DISABLED",
 			"The BIMI panel needs JWT_SECRET and a database")
-		return
+		return "", false
 	}
 
 	token := bearerOrCookie(req, "lm_admin_session")
 	if token == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Admin session required")
-		return
+		return "", false
 	}
 	if _, err := r.bimi.sessions.RequireSurface(token, "admin"); err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Admin session required")
-		return
+		return "", false
 	}
 
 	domain := strings.TrimSpace(req.URL.Query().Get("domain"))
 	if domain == "" {
 		writeError(w, http.StatusBadRequest, "DOMAIN_REQUIRED", "A domain is required")
+		return "", false
+	}
+	return domain, true
+}
+
+// handleBimiAdmin uploads, inspects or removes a domain's mark.
+func (r *Router) handleBimiAdmin(w http.ResponseWriter, req *http.Request) {
+	domain, ok := r.requireBimiAdmin(w, req)
+	if !ok {
 		return
 	}
 
@@ -142,6 +174,120 @@ func (r *Router) handleBimiAdmin(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// handleBimiCertificate serves the certificate chain, like the logo: fetched
+// by receiving providers that hold no session.
+func (r *Router) handleBimiCertificate(w http.ResponseWriter, req *http.Request) {
+	if r.bimi == nil {
+		http.NotFound(w, req)
+		return
+	}
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "GET required")
+		return
+	}
+
+	logo, err := r.bimi.store.Load(req.Context(), r.bimi.domainFor(req))
+	if err != nil || logo == nil || len(logo.VmcPEM) == 0 {
+		http.NotFound(w, req)
+		return
+	}
+
+	sum := sha256.Sum256(logo.VmcPEM)
+	etag := `"` + hex.EncodeToString(sum[:]) + `"`
+	if req.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("ETag", etag)
+	// Shorter than the logo: a renewed certificate should reach receivers
+	// within the hour, not the day.
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if req.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, _ = w.Write(logo.VmcPEM)
+}
+
+// handleBimiCertificateAdmin uploads or removes the certificate chain.
+func (r *Router) handleBimiCertificateAdmin(w http.ResponseWriter, req *http.Request) {
+	domain, ok := r.requireBimiAdmin(w, req)
+	if !ok {
+		return
+	}
+
+	switch req.Method {
+	case http.MethodPut:
+		r.bimi.putCertificate(w, req, domain)
+	case http.MethodDelete:
+		if err := r.bimi.store.DeleteCertificate(req.Context(), domain); err != nil {
+			log.Printf("bimi: could not delete the certificate for %s: %v", domain, err)
+			writeError(w, http.StatusInternalServerError, "DELETE_FAILED", "Could not remove the certificate")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "PUT or DELETE")
+	}
+}
+
+// handleBimiCheck looks at everything a receiver would look at, and says which
+// part is wrong.
+func (r *Router) handleBimiCheck(w http.ResponseWriter, req *http.Request) {
+	domain, ok := r.requireBimiAdmin(w, req)
+	if !ok {
+		return
+	}
+	if req.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "GET required")
+		return
+	}
+
+	logo, err := r.bimi.store.Load(req.Context(), domain)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "LOAD_FAILED", "Could not read the logo")
+		return
+	}
+	if logo == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false, "checks": []any{}})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 25*time.Second)
+	defer cancel()
+
+	in := bimi.Inputs{
+		Domain:                 domain,
+		LogoURL:                BimiLogoURL(r.bimi.mailHost),
+		SVG:                    logo.SVG,
+		CertificatePEM:         logo.VmcPEM,
+		ExternalCertificateURL: logo.VmcURL,
+		Now:                    r.bimi.now(),
+	}
+	// The record must name the certificate that is actually served
+	switch {
+	case len(logo.VmcPEM) > 0:
+		in.CertificateURL = BimiVmcURL(r.bimi.mailHost)
+	default:
+		in.CertificateURL = logo.VmcURL
+	}
+
+	results := bimi.RunChecks(ctx, in, r.bimi.dns, r.bimi.fetch)
+	checks := make([]map[string]string, 0, len(results))
+	ready := true
+	for _, c := range results {
+		checks = append(checks, map[string]string{"id": c.ID, "status": string(c.Status), "detail": c.Detail})
+		// A missing certificate is a warning, not a fault: some receivers show the logo without one
+		if c.Status == bimi.StatusFail {
+			ready = false
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "ready": ready, "checks": checks})
+}
+
 func (a *bimiAPI) get(w http.ResponseWriter, req *http.Request, domain string) {
 	logo, err := a.store.Load(req.Context(), domain)
 	if err != nil {
@@ -153,11 +299,101 @@ func (a *bimiAPI) get(w http.ResponseWriter, req *http.Request, domain string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"configured": true,
-		"etag":       logo.ETag,
-		"vmc_url":    logo.VmcURL,
-		"bytes":      len(logo.SVG),
-		"svg":        string(logo.SVG),
+		"configured":      true,
+		"etag":            logo.ETag,
+		"vmc_url":         logo.VmcURL,
+		"bytes":           len(logo.SVG),
+		"svg":             string(logo.SVG),
+		"logo_url":        BimiLogoURL(a.mailHost),
+		"certificate_url": BimiVmcURL(a.mailHost),
+		"certificate":     a.describeCertificate(domain, logo),
+	})
+}
+
+// describeCertificate reports the held certificate as it stands against the
+// logo now being served. Read from the file each time, so it cannot drift from
+// what receivers get.
+func (a *bimiAPI) describeCertificate(domain string, logo *BimiLogo) map[string]any {
+	if len(logo.VmcPEM) == 0 {
+		return map[string]any{"present": false}
+	}
+	cert, violations := bimi.InspectCertificate(logo.VmcPEM, domain, logo.SVG, a.now())
+	reasons := make([]string, 0, len(violations))
+	for _, v := range violations {
+		reasons = append(reasons, v.String())
+	}
+	out := map[string]any{"present": true, "valid": len(violations) == 0, "violations": reasons}
+	if cert != nil {
+		out["subject"] = cert.Subject
+		out["organization"] = cert.Organization
+		out["issuer"] = cert.Issuer
+		out["not_before"] = cert.NotBefore.UTC().Format(time.RFC3339)
+		out["not_after"] = cert.NotAfter.UTC().Format(time.RFC3339)
+		out["dns_names"] = cert.DNSNames
+		out["mark_type"] = cert.MarkType
+		out["kind"] = string(cert.Kind)
+		out["chain_length"] = cert.ChainLength
+		out["matches_logo"] = cert.MatchesLogo
+		out["warnings"] = cert.Warnings
+	}
+	return out
+}
+
+// putCertificate stores a certificate chain after checking it against the
+// logo and the domain. A certificate that does not match is refused rather
+// than stored: publishing one makes receivers ignore BIMI without a word.
+func (a *bimiAPI) putCertificate(w http.ResponseWriter, req *http.Request, domain string) {
+	body, err := io.ReadAll(io.LimitReader(req.Body, bimi.MaxCertificateBytes*2))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "READ_FAILED", "Could not read the upload")
+		return
+	}
+	var payload struct {
+		PEM string `json:"pem"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Expected a JSON body with a pem field")
+		return
+	}
+
+	logo, err := a.store.Load(req.Context(), domain)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "LOAD_FAILED", "Could not read the logo")
+		return
+	}
+	if logo == nil {
+		writeError(w, http.StatusConflict, "NO_LOGO", "Save the logo first: a certificate only means something next to the logo it was issued for")
+		return
+	}
+
+	pem := []byte(strings.TrimSpace(payload.PEM) + "\n")
+	_, violations := bimi.InspectCertificate(pem, domain, logo.SVG, a.now())
+	if len(violations) > 0 {
+		reasons := make([]string, 0, len(violations))
+		for _, v := range violations {
+			reasons = append(reasons, v.String())
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":      "INVALID_CERTIFICATE",
+			"message":    "The certificate cannot be used for this domain and logo",
+			"violations": reasons,
+		})
+		return
+	}
+
+	saved, err := a.store.SaveCertificate(req.Context(), domain, pem)
+	if err != nil {
+		log.Printf("bimi: could not save the certificate for %s: %v", domain, err)
+		writeError(w, http.StatusInternalServerError, "SAVE_FAILED", "Could not store the certificate")
+		return
+	}
+	if !saved {
+		writeError(w, http.StatusConflict, "NO_LOGO", "Save the logo first")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"certificate": a.describeCertificate(domain, &BimiLogo{SVG: logo.SVG, VmcPEM: pem}),
 	})
 }
 
@@ -208,10 +444,23 @@ func (a *bimiAPI) put(w http.ResponseWriter, req *http.Request, domain string) {
 		writeError(w, http.StatusInternalServerError, "SAVE_FAILED", "Could not store the logo")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "etag": etag})
+	// A certificate vouches for one exact SVG. Replacing the logo under a held
+	// certificate breaks it, which receivers do not report; say so now.
+	response := map[string]any{"ok": true, "etag": etag}
+	if held, err := a.store.Load(req.Context(), domain); err == nil && held != nil && len(held.VmcPEM) > 0 {
+		if cert, _ := bimi.InspectCertificate(held.VmcPEM, domain, held.SVG, a.now()); cert != nil && !cert.MatchesLogo {
+			response["certificate_mismatch"] = true
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // BimiLogoURL is where a domain's mark is served from.
 func BimiLogoURL(mailHost string) string {
 	return fmt.Sprintf("https://%s/.well-known/bimi/default.svg", mailHost)
+}
+
+// BimiVmcURL is where the certificate held here is served from.
+func BimiVmcURL(mailHost string) string {
+	return fmt.Sprintf("https://%s/.well-known/bimi/vmc.pem", mailHost)
 }

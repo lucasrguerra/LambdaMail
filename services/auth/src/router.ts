@@ -343,7 +343,10 @@ async function getAvatar(
   res.setHeader("ETag", `"${avatar.etag}"`);
   // Private: this is served to a signed-in reader, and a shared cache must not
   // hand one person's photo to the next request that comes along.
-  res.setHeader("Cache-Control", "private, max-age=300");
+  // One minute, then revalidate with the ETag (a 304 costs no body). It was five
+  // minutes with no revalidation, so a new photo took that long to show up
+  // wherever the page did not add a version to the URL.
+  res.setHeader("Cache-Control", "private, max-age=60, must-revalidate");
   // The bytes were sniffed on the way in, but a browser that ignores the type
   // and sniffs for itself must not be allowed to find something else.
   res.setHeader("X-Content-Type-Options", "nosniff");
