@@ -226,7 +226,12 @@ everyone who sends from it. Publishing one needs three things, and the console
 file, DMARC, the BIMI record in DNS, the public URL of the logo, the
 certificate and its public URL, and names the one that is wrong.
 
-The logo is served from `https://<mail host>/.well-known/bimi/default.svg`.
+The logo is served from `https://<mail host>/.well-known/bimi/<domain>/default.svg`
+and the certificate from `.../<domain>/vmc.pem`: one mail host, a path per
+domain, so every domain the server hosts can publish its own. (The earlier
+`/.well-known/bimi/default.svg` chose the domain from the host name, which could
+name only the primary domain; every other domain's record pointed at a 404. It
+still answers, for records already published.)
 
 **The DNS record follows the picture.** With a Cloudflare token configured, the
 `default._bimi.<domain>` TXT record is part of what the DNS reconciler

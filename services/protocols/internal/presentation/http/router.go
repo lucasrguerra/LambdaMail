@@ -41,6 +41,7 @@ type Router struct {
 	dnsReconciler DomainReconciler
 	dnsStatus     DnsStatusWriter
 	bimi          *bimiAPI
+	bimiPublish   func(domain string)
 	// degradedFunc reports a condition that leaves the service running but
 	// not fit for production, the clearest case being a self-signed
 	// certificate standing in for one Traefik never issued
@@ -81,6 +82,7 @@ func (r *Router) registerRoutes() {
 	r.mux.HandleFunc("/.well-known/security.txt", r.handleSecurityTxt)
 	r.mux.HandleFunc("/.well-known/bimi/default.svg", r.handleBimiLogo)
 	r.mux.HandleFunc("/.well-known/bimi/vmc.pem", r.handleBimiCertificate)
+	r.mux.HandleFunc("/.well-known/bimi/", r.handleBimiPerDomain)
 	r.mux.HandleFunc("/api/v1/admin/bimi", r.handleBimiAdmin)
 	r.mux.HandleFunc("/api/v1/admin/bimi/certificate", r.handleBimiCertificateAdmin)
 	r.mux.HandleFunc("/api/v1/admin/bimi/check", r.handleBimiCheck)

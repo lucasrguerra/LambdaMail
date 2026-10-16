@@ -22,15 +22,15 @@ func bimiPublication(ctx context.Context, repo *postgres.BimiRepository, cfg con
 		// Unknown is not "no logo": returning an empty publication here would
 		// have the sync delete the record over a database hiccup.
 		log.Printf("BIMI: could not read the logo for %s, leaving its record alone: %v", domain, err)
-		return bimi.Publication{LogoURL: httppresentation.BimiLogoURL(cfg.PrimaryMailHost)}
+		return bimi.Publication{LogoURL: httppresentation.BimiLogoURL(cfg.PrimaryMailHost, domain)}
 	}
 	if logo == nil {
 		return bimi.Publication{}
 	}
 	return bimi.Publish(
 		logo.SVG, logo.VmcPEM, logo.VmcURL, domain,
-		httppresentation.BimiLogoURL(cfg.PrimaryMailHost),
-		httppresentation.BimiVmcURL(cfg.PrimaryMailHost),
+		httppresentation.BimiLogoURL(cfg.PrimaryMailHost, domain),
+		httppresentation.BimiVmcURL(cfg.PrimaryMailHost, domain),
 		time.Now(),
 	)
 }
