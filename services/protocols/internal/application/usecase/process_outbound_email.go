@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -48,6 +49,13 @@ type ProcessOutboundEmailInput struct {
 	// MaxRecipientsPerHour is the sender's policy, carried from the
 	// authenticated session.
 	MaxRecipientsPerHour int
+	// FileSentCopy asks for a copy of the message in the sender's Sent folder.
+	// Set for SMTP submission: a mail client cannot file it itself, since IMAP
+	// APPEND is not implemented, so without this nothing a client sent ever
+	// showed up in Sent. The webmail leaves it off because it files its own copy
+	// (one that omits the Bcc line), and asking twice would show every sent
+	// message twice.
+	FileSentCopy bool
 }
 
 // ProcessOutboundEmailUseCase implements the submission half of PLAN.md
@@ -57,6 +65,14 @@ type ProcessOutboundEmailUseCase struct {
 	outbound port.OutboundRepository
 	blobs    port.BlobStorage
 	signer   port.DkimSigner
+	// sentCopies files the sender's copy; nil leaves FileSentCopy a no-op
+	sentCopies port.InboundMessageRepository
+}
+
+// SetSentCopies gives the use case somewhere to file the sender's copy of what
+// was submitted (see ProcessOutboundEmailInput.FileSentCopy).
+func (uc *ProcessOutboundEmailUseCase) SetSentCopies(messages port.InboundMessageRepository) {
+	uc.sentCopies = messages
 }
 
 func NewProcessOutboundEmailUseCase(
@@ -143,7 +159,38 @@ func (uc *ProcessOutboundEmailUseCase) Submit(ctx context.Context, input Process
 		}
 	}
 
+	// Only once the message is durably queued, so a submission refused by the
+	// send limit or a failed enqueue never leaves a "sent" copy behind. A
+	// failure here is logged and swallowed: the mail is on its way, and telling
+	// the client the submission failed would only make it send it again.
+	if input.FileSentCopy && uc.sentCopies != nil {
+		if err := uc.fileSentCopy(ctx, input, blob, payload); err != nil {
+			slog.Warn("could not file the Sent copy", "mailbox", input.SenderAddr, "error", err)
+		}
+	}
+
 	return nil
+}
+
+// fileSentCopy records the sender's copy in their Sent folder, referencing the
+// blob the delivery jobs already share, so it costs a row and no extra bytes.
+func (uc *ProcessOutboundEmailUseCase) fileSentCopy(ctx context.Context, input ProcessOutboundEmailInput, blob port.BlobRef, payload []byte) error {
+	headers := ExtractMessageHeaders(payload)
+	_, err := uc.sentCopies.PersistAll(ctx, []port.PersistInboundMessageInput{{
+		MailboxID:        input.MailboxID,
+		Blob:             blob,
+		SenderAddress:    input.SenderAddr,
+		RecipientAddress: input.SenderAddr,
+		TargetFolderName: "Sent",
+		Subject:          headers.Subject,
+		Snippet:          headers.Snippet,
+		FromDisplayName:  headers.FromDisplayName,
+		MessageIDHeader:  headers.MessageID,
+		HasAttachments:   headers.HasAttachments,
+		// The sender's own copy is not unread mail
+		AlreadySeen: true,
+	}})
+	return err
 }
 
 // checkSendLimit refuses the whole submission when accepting it would take the

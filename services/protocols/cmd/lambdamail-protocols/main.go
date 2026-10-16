@@ -142,6 +142,8 @@ func run(cfg config) {
 		signer = dkim.NewSigner(dkimRepo)
 	}
 	submissionUC := usecase.NewProcessOutboundEmailUseCase(authRepo, outboundRepo, blobs, signer)
+	// What a client submitted over SMTP is kept in the sender's Sent folder
+	submissionUC.SetSentCopies(messages)
 
 	// The vacation responder needs a way to actually send. Wired after the
 	// submission use case exists, because an automatic reply goes out through

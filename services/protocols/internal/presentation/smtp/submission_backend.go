@@ -122,6 +122,8 @@ func (s *submissionSession) Data(r io.Reader) error {
 		Recipients:           s.recipients,
 		Body:                 r,
 		MaxRecipientsPerHour: s.authenticated.MaxRecipientsPerHour,
+		// A client cannot file its own copy over IMAP, so the server keeps it
+		FileSentCopy: true,
 	})
 	if err == nil {
 		return nil
