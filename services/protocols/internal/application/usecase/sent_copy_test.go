@@ -137,3 +137,51 @@ func TestSubmit_WorksWithoutASentCopyRepository(t *testing.T) {
 		t.Fatalf("Submit without a Sent repository: %v", err)
 	}
 }
+
+// One rule for every path: a message sent from the webmail and the same message
+// sent by an SMTP client leave the same thing behind in Sent. They used to differ
+// completely - the webmail filed a copy, SMTP filed nothing - because the rule
+// lived in the webmail alone.
+func TestSentCopyIsTheSameWhicheverPathSent(t *testing.T) {
+	mailboxID := uuid.New()
+	messages := &recordingMessageRepository{}
+	submission := NewProcessOutboundEmailUseCase(nil, &countingOutboundRepo{}, &capturingBlobStorage{}, nil)
+	submission.SetSentCopies(messages)
+
+	account := &port.MailboxAuth{ID: mailboxID, EmailAddress: "me@example.test", DomainName: "example.test", MaxRecipientsPerHour: 100}
+	web := &WebmailUseCase{
+		repo:       &stubWebmailRepo{mailboxID: mailboxID.String()},
+		auth:       &stubAuthRepo{account: account},
+		submission: submission,
+		localHost:  "mail.example.test",
+	}
+
+	if err := web.Send(context.Background(), ComposeInput{From: "me@example.test", To: []string{"you@remote.test"}, Subject: "Aviso", Text: "hi"}); err != nil {
+		t.Fatalf("webmail send: %v", err)
+	}
+
+	smtp := ProcessOutboundEmailInput{
+		MailboxID: mailboxID, SenderAddr: "me@example.test", DomainName: "example.test",
+		Recipients: []string{"you@remote.test"}, FileSentCopy: true,
+		Body: bytes.NewBufferString("From: me@example.test\r\nTo: you@remote.test\r\nSubject: Aviso\r\n\r\nhi"),
+	}
+	if err := submission.Submit(context.Background(), smtp); err != nil {
+		t.Fatalf("smtp submit: %v", err)
+	}
+
+	if len(messages.persisted) != 2 {
+		t.Fatalf("want one copy per path (2), got %d: the webmail must not file its own copy as well", len(messages.persisted))
+	}
+	fromWeb, fromSMTP := messages.persisted[0], messages.persisted[1]
+	for _, got := range []port.PersistInboundMessageInput{fromWeb, fromSMTP} {
+		if got.TargetFolderName != "Sent" || !got.AlreadySeen || got.MailboxID != mailboxID {
+			t.Errorf("a Sent copy is not what the rule says: %+v", got)
+		}
+		if got.SenderAddress != "me@example.test" || got.RecipientAddress != "me@example.test" {
+			t.Errorf("a Sent copy belongs to its sender: %+v", got)
+		}
+		if got.Subject != "Aviso" {
+			t.Errorf("subject = %q, want Aviso", got.Subject)
+		}
+	}
+}

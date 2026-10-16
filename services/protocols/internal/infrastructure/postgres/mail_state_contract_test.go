@@ -403,3 +403,132 @@ func TestContract_ReplacingTheFlagSetKeepsTheUnreadCounterTrue(t *testing.T) {
 }
 
 var _ = uuid.Nil
+
+// IMAP clients, the webmail and the delivery path all touch a mailbox at the same
+// moment. The counters are shared rows, so they have to stay true under that.
+func TestContract_ConcurrentChangesFromBothPathsKeepTheCountersTrue(t *testing.T) {
+	pool := testPool(t)
+	mailboxID := seedMailbox(t, pool)
+
+	const n = 24
+	uids := make([]uint32, 0, n)
+	for i := 0; i < n; i++ {
+		uids = append(uids, deliver(t, pool, mailboxID, "INBOX", fmt.Sprintf("m%d", i), false))
+	}
+
+	imap, web := imapPath(), webmailPath()
+	done := make(chan struct{}, n)
+	for i, uid := range uids {
+		go func(i int, uid uint32) {
+			defer func() { done <- struct{}{} }()
+			switch i % 3 {
+			case 0:
+				imap.setSeen(t, pool, mailboxID, "INBOX", uid, true)
+			case 1:
+				web.setSeen(t, pool, mailboxID, "INBOX", uid, true)
+			default:
+				if i%2 == 0 {
+					imap.expunge(t, pool, mailboxID, "INBOX", uid)
+				} else {
+					web.expunge(t, pool, mailboxID, "INBOX", uid)
+				}
+			}
+		}(i, uid)
+	}
+	for range uids {
+		<-done
+	}
+
+	assertConsistent(t, pool, mailboxID, "24 concurrent changes from IMAP and the webmail")
+}
+
+// Two clients deleting the same message at once is the realistic race (the
+// webmail and a phone both open on the same mail). It is removed once, and every
+// number moves once.
+func TestContract_DeletingTheSameMessageConcurrentlyCountsOnce(t *testing.T) {
+	pool := testPool(t)
+	mailboxID := seedMailbox(t, pool)
+	target := deliver(t, pool, mailboxID, "INBOX", "contested", false)
+	deliver(t, pool, mailboxID, "INBOX", "bystander", false)
+	inbox := folderID(t, pool, mailboxID, "INBOX")
+
+	ctx := context.Background()
+	store := NewMailStore(pool)
+	removed := make(chan int, 12)
+	for i := 0; i < 12; i++ {
+		go func() {
+			n, err := store.Expunge(ctx, inbox, []uint32{target})
+			if err != nil {
+				t.Errorf("expunge: %v", err)
+			}
+			removed <- n
+		}()
+	}
+	total := 0
+	for i := 0; i < 12; i++ {
+		total += <-removed
+	}
+
+	if total != 1 {
+		t.Errorf("12 concurrent expunges of one message removed it %d times, want exactly once", total)
+	}
+	assertConsistent(t, pool, mailboxID, "12 clients deleting the same message")
+	folders, used, _ := mailState(t, pool, mailboxID)
+	if folders["INBOX"].RealTotal != 1 || used != 10 {
+		t.Errorf("INBOX holds %d and the mailbox %d bytes, want 1 message and 10 bytes", folders["INBOX"].RealTotal, used)
+	}
+}
+
+// Moves in opposite directions, flag changes and deletes, all at once on the same
+// two folders. Locking the folders and the message in different orders in
+// different operations deadlocks here; a fixed order does not.
+func TestContract_OppositeMovesAndFlagChangesNeverDeadlock(t *testing.T) {
+	pool := testPool(t)
+	mailboxID := seedMailbox(t, pool)
+
+	const each = 20
+	var inboxUIDs, trashUIDs []uint32
+	for i := 0; i < each; i++ {
+		inboxUIDs = append(inboxUIDs, deliver(t, pool, mailboxID, "INBOX", fmt.Sprintf("i%d", i), false))
+		trashUIDs = append(trashUIDs, deliver(t, pool, mailboxID, "Trash", fmt.Sprintf("t%d", i), false))
+	}
+
+	inbox, trash := folderID(t, pool, mailboxID, "INBOX"), folderID(t, pool, mailboxID, "Trash")
+	store := NewMailStore(pool)
+	ctx := context.Background()
+
+	errs := make(chan error, each*4)
+	var pending int
+	run := func(f func() error) {
+		pending++
+		go func() { errs <- f() }()
+	}
+	for i := 0; i < each; i++ {
+		i := i
+		run(func() error { _, err := store.Move(ctx, inbox, inboxUIDs[i], trash); return nil2(err) })
+		run(func() error { _, err := store.Move(ctx, trash, trashUIDs[i], inbox); return nil2(err) })
+		// a flag change on a message that is being moved elsewhere, and a delete
+		run(func() error {
+			_, err := store.SetFlags(ctx, inbox, inboxUIDs[(i+1)%each], port.FlagOpAdd, []string{`\Flagged`}, 0)
+			return nil2(err)
+		})
+		run(func() error { _, err := store.Expunge(ctx, trash, []uint32{trashUIDs[(i+2)%each]}); return nil2(err) })
+	}
+	for ; pending > 0; pending-- {
+		if err := <-errs; err != nil {
+			t.Errorf("a concurrent operation failed (a deadlock, if it says 40P01): %v", err)
+		}
+	}
+
+	assertConsistent(t, pool, mailboxID, "opposite moves, flag changes and deletes all at once")
+}
+
+// nil2 lets the contract tolerate "the message was moved or deleted first", a
+// legitimate outcome of a race, while still surfacing every other error (above
+// all a deadlock, SQLSTATE 40P01).
+func nil2(err error) error {
+	if err == ErrMessageNotFound {
+		return nil
+	}
+	return err
+}

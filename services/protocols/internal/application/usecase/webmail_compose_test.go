@@ -197,6 +197,8 @@ func newSendableUseCaseWith(
 	}
 	submission := NewProcessOutboundEmailUseCase(
 		nil, &countingOutboundRepo{}, &capturingBlobStorage{}, &recordingSigner{})
+	// The Sent copy is filed by the submission, as it is for SMTP clients
+	submission.SetSentCopies(messages)
 	return (&WebmailUseCase{
 		repo:       repo,
 		auth:       &stubAuthRepo{account: account},

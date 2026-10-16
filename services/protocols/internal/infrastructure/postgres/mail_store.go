@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -42,6 +43,27 @@ type MailStore struct {
 
 func NewMailStore(pool *pgxpool.Pool) *MailStore {
 	return &MailStore{pool: pool}
+}
+
+// lockFolders takes the row lock of each folder, in a fixed order.
+//
+// Every change updates counters on a folder row, and a move updates two. If one
+// operation locked the destination folder and then the source, and another did
+// the reverse, two moves in opposite directions deadlocked, and so did a move
+// racing a flag change (it held the message and wanted the folder, the move held
+// the folder and wanted the message). So the order is the same everywhere:
+// folders first, lowest id first, then the message.
+func lockFolders(ctx context.Context, tx pgx.Tx, ids ...string) error {
+	sort.Strings(ids)
+	for i, id := range ids {
+		if i > 0 && id == ids[i-1] {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM folders WHERE id = $1 FOR UPDATE`, id); err != nil {
+			return fmt.Errorf("lock folder %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // messageRow is the slice of a message every operation needs.
@@ -110,6 +132,9 @@ func (s *MailStore) SetFlags(ctx context.Context, folderID string, uid uint32, o
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockFolders(ctx, tx, folderID); err != nil {
+		return false, err
+	}
 	msg, err := loadMessage(ctx, tx, folderID, uid)
 	if err != nil {
 		return false, err
@@ -239,6 +264,10 @@ func (s *MailStore) Expunge(ctx context.Context, folderID string, uids []uint32)
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockFolders(ctx, tx, folderID); err != nil {
+		return 0, err
+	}
+
 	removed := 0
 	for _, uid := range uids {
 		msg, err := loadMessage(ctx, tx, folderID, uid)
@@ -288,14 +317,17 @@ func (s *MailStore) Move(ctx context.Context, sourceFolderID string, uid uint32,
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockFolders(ctx, tx, sourceFolderID, destFolderID); err != nil {
+		return 0, err
+	}
 	msg, err := loadMessage(ctx, tx, sourceFolderID, uid)
 	if err != nil {
 		return 0, err
 	}
 
 	var destUID int64
-	if err := tx.QueryRow(ctx, `SELECT uid_next FROM folders WHERE id = $1 FOR UPDATE`, destFolderID).Scan(&destUID); err != nil {
-		return 0, fmt.Errorf("lock destination folder: %w", err)
+	if err := tx.QueryRow(ctx, `SELECT uid_next FROM folders WHERE id = $1`, destFolderID).Scan(&destUID); err != nil {
+		return 0, fmt.Errorf("read destination uid: %w", err)
 	}
 
 	unread := 0
@@ -353,6 +385,9 @@ func (s *MailStore) copyOne(ctx context.Context, sourceFolderID string, sourceUI
 	}
 	defer tx.Rollback(ctx)
 
+	if err := lockFolders(ctx, tx, destFolderID); err != nil {
+		return 0, err
+	}
 	src, err := loadMessage(ctx, tx, sourceFolderID, sourceUID)
 	if err != nil {
 		return 0, err
@@ -360,8 +395,8 @@ func (s *MailStore) copyOne(ctx context.Context, sourceFolderID string, sourceUI
 
 	var destUID int64
 	var destMailboxID string
-	if err := tx.QueryRow(ctx, `SELECT uid_next, mailbox_id::text FROM folders WHERE id = $1 FOR UPDATE`, destFolderID).Scan(&destUID, &destMailboxID); err != nil {
-		return 0, fmt.Errorf("lock destination folder: %w", err)
+	if err := tx.QueryRow(ctx, `SELECT uid_next, mailbox_id::text FROM folders WHERE id = $1`, destFolderID).Scan(&destUID, &destMailboxID); err != nil {
+		return 0, fmt.Errorf("read destination folder: %w", err)
 	}
 
 	unread := 0
