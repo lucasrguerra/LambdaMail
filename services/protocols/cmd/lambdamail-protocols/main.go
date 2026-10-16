@@ -187,7 +187,7 @@ func run(cfg config) {
 	// ------------------------------------------------------- background jobs
 	go runDeliveryWorker(ctx, outboundWorker)
 	if cfg.CloudflareToken != "" {
-		go runDnsReconciler(ctx, cfg, aliasRepo, dkimRepo, postgres.NewDomainRepository(pool))
+		go runDnsReconciler(ctx, cfg, aliasRepo, dkimRepo, postgres.NewDomainRepository(pool), postgres.NewBimiRepository(pool))
 	} else {
 		log.Printf("CLOUDFLARE_API_TOKEN is not set: DNS reconciliation is disabled")
 	}
@@ -215,9 +215,19 @@ func run(cfg config) {
 	// provider to talk to, so the route can say it is unavailable instead of
 	// reaching Cloudflare with an empty token and reporting a refusal.
 	if cfg.CloudflareToken != "" {
+		bimiRepo := postgres.NewBimiRepository(pool)
 		router.SetDnsReconciler(domainReconciler{run: func(c context.Context, domain string) (*usecase.SyncDnsRecordsOutput, error) {
-			return reconcileDomainOnDemand(c, cfg, aliasRepo, dkimRepo, domain)
+			return reconcileDomainOnDemand(c, cfg, aliasRepo, dkimRepo, bimiRepo, domain)
 		}})
+		// Saving or removing a logo or a certificate publishes the change: the
+		// record in the zone follows the picture, with no button to remember.
+		router.SetBimiPublisher(func(domain string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			if _, err := reconcileDomainOnDemand(ctx, cfg, aliasRepo, dkimRepo, bimiRepo, domain); err != nil {
+				log.Printf("BIMI: publishing the record for %s after a change failed: %v", domain, err)
+			}
+		})
 	}
 	router.SetFolderAdmin(usecase.NewManageFoldersUseCase(
 		postgres.NewWebmailRepository(pool), postgres.NewWebmailRepository(pool)))
@@ -578,6 +588,7 @@ func runDeliveryWorker(ctx context.Context, worker *usecase.OutboundWorkerUseCas
 func runDnsReconciler(
 	ctx context.Context, cfg config, aliasRepo port.SystemAliasRepository,
 	dkimRepo *postgres.DkimRepository, domainRepo *postgres.DomainRepository,
+	bimiRepo *postgres.BimiRepository,
 ) {
 	syncUC := usecase.NewSyncDnsRecordsUseCase(cloudflare.NewCloudflareAdapter(cfg.CloudflareToken), aliasRepo)
 	syncUC.SetVerifier(netdns.NewPublicVerifier())
@@ -600,6 +611,9 @@ func runDnsReconciler(
 			// (PLAN.md section 10.4).
 			RelaySpfInclude: relayConfig(cfg).SpfInclude(),
 		}
+		// The logo and certificate a domain publishes through BIMI
+		publication := bimiPublication(ctx, bimiRepo, cfg, domain)
+		input.BimiLogoURL, input.BimiVmcURL = publication.LogoURL, publication.CertificateURL
 
 		if provisioner != nil {
 			keys, err := provisioner.Execute(ctx, domain)
@@ -717,19 +731,12 @@ func (s *dnsSpecSource) ExpectedRecords(ctx context.Context, domain string) ([]e
 		RelaySpfInclude: relayConfig(s.cfg).SpfInclude(),
 	}
 
-	// The BIMI record is published only when a mark is actually stored, so
-	// the panel never advertises a logo that would 404.
+	// The same decision the sync makes (bimi.Publish), so the panel expects
+	// exactly what the reconciler writes.
 	if s.bimi != nil {
-		if logo, err := s.bimi.Load(ctx, domain); err == nil && logo != nil {
-			spec.BimiLogoURL = httppresentation.BimiLogoURL(s.cfg.PrimaryMailHost)
-			// The certificate held here wins: it is the one verified against the
-			// logo being served. An external URL is the fallback.
-			if len(logo.VmcPEM) > 0 {
-				spec.BimiVmcURL = httppresentation.BimiVmcURL(s.cfg.PrimaryMailHost)
-			} else {
-				spec.BimiVmcURL = logo.VmcURL
-			}
-		}
+		p := bimiPublication(ctx, s.bimi, s.cfg, domain)
+		spec.BimiLogoURL = p.LogoURL
+		spec.BimiVmcURL = p.CertificateURL
 	}
 
 	// Read rather than provisioned: verifying must not create keys as a side

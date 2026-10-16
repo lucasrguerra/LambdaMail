@@ -29,10 +29,12 @@ type DnsSpecSource interface {
 // name already holding somebody else's value is not this server's to
 // overwrite - it may be the zone's mail, or a service nobody remembered.
 type ReconcileResult struct {
-	Domain    string   `json:"domain"`
-	Created   int      `json:"created"`
-	Updated   int      `json:"updated"`
-	Unchanged int      `json:"unchanged"`
+	Domain    string `json:"domain"`
+	Created   int    `json:"created"`
+	Updated   int    `json:"updated"`
+	Unchanged int    `json:"unchanged"`
+	// Deleted counts records retired because they are no longer wanted.
+	Deleted   int      `json:"deleted"`
 	Conflicts []string `json:"conflicts"`
 	Errors    []string `json:"errors"`
 }

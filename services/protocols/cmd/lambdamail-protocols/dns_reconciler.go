@@ -42,6 +42,7 @@ func (d domainReconciler) ReconcileDomain(
 		Created:   out.CreatedCount,
 		Updated:   out.UpdatedCount,
 		Unchanged: out.UnchangedCount,
+		Deleted:   out.DeletedCount,
 		Conflicts: conflicts,
 		Errors:    out.Errors,
 	}, nil
@@ -54,7 +55,7 @@ func (d domainReconciler) ReconcileDomain(
 // halfway through each other's zone updates.
 func reconcileDomainOnDemand(
 	ctx context.Context, cfg config, aliasRepo port.SystemAliasRepository,
-	dkimRepo *postgres.DkimRepository, domain string,
+	dkimRepo *postgres.DkimRepository, bimiRepo *postgres.BimiRepository, domain string,
 ) (*usecase.SyncDnsRecordsOutput, error) {
 	syncUC := usecase.NewSyncDnsRecordsUseCase(cloudflare.NewCloudflareAdapter(cfg.CloudflareToken), aliasRepo)
 	syncUC.SetVerifier(netdns.NewPublicVerifier())
@@ -67,6 +68,8 @@ func reconcileDomainOnDemand(
 		DaneEnabled:     cfg.OutboundDane,
 		RelaySpfInclude: relayConfig(cfg).SpfInclude(),
 	}
+	publication := bimiPublication(ctx, bimiRepo, cfg, domain)
+	input.BimiLogoURL, input.BimiVmcURL = publication.LogoURL, publication.CertificateURL
 
 	// A domain with no DKIM key of its own would publish a selector pointing
 	// at nothing, so the keys are provisioned first, exactly as the timer does.

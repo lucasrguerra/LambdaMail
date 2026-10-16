@@ -207,14 +207,10 @@ func BuildDnsRecordSpecs(spec DnsRecordSpec) []DnsRecord {
 
 	// BIMI, published only when there is a logo to point at.
 	if spec.BimiLogoURL != "" {
-		value := fmt.Sprintf("v=BIMI1; l=%s;", spec.BimiLogoURL)
-		if spec.BimiVmcURL != "" {
-			value = fmt.Sprintf("v=BIMI1; l=%s; a=%s;", spec.BimiLogoURL, spec.BimiVmcURL)
-		}
 		records = append(records, DnsRecord{
 			Type:    "TXT",
 			Name:    fmt.Sprintf("default._bimi.%s", domainName),
-			Value:   value,
+			Value:   BimiRecordValue(spec.BimiLogoURL, spec.BimiVmcURL),
 			TTL:     1,
 			Comment: "LambdaMail BIMI Record",
 		})
@@ -315,4 +311,16 @@ func hostInsideDomain(host, domain string) bool {
 	// The suffix must fall on a label boundary: "notexample.test" is not
 	// inside "example.test".
 	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+// BimiRecordValue is the text of a domain's BIMI TXT record. The reconciler
+// writes it and the console shows it, so both come from here.
+func BimiRecordValue(logoURL, certificateURL string) string {
+	if logoURL == "" {
+		return ""
+	}
+	if certificateURL != "" {
+		return fmt.Sprintf("v=BIMI1; l=%s; a=%s;", logoURL, certificateURL)
+	}
+	return fmt.Sprintf("v=BIMI1; l=%s;", logoURL)
 }

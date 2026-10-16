@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lambdamail/protocols/internal/domain/bimi"
+	"lambdamail/protocols/internal/domain/entity"
 )
 
 // BimiStore holds the mark a domain publishes, and the certificate that
@@ -47,6 +48,25 @@ type bimiAPI struct {
 	now      func() time.Time
 	dns      bimi.Resolver
 	fetch    bimi.Fetcher
+	// publish is told when a domain's logo or certificate changed, so the DNS
+	// record can follow. Nil when there is no DNS provider to publish to.
+	publish func(domain string)
+}
+
+// SetBimiPublisher wires what happens after a logo or certificate changes.
+func (r *Router) SetBimiPublisher(publish func(domain string)) {
+	if r.bimi != nil {
+		r.bimi.publish = publish
+	}
+}
+
+// changed tells the publisher, in the background: a change is not slowed
+// down by a round trip to the DNS provider, and its outcome is the
+// reconciliation result the console shows, not part of the save.
+func (a *bimiAPI) changed(domain string) {
+	if a.publish != nil {
+		go a.publish(domain)
+	}
 }
 
 // SetBimiAPI wires the BIMI logo store.
@@ -168,6 +188,7 @@ func (r *Router) handleBimiAdmin(w http.ResponseWriter, req *http.Request) {
 			writeError(w, http.StatusInternalServerError, "DELETE_FAILED", "Could not remove the logo")
 			return
 		}
+		r.bimi.changed(domain)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "GET, PUT or DELETE")
@@ -228,6 +249,7 @@ func (r *Router) handleBimiCertificateAdmin(w http.ResponseWriter, req *http.Req
 			writeError(w, http.StatusInternalServerError, "DELETE_FAILED", "Could not remove the certificate")
 			return
 		}
+		r.bimi.changed(domain)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "PUT or DELETE")
@@ -259,20 +281,20 @@ func (r *Router) handleBimiCheck(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 25*time.Second)
 	defer cancel()
 
+	// What the record should say is decided once (bimi.Publish), exactly as the
+	// sync writes it, so "the record is wrong" means it differs from what the
+	// reconciler would publish.
+	publication := bimi.Publish(logo.SVG, logo.VmcPEM, logo.VmcURL, domain,
+		BimiLogoURL(r.bimi.mailHost), BimiVmcURL(r.bimi.mailHost), r.bimi.now())
 	in := bimi.Inputs{
 		Domain:                 domain,
-		LogoURL:                BimiLogoURL(r.bimi.mailHost),
+		LogoURL:                publication.LogoURL,
+		CertificateURL:         publication.CertificateURL,
 		SVG:                    logo.SVG,
 		CertificatePEM:         logo.VmcPEM,
 		ExternalCertificateURL: logo.VmcURL,
+		Withheld:               publication.Withheld,
 		Now:                    r.bimi.now(),
-	}
-	// The record must name the certificate that is actually served
-	switch {
-	case len(logo.VmcPEM) > 0:
-		in.CertificateURL = BimiVmcURL(r.bimi.mailHost)
-	default:
-		in.CertificateURL = logo.VmcURL
 	}
 
 	results := bimi.RunChecks(ctx, in, r.bimi.dns, r.bimi.fetch)
@@ -298,15 +320,22 @@ func (a *bimiAPI) get(w http.ResponseWriter, req *http.Request, domain string) {
 		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
 		return
 	}
+	publication := bimi.Publish(logo.SVG, logo.VmcPEM, logo.VmcURL, domain,
+		BimiLogoURL(a.mailHost), BimiVmcURL(a.mailHost), a.now())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"configured":      true,
-		"etag":            logo.ETag,
-		"vmc_url":         logo.VmcURL,
-		"bytes":           len(logo.SVG),
-		"svg":             string(logo.SVG),
-		"logo_url":        BimiLogoURL(a.mailHost),
-		"certificate_url": BimiVmcURL(a.mailHost),
-		"certificate":     a.describeCertificate(domain, logo),
+		"configured": true,
+		"etag":       logo.ETag,
+		// The record exactly as the reconciler writes it, and the reason a held
+		// certificate is left out of it, if it is
+		"dns_record":           entity.BimiRecordValue(publication.LogoURL, publication.CertificateURL),
+		"certificate_withheld": publication.Withheld,
+		"dns_publishing":       a.publish != nil,
+		"vmc_url":              logo.VmcURL,
+		"bytes":                len(logo.SVG),
+		"svg":                  string(logo.SVG),
+		"logo_url":             BimiLogoURL(a.mailHost),
+		"certificate_url":      BimiVmcURL(a.mailHost),
+		"certificate":          a.describeCertificate(domain, logo),
 	})
 }
 
@@ -391,9 +420,11 @@ func (a *bimiAPI) putCertificate(w http.ResponseWriter, req *http.Request, domai
 		writeError(w, http.StatusConflict, "NO_LOGO", "Save the logo first")
 		return
 	}
+	a.changed(domain)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"certificate": a.describeCertificate(domain, &BimiLogo{SVG: logo.SVG, VmcPEM: pem}),
+		"ok":             true,
+		"dns_publishing": a.publish != nil,
+		"certificate":    a.describeCertificate(domain, &BimiLogo{SVG: logo.SVG, VmcPEM: pem}),
 	})
 }
 
@@ -446,7 +477,8 @@ func (a *bimiAPI) put(w http.ResponseWriter, req *http.Request, domain string) {
 	}
 	// A certificate vouches for one exact SVG. Replacing the logo under a held
 	// certificate breaks it, which receivers do not report; say so now.
-	response := map[string]any{"ok": true, "etag": etag}
+	a.changed(domain)
+	response := map[string]any{"ok": true, "etag": etag, "dns_publishing": a.publish != nil}
 	if held, err := a.store.Load(req.Context(), domain); err == nil && held != nil && len(held.VmcPEM) > 0 {
 		if cert, _ := bimi.InspectCertificate(held.VmcPEM, domain, held.SVG, a.now()); cert != nil && !cert.MatchesLogo {
 			response["certificate_mismatch"] = true
