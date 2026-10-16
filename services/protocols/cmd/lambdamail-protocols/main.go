@@ -239,7 +239,7 @@ func run(cfg config) {
 	}
 	// The BIMI mark: served to receivers over the well-known URL, managed from
 	// the domains panel.
-	router.SetBimiAPI(bimiStore{postgres.NewBimiRepository(pool)}, cfg.JwtSecret, cfg.domain())
+	router.SetBimiAPI(bimiStore{postgres.NewBimiRepository(pool)}, cfg.JwtSecret, cfg.domain(), cfg.PrimaryMailHost)
 
 	// The TLS panel reads the live watcher instead of the constants the admin
 	// service used to return, which reported a healthy certificate whatever
@@ -722,7 +722,13 @@ func (s *dnsSpecSource) ExpectedRecords(ctx context.Context, domain string) ([]e
 	if s.bimi != nil {
 		if logo, err := s.bimi.Load(ctx, domain); err == nil && logo != nil {
 			spec.BimiLogoURL = httppresentation.BimiLogoURL(s.cfg.PrimaryMailHost)
-			spec.BimiVmcURL = logo.VmcURL
+			// The certificate held here wins: it is the one verified against the
+			// logo being served. An external URL is the fallback.
+			if len(logo.VmcPEM) > 0 {
+				spec.BimiVmcURL = httppresentation.BimiVmcURL(s.cfg.PrimaryMailHost)
+			} else {
+				spec.BimiVmcURL = logo.VmcURL
+			}
 		}
 	}
 

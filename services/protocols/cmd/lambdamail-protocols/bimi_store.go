@@ -22,9 +22,17 @@ func (s bimiStore) Load(ctx context.Context, domain string) (*httppresentation.B
 	if err != nil || logo == nil {
 		return nil, err
 	}
-	return &httppresentation.BimiLogo{SVG: logo.SVG, ETag: logo.ETag, VmcURL: logo.VmcURL}, nil
+	return &httppresentation.BimiLogo{SVG: logo.SVG, ETag: logo.ETag, VmcURL: logo.VmcURL, VmcPEM: logo.VmcPEM}, nil
 }
 
 func (s bimiStore) Delete(ctx context.Context, domain string) error {
 	return s.repo.Delete(ctx, domain)
+}
+
+func (s bimiStore) SaveCertificate(ctx context.Context, domain string, pem []byte) (bool, error) {
+	return s.repo.SaveCertificate(ctx, domain, pem)
+}
+
+func (s bimiStore) DeleteCertificate(ctx context.Context, domain string) error {
+	return s.repo.DeleteCertificate(ctx, domain)
 }

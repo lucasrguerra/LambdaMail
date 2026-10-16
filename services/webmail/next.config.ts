@@ -37,6 +37,12 @@ const nextConfig: NextConfig = {
         destination: `${PROTOCOLS_SERVICE_URL}/.well-known/bimi/default.svg`,
       },
       {
+        // The BIMI certificate (VMC/CMC) the DNS record's a= tag points at,
+        // fetched the same way as the logo above.
+        source: "/.well-known/bimi/vmc.pem",
+        destination: `${PROTOCOLS_SERVICE_URL}/.well-known/bimi/vmc.pem`,
+      },
+      {
         source: "/.well-known/security.txt",
         destination: `${PROTOCOLS_SERVICE_URL}/.well-known/security.txt`,
       },

@@ -58,4 +58,12 @@ describe("the routes the protocols service owns", () => {
     expect(config).toContain("/.well-known/bimi/default.svg");
     expect(config).toMatch(/bimi\/default\.svg[\s\S]{0,200}PROTOCOLS_SERVICE_URL/);
   });
+
+  // The a= tag of the BIMI record points here when the certificate is held by
+  // the service; without the rewrite the Next 404 page is served instead, and
+  // the receiver sees a record whose certificate cannot be fetched.
+  it("routes the BIMI certificate to the service that stores it", () => {
+    expect(config).toContain("/.well-known/bimi/vmc.pem");
+    expect(config).toMatch(/bimi\/vmc\.pem[\s\S]{0,200}PROTOCOLS_SERVICE_URL/);
+  });
 });

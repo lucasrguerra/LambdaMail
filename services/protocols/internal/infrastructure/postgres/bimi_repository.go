@@ -25,6 +25,8 @@ type BimiLogo struct {
 	SVG    []byte
 	ETag   string
 	VmcURL string
+	// VmcPEM is the certificate chain held here, when the operator uploaded one.
+	VmcPEM []byte
 }
 
 // Save replaces a domain's logo, returning the digest receivers can cache on.
@@ -50,10 +52,10 @@ func (r *BimiRepository) Load(ctx context.Context, domain string) (*BimiLogo, er
 	var logo BimiLogo
 	var vmc *string
 	err := r.pool.QueryRow(ctx, `
-		SELECT b.svg, b.etag, b.vmc_url
+		SELECT b.svg, b.etag, b.vmc_url, b.vmc_pem
 		  FROM domain_bimi b JOIN domains d ON d.id = b.domain_id
 		 WHERE lower(d.name) = lower($1)
-	`, domain).Scan(&logo.SVG, &logo.ETag, &vmc)
+	`, domain).Scan(&logo.SVG, &logo.ETag, &vmc, &logo.VmcPEM)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -74,6 +76,36 @@ func (r *BimiRepository) Delete(ctx context.Context, domain string) error {
 	`, domain)
 	if err != nil {
 		return fmt.Errorf("delete BIMI logo for %s: %w", domain, err)
+	}
+	return nil
+}
+
+// SaveCertificate stores the certificate chain for a domain that already has a
+// logo. It reports false when there is no logo to attach it to: a certificate
+// only means something next to the logo it was issued for.
+func (r *BimiRepository) SaveCertificate(ctx context.Context, domain string, pem []byte) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE domain_bimi b
+		   SET vmc_pem = $2, vmc_uploaded_at = NOW()
+		  FROM domains d
+		 WHERE b.domain_id = d.id AND lower(d.name) = lower($1)
+	`, domain, pem)
+	if err != nil {
+		return false, fmt.Errorf("save BIMI certificate for %s: %w", domain, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// DeleteCertificate removes the stored certificate, leaving the logo.
+func (r *BimiRepository) DeleteCertificate(ctx context.Context, domain string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE domain_bimi b
+		   SET vmc_pem = NULL, vmc_uploaded_at = NULL
+		  FROM domains d
+		 WHERE b.domain_id = d.id AND lower(d.name) = lower($1)
+	`, domain)
+	if err != nil {
+		return fmt.Errorf("delete BIMI certificate for %s: %w", domain, err)
 	}
 	return nil
 }
