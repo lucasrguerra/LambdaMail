@@ -37,6 +37,16 @@ const nextConfig: NextConfig = {
         destination: `${PROTOCOLS_SERVICE_URL}/.well-known/bimi/default.svg`,
       },
       {
+        // A record names its own domain in the path, so every domain the server
+        // hosts can publish its own logo and certificate from this one host.
+        source: "/.well-known/bimi/:domain/default.svg",
+        destination: `${PROTOCOLS_SERVICE_URL}/.well-known/bimi/:domain/default.svg`,
+      },
+      {
+        source: "/.well-known/bimi/:domain/vmc.pem",
+        destination: `${PROTOCOLS_SERVICE_URL}/.well-known/bimi/:domain/vmc.pem`,
+      },
+      {
         // The BIMI certificate (VMC/CMC) the DNS record's a= tag points at,
         // fetched the same way as the logo above.
         source: "/.well-known/bimi/vmc.pem",

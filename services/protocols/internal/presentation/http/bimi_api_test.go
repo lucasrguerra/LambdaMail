@@ -92,6 +92,7 @@ func newBimiRouter(store *memoryBimiStore) *Router {
 	}
 	r.mux.HandleFunc("/.well-known/bimi/default.svg", r.handleBimiLogo)
 	r.mux.HandleFunc("/.well-known/bimi/vmc.pem", r.handleBimiCertificate)
+	r.mux.HandleFunc("/.well-known/bimi/", r.handleBimiPerDomain)
 	r.mux.HandleFunc("/api/v1/admin/bimi", r.handleBimiAdmin)
 	r.mux.HandleFunc("/api/v1/admin/bimi/certificate", r.handleBimiCertificateAdmin)
 	r.mux.HandleFunc("/api/v1/admin/bimi/check", r.handleBimiCheck)
@@ -195,7 +196,7 @@ func TestBimiAcceptsTheRealCertificateAndServesIt(t *testing.T) {
 
 	// The console reads it back, with the URLs the DNS record should carry
 	got := jsonBody(t, bimiCall(r, http.MethodGet, "/api/v1/admin/bimi?domain=ebay.com", "", true))
-	if got["logo_url"] != "https://mail.ebay.com/.well-known/bimi/default.svg" || got["certificate_url"] != "https://mail.ebay.com/.well-known/bimi/vmc.pem" {
+	if got["logo_url"] != "https://mail.ebay.com/.well-known/bimi/ebay.com/default.svg" || got["certificate_url"] != "https://mail.ebay.com/.well-known/bimi/ebay.com/vmc.pem" {
 		t.Errorf("urls = %v / %v", got["logo_url"], got["certificate_url"])
 	}
 	if got["certificate"].(map[string]any)["present"] != true {
@@ -409,7 +410,7 @@ func TestBimiCheckExpectsWhatTheReconcilerPublishes(t *testing.T) {
 
 	r.bimi.dns = fakeBimiDNS{
 		"_dmarc.ebay.com":        {"v=DMARC1; p=reject"},
-		"default._bimi.ebay.com": {"v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/default.svg;"},
+		"default._bimi.ebay.com": {"v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/ebay.com/default.svg;"},
 	}
 	body := jsonBody(t, bimiCall(r, http.MethodGet, "/api/v1/admin/bimi/check?domain=ebay.com", "", true))
 
@@ -439,12 +440,12 @@ func TestBimiGetReportsTheRecordItWouldPublish(t *testing.T) {
 	}
 
 	got := read()
-	if got["dns_record"] != "v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/default.svg;" || got["certificate_withheld"] != "" {
+	if got["dns_record"] != "v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/ebay.com/default.svg;" || got["certificate_withheld"] != "" {
 		t.Fatalf("logo only: %v", got)
 	}
 
 	putCertificate(r, fixture(t, "ebay.pem"))
-	if got := read(); got["dns_record"] != "v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/default.svg; a=https://mail.ebay.com/.well-known/bimi/vmc.pem;" {
+	if got := read(); got["dns_record"] != "v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/ebay.com/default.svg; a=https://mail.ebay.com/.well-known/bimi/ebay.com/vmc.pem;" {
 		t.Fatalf("with its certificate: %v", got["dns_record"])
 	}
 
@@ -453,5 +454,85 @@ func TestBimiGetReportsTheRecordItWouldPublish(t *testing.T) {
 	got = read()
 	if got["certificate_withheld"] != "logoMismatch" || strings.Contains(got["dns_record"].(string), "a=") {
 		t.Fatalf("after replacing the logo: %v / %v", got["dns_record"], got["certificate_withheld"])
+	}
+}
+
+// The bug this pins: every domain's record named the deployment's own mail host,
+// and the host chose the domain, so only the primary domain's logo was ever
+// found. A second domain's logo has to be served under its own name.
+func TestBimiServesEachDomainsLogoUnderItsOwnName(t *testing.T) {
+	store := &memoryBimiStore{logos: map[string]*BimiLogo{
+		"ebay.com": {SVG: fixture(t, "ebay.svg"), ETag: "e1"},
+		"cnn.com":  {SVG: fixture(t, "cnn.svg"), ETag: "c1", VmcPEM: fixture(t, "ebay.pem")},
+	}}
+	r := newBimiRouter(store) // its default domain, and the host these requests arrive on, is ebay.com
+
+	logo := bimiCall(r, http.MethodGet, "/.well-known/bimi/cnn.com/default.svg", "", false)
+	if logo.Code != http.StatusOK || logo.Body.String() != string(fixture(t, "cnn.svg")) {
+		t.Fatalf("the second domain's logo: %d", logo.Code)
+	}
+	if got := logo.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Errorf("content type = %q", got)
+	}
+	if rec := bimiCall(r, http.MethodGet, "/.well-known/bimi/cnn.com/vmc.pem", "", false); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "BEGIN CERTIFICATE") {
+		t.Errorf("the second domain's certificate: %d", rec.Code)
+	}
+	// Case does not matter in a host name
+	if rec := bimiCall(r, http.MethodGet, "/.well-known/bimi/CNN.com/default.svg", "", false); rec.Code != http.StatusOK {
+		t.Errorf("upper case: %d", rec.Code)
+	}
+	// The legacy path still answers with the host's own domain
+	if rec := bimiCall(r, http.MethodGet, "/.well-known/bimi/default.svg", "", false); rec.Code != http.StatusOK || rec.Body.String() != string(fixture(t, "ebay.svg")) {
+		t.Errorf("legacy path: %d", rec.Code)
+	}
+}
+
+func TestBimiPerDomainPathsRefuseWhatIsNotADomainLogo(t *testing.T) {
+	store := &memoryBimiStore{logos: map[string]*BimiLogo{"ebay.com": {SVG: fixture(t, "ebay.svg"), ETag: "e1"}}}
+	r := newBimiRouter(store)
+	for _, path := range []string{
+		"/.well-known/bimi/nobody.test/default.svg", // a domain with no logo
+		"/.well-known/bimi/ebay.com/other.svg",      // not a document we serve
+		"/.well-known/bimi/ebay.com/",               // no document
+		"/.well-known/bimi/ebay.com/x/default.svg",  // extra segment
+		"/.well-known/bimi/ebay.com/default.svg/x",
+		"/.well-known/bimi/-bad.com/default.svg", // not a host name
+		"/.well-known/bimi/a_b.com/default.svg",
+		"/.well-known/bimi/localhost/default.svg", // a single label is not a mail domain
+		"/.well-known/bimi/%2e%2e/default.svg",
+	} {
+		if rec := bimiCall(r, http.MethodGet, path, "", false); rec.Code != http.StatusNotFound {
+			t.Errorf("%s answered %d, want 404", path, rec.Code)
+		}
+	}
+	if rec := bimiCall(r, http.MethodPost, "/.well-known/bimi/ebay.com/default.svg", "", false); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST answered %d", rec.Code)
+	}
+}
+
+// The wiring bug: the publisher was handed over before the BIMI API existed and
+// was dropped. Either order has to work.
+func TestBimiPublisherSurvivesTheOrderItIsWiredIn(t *testing.T) {
+	store := &memoryBimiStore{logos: map[string]*BimiLogo{}}
+	publisher := func(string) {}
+
+	before := &Router{mux: http.NewServeMux()}
+	before.SetBimiPublisher(publisher)
+	before.SetBimiAPI(store, "secret", "ebay.com", "mail.ebay.com")
+	if before.bimi.publish == nil {
+		t.Error("a publisher set before the API was lost")
+	}
+
+	after := &Router{mux: http.NewServeMux()}
+	after.SetBimiAPI(store, "secret", "ebay.com", "mail.ebay.com")
+	after.SetBimiPublisher(publisher)
+	if after.bimi.publish == nil {
+		t.Error("a publisher set after the API was lost")
+	}
+
+	none := &Router{mux: http.NewServeMux()}
+	none.SetBimiAPI(store, "secret", "ebay.com", "mail.ebay.com")
+	if none.bimi.publish != nil {
+		t.Error("with no DNS provider there is nothing to publish to")
 	}
 }

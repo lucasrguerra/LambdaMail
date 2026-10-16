@@ -66,4 +66,12 @@ describe("the routes the protocols service owns", () => {
     expect(config).toContain("/.well-known/bimi/vmc.pem");
     expect(config).toMatch(/bimi\/vmc\.pem[\s\S]{0,200}PROTOCOLS_SERVICE_URL/);
   });
+
+  // Each domain's record names its own logo and certificate under its own name.
+  // Without these rewrites only the host's primary domain had a logo that could
+  // be fetched; every other domain's record pointed at a 404.
+  it("routes the per-domain BIMI logo and certificate to the service", () => {
+    expect(config).toMatch(/bimi\/:domain\/default\.svg[\s\S]{0,200}PROTOCOLS_SERVICE_URL[^\n]*:domain\/default\.svg/);
+    expect(config).toMatch(/bimi\/:domain\/vmc\.pem[\s\S]{0,200}PROTOCOLS_SERVICE_URL[^\n]*:domain\/vmc\.pem/);
+  });
 });

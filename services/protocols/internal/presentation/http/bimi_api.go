@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -53,8 +54,12 @@ type bimiAPI struct {
 	publish func(domain string)
 }
 
-// SetBimiPublisher wires what happens after a logo or certificate changes.
+// SetBimiPublisher wires what happens after a logo or certificate changes. It
+// may be called before or after SetBimiAPI: it was once called before, found no
+// BIMI API to attach to, and was dropped without a word, so saving a logo never
+// published anything.
 func (r *Router) SetBimiPublisher(publish func(domain string)) {
+	r.bimiPublish = publish
 	if r.bimi != nil {
 		r.bimi.publish = publish
 	}
@@ -81,6 +86,7 @@ func (r *Router) SetBimiAPI(store BimiStore, sessionSecret, defaultDomain, mailH
 		now:           time.Now,
 		dns:           netResolver{},
 		fetch:         newBimiFetcher(),
+		publish:       r.bimiPublish,
 	}
 	if sessionSecret != "" {
 		r.bimi.sessions = NewWebSessionVerifier(sessionSecret)
@@ -98,12 +104,15 @@ func (r *Router) handleBimiLogo(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
+	r.serveBimiLogo(w, req, r.bimi.domainFor(req))
+}
+
+func (r *Router) serveBimiLogo(w http.ResponseWriter, req *http.Request, domain string) {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "GET required")
 		return
 	}
 
-	domain := r.bimi.domainFor(req)
 	logo, err := r.bimi.store.Load(req.Context(), domain)
 	if err != nil || logo == nil {
 		http.NotFound(w, req)
@@ -202,12 +211,16 @@ func (r *Router) handleBimiCertificate(w http.ResponseWriter, req *http.Request)
 		http.NotFound(w, req)
 		return
 	}
+	r.serveBimiCertificate(w, req, r.bimi.domainFor(req))
+}
+
+func (r *Router) serveBimiCertificate(w http.ResponseWriter, req *http.Request, domain string) {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "GET required")
 		return
 	}
 
-	logo, err := r.bimi.store.Load(req.Context(), r.bimi.domainFor(req))
+	logo, err := r.bimi.store.Load(req.Context(), domain)
 	if err != nil || logo == nil || len(logo.VmcPEM) == 0 {
 		http.NotFound(w, req)
 		return
@@ -285,7 +298,7 @@ func (r *Router) handleBimiCheck(w http.ResponseWriter, req *http.Request) {
 	// sync writes it, so "the record is wrong" means it differs from what the
 	// reconciler would publish.
 	publication := bimi.Publish(logo.SVG, logo.VmcPEM, logo.VmcURL, domain,
-		BimiLogoURL(r.bimi.mailHost), BimiVmcURL(r.bimi.mailHost), r.bimi.now())
+		BimiLogoURL(r.bimi.mailHost, domain), BimiVmcURL(r.bimi.mailHost, domain), r.bimi.now())
 	in := bimi.Inputs{
 		Domain:                 domain,
 		LogoURL:                publication.LogoURL,
@@ -321,7 +334,7 @@ func (a *bimiAPI) get(w http.ResponseWriter, req *http.Request, domain string) {
 		return
 	}
 	publication := bimi.Publish(logo.SVG, logo.VmcPEM, logo.VmcURL, domain,
-		BimiLogoURL(a.mailHost), BimiVmcURL(a.mailHost), a.now())
+		BimiLogoURL(a.mailHost, domain), BimiVmcURL(a.mailHost, domain), a.now())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"configured": true,
 		"etag":       logo.ETag,
@@ -333,8 +346,8 @@ func (a *bimiAPI) get(w http.ResponseWriter, req *http.Request, domain string) {
 		"vmc_url":              logo.VmcURL,
 		"bytes":                len(logo.SVG),
 		"svg":                  string(logo.SVG),
-		"logo_url":             BimiLogoURL(a.mailHost),
-		"certificate_url":      BimiVmcURL(a.mailHost),
+		"logo_url":             BimiLogoURL(a.mailHost, domain),
+		"certificate_url":      BimiVmcURL(a.mailHost, domain),
 		"certificate":          a.describeCertificate(domain, logo),
 	})
 }
@@ -487,12 +500,45 @@ func (a *bimiAPI) put(w http.ResponseWriter, req *http.Request, domain string) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-// BimiLogoURL is where a domain's mark is served from.
-func BimiLogoURL(mailHost string) string {
-	return fmt.Sprintf("https://%s/.well-known/bimi/default.svg", mailHost)
+// domainName accepts what a mail domain can be, and nothing a path could use to
+// reach anything else.
+var domainName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+
+// handleBimiPerDomain serves /.well-known/bimi/<domain>/default.svg and
+// /.well-known/bimi/<domain>/vmc.pem.
+//
+// The legacy paths pick the domain from the host the request arrived on, which
+// can name only the one domain whose mail host that is. The record a domain
+// publishes names a URL on the deployment's mail host whatever the domain is,
+// so every domain other than the primary one pointed at a logo that was not its
+// own and got a 404.
+func (r *Router) handleBimiPerDomain(w http.ResponseWriter, req *http.Request) {
+	if r.bimi == nil {
+		http.NotFound(w, req)
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(req.URL.Path, "/.well-known/bimi/"), "/")
+	if len(parts) != 2 || !domainName.MatchString(strings.ToLower(parts[0])) {
+		http.NotFound(w, req)
+		return
+	}
+	domain := strings.ToLower(parts[0])
+	switch parts[1] {
+	case "default.svg":
+		r.serveBimiLogo(w, req, domain)
+	case "vmc.pem":
+		r.serveBimiCertificate(w, req, domain)
+	default:
+		http.NotFound(w, req)
+	}
 }
 
-// BimiVmcURL is where the certificate held here is served from.
-func BimiVmcURL(mailHost string) string {
-	return fmt.Sprintf("https://%s/.well-known/bimi/vmc.pem", mailHost)
+// BimiLogoURL is where a domain's mark is served from.
+func BimiLogoURL(mailHost, domain string) string {
+	return fmt.Sprintf("https://%s/.well-known/bimi/%s/default.svg", mailHost, strings.ToLower(domain))
+}
+
+// BimiVmcURL is where the certificate held for a domain is served from.
+func BimiVmcURL(mailHost, domain string) string {
+	return fmt.Sprintf("https://%s/.well-known/bimi/%s/vmc.pem", mailHost, strings.ToLower(domain))
 }
