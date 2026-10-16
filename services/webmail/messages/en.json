@@ -187,7 +187,13 @@
     "bimiError_noSize": "The SVG has no size (viewBox, or width and height), so it cannot be positioned.",
     "bimiError_empty": "No drawing could be found in that file.",
     "bimiError_notImage": "Choose a PNG or SVG file.",
-    "bimiError_tooComplex": "The drawing is too complex to fit in 32 KB."
+    "bimiError_tooComplex": "The drawing is too complex to fit in 32 KB.",
+    "bimiPublishNow": "Publish to DNS now",
+    "bimiPublishing": "Publishing...",
+    "bimiPublished": "Published to DNS: {created} created, {updated} updated, {deleted} removed.",
+    "bimiPublishUnavailable": "Publishing to DNS is not set up in this environment (the Cloudflare token is missing).",
+    "bimiAutoPublish": "When you save or remove the logo or the certificate, the record is published to DNS automatically.",
+    "bimiWithheld": "The stored certificate is not being advertised in DNS because it no longer applies to this logo ({reason}). Without it the record stays valid for providers that do not require a certificate."
   },
   "auth": {
     "adminLoginTitle": "Admin console",

@@ -335,3 +335,123 @@ func TestFetcherRefusesPrivateAndPlainHTTP(t *testing.T) {
 		}
 	}
 }
+
+// publishRecorder collects the domains the console asked to have published.
+type publishRecorder struct{ domains chan string }
+
+func newPublishRecorder() *publishRecorder { return &publishRecorder{domains: make(chan string, 8)} }
+
+func (p *publishRecorder) record(domain string) { p.domains <- domain }
+
+func (p *publishRecorder) expect(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case got := <-p.domains:
+		if got != "ebay.com" {
+			t.Errorf("%s published %q", what, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s did not ask for the DNS record to be published", what)
+	}
+}
+
+func (p *publishRecorder) expectNothing(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case got := <-p.domains:
+		t.Fatalf("%s published %q though it changed nothing", what, got)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+// The record in the zone follows the picture: every change to the logo or the
+// certificate asks for the DNS to be reconciled, and nothing else does.
+func TestBimiChangesAreHandedToThePublisher(t *testing.T) {
+	store := &memoryBimiStore{logos: map[string]*BimiLogo{}}
+	r := newBimiRouter(store)
+	rec := newPublishRecorder()
+	r.bimi.publish = rec.record
+
+	putLogo(t, r, fixture(t, "ebay.svg"))
+	rec.expect(t, "saving the logo")
+
+	putCertificate(r, fixture(t, "ebay.pem"))
+	rec.expect(t, "saving the certificate")
+
+	// Reads and refused uploads change nothing and publish nothing
+	bimiCall(r, http.MethodGet, "/api/v1/admin/bimi?domain=ebay.com", "", true)
+	putCertificate(r, []byte("-----BEGIN PRIVATE KEY-----\nQUJD\n-----END PRIVATE KEY-----\n"))
+	putLogo(t, r, []byte("<svg/>"))
+	rec.expectNothing(t, "a read or a refused upload")
+
+	bimiCall(r, http.MethodDelete, "/api/v1/admin/bimi/certificate?domain=ebay.com", "", true)
+	rec.expect(t, "removing the certificate")
+
+	bimiCall(r, http.MethodDelete, "/api/v1/admin/bimi?domain=ebay.com", "", true)
+	rec.expect(t, "removing the logo")
+}
+
+func TestBimiWithoutAPublisherStillWorks(t *testing.T) {
+	r := newBimiRouter(&memoryBimiStore{logos: map[string]*BimiLogo{}})
+	resp := jsonBody(t, putLogo(t, r, fixture(t, "ebay.svg")))
+	if resp["ok"] != true || resp["dns_publishing"] != false {
+		t.Fatalf("%v", resp)
+	}
+}
+
+// The check expects what the reconciler writes: with a certificate that no
+// longer matches the logo that is a record without a=, and that is correct.
+func TestBimiCheckExpectsWhatTheReconcilerPublishes(t *testing.T) {
+	store := &memoryBimiStore{logos: map[string]*BimiLogo{}}
+	r := newBimiRouter(store)
+	putLogo(t, r, fixture(t, "cnn.svg"))
+	store.logos["ebay.com"].VmcPEM = fixture(t, "ebay.pem") // a certificate for another picture
+
+	r.bimi.dns = fakeBimiDNS{
+		"_dmarc.ebay.com":        {"v=DMARC1; p=reject"},
+		"default._bimi.ebay.com": {"v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/default.svg;"},
+	}
+	body := jsonBody(t, bimiCall(r, http.MethodGet, "/api/v1/admin/bimi/check?domain=ebay.com", "", true))
+
+	status := map[string]string{}
+	detail := map[string]string{}
+	for _, c := range body["checks"].([]any) {
+		m := c.(map[string]any)
+		status[m["id"].(string)] = m["status"].(string)
+		detail[m["id"].(string)] = m["detail"].(string)
+	}
+	if status["record"] != "ok" {
+		t.Errorf("the record without a= is what the reconciler writes here, but the check said %s: %s", status["record"], detail["record"])
+	}
+	if status["certificate"] != "fail" || !strings.Contains(detail["certificate"], "NOT published") {
+		t.Errorf("the certificate check must say it is held back: %s %s", status["certificate"], detail["certificate"])
+	}
+}
+
+// The console shows the record the reconciler writes, taken from the server
+// rather than put together again in the browser.
+func TestBimiGetReportsTheRecordItWouldPublish(t *testing.T) {
+	store := &memoryBimiStore{logos: map[string]*BimiLogo{}}
+	r := newBimiRouter(store)
+	putLogo(t, r, fixture(t, "ebay.svg"))
+	read := func() map[string]any {
+		return jsonBody(t, bimiCall(r, http.MethodGet, "/api/v1/admin/bimi?domain=ebay.com", "", true))
+	}
+
+	got := read()
+	if got["dns_record"] != "v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/default.svg;" || got["certificate_withheld"] != "" {
+		t.Fatalf("logo only: %v", got)
+	}
+
+	putCertificate(r, fixture(t, "ebay.pem"))
+	if got := read(); got["dns_record"] != "v=BIMI1; l=https://mail.ebay.com/.well-known/bimi/default.svg; a=https://mail.ebay.com/.well-known/bimi/vmc.pem;" {
+		t.Fatalf("with its certificate: %v", got["dns_record"])
+	}
+
+	// The logo is replaced: the certificate is held but no longer advertised
+	putLogo(t, r, fixture(t, "cnn.svg"))
+	got = read()
+	if got["certificate_withheld"] != "logoMismatch" || strings.Contains(got["dns_record"].(string), "a=") {
+		t.Fatalf("after replacing the logo: %v / %v", got["dns_record"], got["certificate_withheld"])
+	}
+}

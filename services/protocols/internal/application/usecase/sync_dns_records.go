@@ -38,6 +38,11 @@ type SyncDnsRecordsInput struct {
 	DaneEnabled       bool
 	RelaySpfInclude   string
 	AdminEmailAddress string
+	// BimiLogoURL and BimiVmcURL are what the BIMI record should say (see
+	// bimi.Publish). With no logo URL the domain has no BIMI record, and one
+	// this reconciler published earlier is removed.
+	BimiLogoURL string
+	BimiVmcURL  string
 }
 
 // SyncConflict describes a record that could not be reconciled because a
@@ -59,9 +64,12 @@ type SyncDnsRecordsOutput struct {
 	CreatedCount   int
 	UpdatedCount   int
 	UnchangedCount int
-	ConflictCount  int
-	Conflicts      []SyncConflict
-	Errors         []string
+	// DeletedCount is the records retired because they are no longer wanted
+	// (a BIMI record whose logo was removed).
+	DeletedCount  int
+	ConflictCount int
+	Conflicts     []SyncConflict
+	Errors        []string
 	// Unverified lists records that were written but could not be read back
 	// through the public resolvers.
 	Unverified []string
@@ -108,6 +116,8 @@ func (uc *SyncDnsRecordsUseCase) Execute(ctx context.Context, input SyncDnsRecor
 		TlsaHashes:      tlsaHashes,
 		DaneEnabled:     input.DaneEnabled,
 		RelaySpfInclude: input.RelaySpfInclude,
+		BimiLogoURL:     input.BimiLogoURL,
+		BimiVmcURL:      input.BimiVmcURL,
 	})
 
 	zoneID, err := uc.dnsProvider.GetZoneID(ctx, input.DomainName)
@@ -165,6 +175,8 @@ func (uc *SyncDnsRecordsUseCase) Execute(ctx context.Context, input SyncDnsRecor
 		}
 	}
 
+	uc.retireBimi(ctx, zoneID, input, existingByKey, output)
+
 	if input.AdminEmailAddress != "" && uc.aliasRepo != nil {
 		if err := uc.aliasRepo.EnsureSystemAliases(ctx, input.DomainName, input.AdminEmailAddress); err != nil {
 			return nil, fmt.Errorf("ensure system aliases: %w", err)
@@ -185,6 +197,31 @@ func (uc *SyncDnsRecordsUseCase) Execute(ctx context.Context, input SyncDnsRecor
 	}
 
 	return output, nil
+}
+
+// retireBimi removes the BIMI record this reconciler published once the domain
+// no longer has a logo: left in place it advertises a logo URL that answers 404.
+//
+// Only a record carrying this reconciler's comment is touched. One the
+// operator created by hand, even with the same v=BIMI1 tag, is theirs.
+func (uc *SyncDnsRecordsUseCase) retireBimi(
+	ctx context.Context, zoneID string, input SyncDnsRecordsInput,
+	existingByKey map[string][]entity.DnsRecord, output *SyncDnsRecordsOutput,
+) {
+	if input.BimiLogoURL != "" {
+		return
+	}
+	name := "default._bimi." + input.DomainName
+	for _, rec := range existingByKey[recordKey("TXT", name)] {
+		if !strings.HasPrefix(rec.Comment, ownedRecordCommentPrefix) {
+			continue
+		}
+		if err := uc.dnsProvider.DeleteRecord(ctx, zoneID, rec.ID); err != nil {
+			output.Errors = append(output.Errors, fmt.Sprintf("delete TXT %s: %v", name, err))
+			continue
+		}
+		output.DeletedCount++
+	}
 }
 
 // verifyPublished re-reads every desired record through public resolvers and

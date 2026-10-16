@@ -226,9 +226,23 @@ everyone who sends from it. Publishing one needs three things, and the console
 file, DMARC, the BIMI record in DNS, the public URL of the logo, the
 certificate and its public URL, and names the one that is wrong.
 
-The logo is served from `https://<mail host>/.well-known/bimi/default.svg` and
-the record is published with the rest of the zone. Replacing the logo under a
-held certificate breaks the certificate, and the console says so.
+The logo is served from `https://<mail host>/.well-known/bimi/default.svg`.
+
+**The DNS record follows the picture.** With a Cloudflare token configured, the
+`default._bimi.<domain>` TXT record is part of what the DNS reconciler
+publishes, and saving or removing the logo or the certificate in the console
+triggers that reconciliation by itself ("Publicar no DNS agora" does the same
+on demand). The record is created when a logo exists, updated when the
+certificate is added, and removed when the logo is removed, but only a record
+this reconciler published: one made by hand is left alone.
+
+A held certificate is advertised (`a=`) only while it is valid for the logo
+being served. The certificate vouches for one exact SVG, so replacing the logo
+ends it, and a record that kept naming it would make every receiver reject BIMI,
+including those that would have shown the logo without a certificate. The record
+then goes back to `l=` alone, and the console says why the certificate is held
+back. The panel, the setup check and the reconciler all take that decision from
+the same function (`bimi.Publish`), so they cannot disagree about it.
 
 A changed profile photo shows up at once everywhere in the webmail: every
 photo carries a version that is bumped on save, in this tab and the others. The

@@ -187,7 +187,13 @@
     "bimiError_noSize": "O SVG não tem tamanho (viewBox, ou width e height), por isso não dá para posicioná-lo.",
     "bimiError_empty": "Não foi possível encontrar um desenho nesse arquivo.",
     "bimiError_notImage": "Escolha um arquivo PNG ou SVG.",
-    "bimiError_tooComplex": "O desenho é complexo demais para caber em 32 KB."
+    "bimiError_tooComplex": "O desenho é complexo demais para caber em 32 KB.",
+    "bimiPublishNow": "Publicar no DNS agora",
+    "bimiPublishing": "Publicando...",
+    "bimiPublished": "Publicado no DNS: {created} criado(s), {updated} atualizado(s), {deleted} removido(s).",
+    "bimiPublishUnavailable": "A publicação no DNS não está configurada neste ambiente (falta o token do Cloudflare).",
+    "bimiAutoPublish": "Ao salvar ou remover o logotipo ou o certificado, o registro é publicado no DNS automaticamente.",
+    "bimiWithheld": "O certificado guardado não está sendo anunciado no DNS porque não vale mais para este logotipo ({reason}). Sem ele, o registro continua válido para os provedores que não exigem certificado."
   },
   "auth": {
     "adminLoginTitle": "Console de administração",

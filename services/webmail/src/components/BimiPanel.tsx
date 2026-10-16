@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Upload, ZoomIn, ZoomOut, Download, Trash2, CheckCircle2, AlertTriangle, Copy, Play } from "lucide-react";
+import { Upload, ZoomIn, ZoomOut, Download, Trash2, CheckCircle2, AlertTriangle, Copy, Play, CloudUpload } from "lucide-react";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { useTranslations } from "../i18n/provider";
@@ -50,6 +50,17 @@ interface BimiState {
   logo_url?: string;
   certificate_url?: string;
   certificate?: CertificateInfo;
+  /** The TXT record as the reconciler writes it. */
+  dns_record?: string;
+  /** Why a certificate that is held is left out of that record, if it is. */
+  certificate_withheld?: string;
+  /** Whether saving a change publishes the record by itself. */
+  dns_publishing?: boolean;
+}
+
+interface PublishOutcome {
+  ok: boolean;
+  message: string;
 }
 
 interface CheckResult {
@@ -131,6 +142,9 @@ export function BimiPanel({ domain, onNotice }: BimiPanelProps) {
   const [pem, setPem] = useState("");
   const [certProblems, setCertProblems] = useState<string[]>([]);
 
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState<PublishOutcome | null>(null);
+
   const [checks, setChecks] = useState<{ ready: boolean; checks: CheckResult[] } | null>(null);
   const [checking, setChecking] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -160,6 +174,7 @@ export function BimiPanel({ domain, onNotice }: BimiPanelProps) {
     setProblems([]);
     setError(null);
     setChecks(null);
+    setPublished(null);
     setPem("");
     setCertProblems([]);
     setTitle(domain);
@@ -359,6 +374,36 @@ export function BimiPanel({ domain, onNotice }: BimiPanelProps) {
     }
   };
 
+  // -------------------------------------------------------------- publish
+
+  /** Writes the domain's records to the DNS provider now, the same sync that runs on a timer. */
+  const publishNow = async () => {
+    setPublishing(true);
+    setPublished(null);
+    try {
+      const res = await fetch(`/api/v1/admin/dns/reconcile?${q}`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 503) {
+        setPublished({ ok: false, message: t("admin.bimiPublishUnavailable") });
+      } else if (!res.ok) {
+        setPublished({ ok: false, message: data.message ?? t("errors.serverError") });
+      } else {
+        const problems = [...(data.errors ?? []), ...(data.conflicts ?? [])];
+        setPublished({
+          ok: problems.length === 0,
+          message:
+            t("admin.bimiPublished", { created: data.created ?? 0, updated: data.updated ?? 0, deleted: data.deleted ?? 0 }) +
+            (problems.length ? ` ${problems.join("; ")}` : ""),
+        });
+        setChecks(null);
+      }
+    } catch {
+      setPublished({ ok: false, message: t("errors.serverError") });
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   // --------------------------------------------------------------- check
 
   const runCheck = async () => {
@@ -374,9 +419,7 @@ export function BimiPanel({ domain, onNotice }: BimiPanelProps) {
     }
   };
 
-  const record = bimi?.configured
-    ? `v=BIMI1; l=${bimi.logo_url};${bimi.certificate?.present ? ` a=${bimi.certificate_url};` : vmcUrl.trim() ? ` a=${vmcUrl.trim()};` : ""}`
-    : "";
+  const record = bimi?.dns_record ?? "";
 
   const copyRecord = async () => {
     try {
@@ -699,13 +742,29 @@ export function BimiPanel({ domain, onNotice }: BimiPanelProps) {
           <div className="flex flex-col gap-1.5 rounded-lg bg-dark-panel px-3.5 py-3 shadow-edge">
             <span className="font-mono text-[11.5px] text-slate-500">default._bimi.{domain} TXT</span>
             <span className="break-all font-mono text-[12px] text-slate-200">{record}</span>
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <Button variant="ghost" size="sm" onClick={() => void copyRecord()}>
                 <Copy className="h-3.5 w-3.5" />
                 <span>{copied ? t("admin.bimiCopied") : t("admin.bimiCopy")}</span>
               </Button>
+              <Button variant="secondary" size="sm" onClick={() => void publishNow()} disabled={publishing}>
+                <CloudUpload className="h-3.5 w-3.5" />
+                <span>{publishing ? t("admin.bimiPublishing") : t("admin.bimiPublishNow")}</span>
+              </Button>
             </div>
           </div>
+
+          {bimi?.dns_publishing && <p className="text-[11.5px] leading-relaxed text-slate-500">{t("admin.bimiAutoPublish")}</p>}
+          {bimi?.certificate_withheld && (
+            <p className="text-[11.5px] leading-relaxed text-amber-400">
+              {t("admin.bimiWithheld", { reason: bimi.certificate_withheld })}
+            </p>
+          )}
+          {published && (
+            <p role="status" className={`text-[12px] leading-relaxed ${published.ok ? "text-slate-300" : "text-rose-300"}`}>
+              {published.message}
+            </p>
+          )}
 
           <div className="mt-1 flex flex-wrap items-center gap-3">
             <h3 className="text-[14px] font-medium text-slate-100">{t("admin.bimiCheckTitle")}</h3>

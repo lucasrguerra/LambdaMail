@@ -58,7 +58,9 @@ type Inputs struct {
 	// the one the operator keeps elsewhere, used only when none is held.
 	CertificatePEM         []byte
 	ExternalCertificateURL string
-	Now                    time.Time
+	// Withheld is why a held certificate is not in the record (see Publish).
+	Withheld string
+	Now      time.Time
 }
 
 // RunChecks runs every check and returns them in the order a receiver would
@@ -214,7 +216,12 @@ func checkCertificate(ctx context.Context, in Inputs, fetch Fetcher) []Check {
 		for _, v := range violations {
 			reasons = append(reasons, v.String())
 		}
-		return append([]Check{{ID: "certificate", Status: StatusFail, Detail: strings.Join(reasons, "; ")}}, out...)
+		detail := strings.Join(reasons, "; ")
+		if in.Withheld != "" {
+			// The record stays valid for receivers that do not need a certificate
+			detail = "held here but NOT published in the DNS record, because it does not apply: " + detail
+		}
+		return append([]Check{{ID: "certificate", Status: StatusFail, Detail: detail}}, out...)
 	}
 	if len(cert.Warnings) > 0 {
 		return append([]Check{{ID: "certificate", Status: StatusWarn, Detail: strings.Join(cert.Warnings, "; ")}}, out...)
